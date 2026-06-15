@@ -35,6 +35,7 @@ import HaPage          from './pages/admin/HaPage';
 import NtpPage         from './pages/admin/NtpPage';
 import AiPage          from './pages/admin/AiPage';
 import NetworkPage     from './pages/admin/NetworkPage';
+import RosterPage      from './pages/admin/RosterPage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
@@ -94,6 +95,7 @@ export default function App() {
           <Route path="/admin/ntp"                    element={<NtpPage />} />
           <Route path="/admin/ai"                     element={<AiPage />} />
           <Route path="/admin/network"                element={<NetworkPage />} />
+          <Route path="/admin/roster"                 element={<RosterPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
         </Route>
       </Route>

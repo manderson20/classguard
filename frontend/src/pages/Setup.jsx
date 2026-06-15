@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
+import logo from '../assets/logo.png';
 
 export default function Setup() {
   const { login }  = useAuth();
@@ -43,11 +44,8 @@ export default function Setup() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-700 to-primary-900 p-4">
       <div className="bg-white rounded-2xl shadow-2xl p-10 w-full max-w-md">
         <div className="text-center mb-8">
-          <div className="text-5xl mb-3">🛡️</div>
-          <h1 className="text-2xl font-bold text-slate-900">Welcome to ClassGuard</h1>
-          <p className="text-slate-500 text-sm mt-1">
-            Create your administrator account to get started.
-          </p>
+          <img src={logo} alt="ClassGuard" className="w-44 h-auto mx-auto mb-3" />
+          <p className="text-slate-600 text-sm font-medium">Welcome — let's create your admin account.</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">

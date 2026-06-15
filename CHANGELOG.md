@@ -17,6 +17,83 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 > Changes staged for the next release are listed here during development.
 > This section is moved and dated when a release is cut.
 
+### Added (DNS at scale, AI classification, Zabbix, Network infra, Roster sync, Logo)
+
+- **DNS at-scale logging** (267M+ queries/month without blocking resolution):
+  - In-process ring buffer (100k entries) in `dns-engine/src/logger.js` — fire-and-forget,
+    zero I/O on the DNS hot path; logQuery is never awaited
+  - 200ms background drain to Redis streams via ioredis pipeline batches
+  - Backend drains Redis→TimescaleDB every 5s using `unnest()` bulk inserts (no 65k param limit);
+    drain loop runs until stream empty; MINID trim after each batch
+  - `DRAIN_BATCH` raised to 50,000 entries per cycle
+- **AI domain classification** (migration 011 + `services/aiClassifier.js` + `routes/ai.js`):
+  - Privacy-first: only bare domain name sent to AI provider — no student IDs, IPs, or PII
+  - Three configurable providers: Anthropic Claude (claude-haiku default), OpenAI/compatible
+    (configurable base URL), Ollama (local, llama3.2 default); selected via `ai_provider` setting
+  - Response schema: category, is_educational, is_productive, is_time_wasting, confidence, reasoning
+  - DB cache with 30-day expiry (`domain_classifications` table); each domain classified once
+  - `batchClassify()` with 200ms inter-call delay to respect rate limits
+  - Full REST API: classify, batch, stats, delete; admin-configurable provider/key/model/base_url
+  - `AiPage.jsx`: Classifications tab (stats grid, on-demand classify, paginated table with category
+    filter), Global Allowlist tab, AI Settings tab
+- **Managed bookmarks → global allowlist**:
+  - `services/managedBookmarks.js` syncs Chrome policy `ManagedBookmarks` via Google Admin API;
+    recursive domain extraction, strips www., skips non-domain URLs
+  - `allowlist_overrides` table with source badge (managed_bookmarks / manual / ai_suggested)
+  - DNS resolver Step 1 (before lesson mode): global allowlist check via `policyCache.getGlobalAllowlist()`;
+    allowlisted domains bypass ALL blocks including lesson mode
+- **Windows AD / DNS conditional forwarding**:
+  - `dns_forward_zones` table + full CRUD in `routes/network.js`
+  - DNS resolver checks forward zones first (before device lookup, before policy); forwards
+    matched domains to specific DC IP without filtering or logging
+  - Redis cache 300s; invalidated on any zone change
+  - NetworkPage DNS Forward Zones tab with amber info box explaining AD split-horizon DNS
+- **Zabbix monitoring** (`routes/metrics.js`):
+  - `GET /metrics`: 30+ metrics (DNS counts from TimescaleDB, active students from Redis,
+    stream backlog, Node.js memory, OS load, pg_stat_activity, NTP peer status, HA nodes)
+  - `metricsAuth` middleware: X-Metrics-Token header; localhost allowed without token
+  - `GET /metrics/zabbix-template`: generates importable Zabbix XML with HTTP agent items
+    and JSONPath preprocessing for each metric
+  - SettingsPage: Zabbix token field, endpoint URL display, download-template link
+- **Network infrastructure** (migration 012 + vendor adapters + `routes/network.js`):
+  - `network_controllers` table: vendor, credentials, per-controller last_sync/error
+  - Vendor adapters (factory pattern via `services/network/index.js`):
+    - **UniFi** (`unifi.js`): auto-detects OS vs legacy controller; normalises clients from
+      both API path shapes; HTTPS with self-signed cert support
+    - **Meraki** (`meraki.js`): Dashboard API with Link-header pagination; per-network client list
+    - **Aruba** (`aruba.js`): dual-mode — Aruba Central (Bearer + offset pagination) or
+      on-prem controller (form-encoded login + `/api/user-table`)
+    - **Ruckus** (`ruckus.js`): SmartZone REST; cookie session; `POST /query/client` pagination
+  - Multiple controllers per vendor: unlimited rows; all clients unified in one table
+  - `NetworkPage.jsx`: Controllers tab (vendor-specific form), Clients tab (search + filter),
+    Access Points tab (GROUP BY ap_name with client count + avg RSSI), DNS Forward Zones tab
+- **Roster sync — Google Classroom + OneRoster 1.1** (migration 013):
+  - `ALTER TABLE users ALTER COLUMN google_id DROP NOT NULL` — enables OneRoster/manual users
+  - Users extended: oneroster_sourced_id, oneroster_username, student_number, grade_level, sync_source
+  - Classes extended: oneroster_sourced_id, course_code, period, school_year, sync_source
+  - `oneroster_sources` table: multi-source (one row per SIS instance)
+  - `classroom_course_map` table: tracks Google Classroom course → ClassGuard class mapping
+  - `services/googleClassroom.js`: scopes for courses + rosters + profiles + directory;
+    generic nextPageToken paginator; upserts users and classes; updates classroom_course_map
+  - `services/oneRoster.js`: OAuth2 client credentials with Infinite Campus token URL pattern
+    (`/as/token.oauth2`); in-memory token cache; paginated `orGet()`; upserts users, classes,
+    enrollments; deactivates classes removed from SIS; `testConnection()` via `/orgs`
+  - `routes/roster.js`: classroom sync + status, OneRoster sources CRUD, test connection,
+    per-source and all-sources sync, combined `/status` endpoint
+  - `RosterPage.jsx`: Overview tab (stat cards, source summary, setup guides for both paths),
+    Google Classroom tab (configured badge, last sync, sync now, course map table),
+    OneRoster / SIS tab (source cards with test/sync/edit/remove, add-source modal)
+- **Logo integration** (`imageref/ClassGuard Logo.png`):
+  - Sidebar (`Layout.jsx`): replaces emoji shield with full `<img>` — white-inverted on dark
+    primary-700 background (`brightness-0 invert` Tailwind filter)
+  - Login page: logo above sign-in form
+  - Setup wizard: logo above account-creation form
+  - Browser tab favicon updated to `logo.png`; `<title>` updated to "ClassGuard — Network Security for Schools"
+- **Navigation**: Layout.jsx updated with AI Classifier, Network Infra, Roster Sync nav items
+- **Routing**: App.jsx updated with `/admin/ai`, `/admin/network`, `/admin/roster`
+- **Settings keys**: `ai_provider`, `ai_api_key`, `ai_model`, `ai_base_url`, `zabbix_metrics_token`,
+  `last_classroom_sync` added to ALLOWED_KEYS
+
 ### Added (Phases 4–10 + integrations, full IPAM, HA, NTP, Windows AD prep)
 - **Phase 4 — Policy Engine**: `policyResolver` service with full 6-level precedence chain
   (lesson → penalty_box → student → group → OU → district default); 60-second Redis cache;

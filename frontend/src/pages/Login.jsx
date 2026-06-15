@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import api from '../lib/api';
+import logo from '../assets/logo.png';
 
 const REDIRECT_URI = `${window.location.origin}/auth/callback`;
 
@@ -72,9 +73,8 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-700 to-primary-900 p-4">
       <div className="bg-white rounded-2xl shadow-2xl p-10 w-full max-w-sm">
         <div className="text-center mb-8">
-          <div className="text-5xl mb-3">🛡️</div>
-          <h1 className="text-2xl font-bold text-slate-900">ClassGuard</h1>
-          <p className="text-slate-500 text-sm mt-1">School internet safety &amp; classroom management</p>
+          <img src={logo} alt="ClassGuard" className="w-48 h-auto mx-auto mb-2" />
+          <p className="text-slate-500 text-sm">School internet safety &amp; classroom management</p>
         </div>
 
         {oauthError && (

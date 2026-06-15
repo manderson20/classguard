@@ -1,6 +1,7 @@
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
+import logo from '../assets/logo.png';
 
 const TEACHER_NAV = [
   { to: '/classes',     icon: '🏫', label: 'My Classes' },
@@ -22,6 +23,7 @@ const ADMIN_NAV = [
   { to: '/admin/ha',             icon: '🔄', label: 'HA Cluster' },
   { to: '/admin/network',        icon: '🌐', label: 'Network Infra' },
   { to: '/admin/ai',             icon: '🤖', label: 'AI Classifier' },
+  { to: '/admin/roster',         icon: '📚', label: 'Roster Sync' },
   { to: '/admin/settings',       icon: '⚙️', label: 'Settings' },
 ];
 
@@ -61,14 +63,9 @@ export default function Layout() {
       {/* Sidebar */}
       <aside className="w-52 flex-shrink-0 bg-primary-700 text-white flex flex-col overflow-y-auto">
         {/* Logo */}
-        <div className="px-4 py-4 border-b border-primary-600 flex-shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="text-xl">🛡️</span>
-            <div>
-              <div className="font-bold text-sm leading-tight">ClassGuard</div>
-              <div className="text-xs text-primary-300 capitalize">{user?.role ?? ''}</div>
-            </div>
-          </div>
+        <div className="px-4 py-3 border-b border-primary-600 flex-shrink-0">
+          <img src={logo} alt="ClassGuard" className="w-36 h-auto brightness-0 invert" />
+          <div className="text-xs text-primary-300 capitalize mt-0.5">{user?.role ?? ''}</div>
         </div>
 
         <nav className="flex-1 px-2 py-3 space-y-0.5">

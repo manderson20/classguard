@@ -24,6 +24,8 @@ const ALLOWED_KEYS = new Set([
   'ai_provider', 'ai_api_key', 'ai_model', 'ai_base_url',
   // Zabbix
   'zabbix_metrics_token',
+  // Roster sync
+  'last_classroom_sync',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object
