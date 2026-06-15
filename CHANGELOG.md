@@ -17,7 +17,7 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 > Changes staged for the next release are listed here during development.
 > This section is moved and dated when a release is cut.
 
-### Added (Phases 4–9 complete)
+### Added (Phases 4–10 complete — full feature set built)
 - **Phase 4 — Policy Engine**: `policyResolver` service with full 6-level precedence chain
   (lesson → penalty_box → student → group → OU → district default); 60-second Redis cache;
   full CRUD routes for policies, assignments, groups, classes, penalty box, and users
@@ -66,6 +66,22 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
   - `DEPLOYMENT.md`: end-to-end deployment guide covering DNS/DHCP setup, MDM DoH
     profile delivery, Google service account + domain-wide delegation (step-by-step),
     Chrome extension force-install, SSL renewal, and pg_dump backup cron
+- **Phase 10 — DHCP Management (ISC Kea Integration)**:
+  - `services/kea.js`: full Kea Control Agent client — `keaCommand()`, `syncSubnet()`
+    (update-or-add), `deleteSubnet()`, `syncReservation()`, `deleteReservation()`,
+    `getLeases()`, `getLease()`, `deleteLease()`, `getStats()`, `getHAStatus()`
+    (polls all DHCP_NODE_URLS, returns per-node HA state)
+  - `routes/dhcp.js`: full implementation of all 14 DHCP routes — subnet CRUD
+    (synced to Kea), reservation CRUD (IP validated within pool), lease proxy
+    (joined with devices/users), stats, HA status, full DB→Kea resync endpoint
+  - `DhcpManagement.jsx`: three-tab admin page (Subnets / Reservations / Active Leases);
+    subnet utilization progress bars from Kea stats; reservation CSV import;
+    active-lease table auto-refreshing every 30s with force-expire and CSV export;
+    HA status widget showing per-node state badges
+  - `infrastructure/kea/`: Kea 2.6 Docker image with PostgreSQL lease + hosts database,
+    Control Agent config, and idempotent schema-init entrypoint
+  - `frontend/Dockerfile`: multi-stage build (Vite → nginx:alpine); `nginx.conf` for SPA routing
+  - `docker-compose.override.yml`: dev mode — mounts source directories for `--watch` hot reload
 
 ---
 

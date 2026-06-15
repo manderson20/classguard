@@ -16,6 +16,7 @@ const ADMIN_NAV = [
   { to: '/admin/dns/stats', icon: '📈', label: 'DNS Stats' },
   { to: '/admin/blocklists',icon: '🛡️', label: 'Blocklists' },
   { to: '/admin/ipam',      icon: '🗺️', label: 'IPAM' },
+  { to: '/admin/dhcp',      icon: '📡', label: 'DHCP' },
   { to: '/admin/settings',  icon: '⚙️', label: 'Settings' },
 ];
 

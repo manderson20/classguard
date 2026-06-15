@@ -26,6 +26,7 @@ import DnsStats        from './pages/admin/DnsStats';
 import BlocklistsPage  from './pages/admin/BlocklistsPage';
 import IpamPage        from './pages/admin/IpamPage';
 import SubnetDetail    from './pages/admin/SubnetDetail';
+import DhcpManagement from './pages/admin/DhcpManagement';
 import SettingsPage    from './pages/admin/SettingsPage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
@@ -78,6 +79,7 @@ export default function App() {
           <Route path="/admin/blocklists"             element={<BlocklistsPage />} />
           <Route path="/admin/ipam"                   element={<IpamPage />} />
           <Route path="/admin/ipam/subnets/:subnetId" element={<SubnetDetail />} />
+          <Route path="/admin/dhcp"                   element={<DhcpManagement />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
         </Route>
       </Route>

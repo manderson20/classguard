@@ -1,0 +1,16 @@
+# Development overrides — mounts source directories so Node.js --watch picks up changes
+# without rebuilding images. Do not commit secrets to this file.
+services:
+  api:
+    command: node --watch src/index.js
+    volumes:
+      - ./backend/src:/app/src
+    environment:
+      NODE_ENV: development
+
+  dns:
+    command: node --watch src/index.js
+    volumes:
+      - ./dns-engine/src:/app/src
+    environment:
+      NODE_ENV: development
