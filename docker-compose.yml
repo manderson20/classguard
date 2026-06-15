@@ -1,0 +1,167 @@
+networks:
+  classguard-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  redis-data:
+  kea-logs:
+  app-logs:
+  blocklists:
+  frontend-dist:
+  letsencrypt:
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 15
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: postgres:15-alpine
+    container_name: classguard-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       classguard
+      POSTGRES_USER:     classguard
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - classguard-net
+    healthcheck:
+      test:     ["CMD-SHELL", "pg_isready -U classguard"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  # ---------------------------------------------------------------------------
+  # Redis 7
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: classguard-redis
+    restart: unless-stopped
+    command: redis-server --save 60 1 --loglevel warning
+    volumes:
+      - redis-data:/data
+    networks:
+      - classguard-net
+    healthcheck:
+      test:     ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout:  5s
+      retries:  5
+
+  # ---------------------------------------------------------------------------
+  # ClassGuard API + WebSocket server
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context:    ./backend
+      dockerfile: Dockerfile
+    container_name: classguard-api
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL:          postgresql://classguard:${DB_PASSWORD}@postgres:5432/classguard
+      REDIS_URL:             redis://redis:6379
+      KEA_CONTROL_AGENT_URL: http://kea:8000
+      BACKEND_URL:           http://api:3001
+    volumes:
+      - app-logs:/app/logs
+      - blocklists:/app/blocklists
+    networks:
+      - classguard-net
+    healthcheck:
+      test:         ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
+      interval:     15s
+      timeout:      5s
+      start_period: 15s
+      retries:      3
+
+  # ---------------------------------------------------------------------------
+  # ClassGuard DNS Filtering Engine
+  # ---------------------------------------------------------------------------
+  dns:
+    build:
+      context:    ./dns-engine
+      dockerfile: Dockerfile
+    container_name: classguard-dns
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      REDIS_URL:   redis://redis:6379
+      BACKEND_URL: http://api:3001
+    ports:
+      - "53:53/udp"
+      - "53:53/tcp"
+    networks:
+      - classguard-net
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test:         ["CMD-SHELL", "wget -qO- http://localhost:3053/health || exit 1"]
+      interval:     15s
+      timeout:      5s
+      start_period: 10s
+      retries:      3
+
+  # ---------------------------------------------------------------------------
+  # ISC Kea DHCP Server + Control Agent
+  # ---------------------------------------------------------------------------
+  kea:
+    build:
+      context:    ./infrastructure/kea
+      dockerfile: Dockerfile
+    container_name: classguard-kea
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - ./infrastructure/kea/kea-dhcp4.conf:/etc/kea/kea-dhcp4.conf:ro
+      - ./infrastructure/kea/kea-ctrl-agent.conf:/etc/kea/kea-ctrl-agent.conf:ro
+      - kea-logs:/var/log/kea
+    ports:
+      - "67:67/udp"
+    networks:
+      - classguard-net
+    cap_add:
+      - NET_BIND_SERVICE
+    healthcheck:
+      test:         ["CMD-SHELL", "curl -sf -X POST http://localhost:8000 -H 'Content-Type: application/json' -d '{\"command\":\"version-get\",\"service\":[\"dhcp4\"]}' || exit 1"]
+      interval:     20s
+      timeout:      5s
+      start_period: 15s
+      retries:      3
+
+  # ---------------------------------------------------------------------------
+  # Nginx — reverse proxy, SSL termination, static frontend
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:alpine
+    container_name: classguard-nginx
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/nginx/classguard.conf:/etc/nginx/conf.d/default.conf:ro
+      - frontend-dist:/usr/share/nginx/html:ro
+      - letsencrypt:/etc/letsencrypt:ro
+    networks:
+      - classguard-net
