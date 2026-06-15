@@ -96,4 +96,38 @@ async function invalidateGlobalAllowlist() {
   await redis.del(ALLOWLIST_KEY);
 }
 
-module.exports = { getDevice, setDevice, getPolicy, invalidatePolicy, getGlobalAllowlist, invalidateGlobalAllowlist };
+// ---------------------------------------------------------------------------
+// Conditional forwarding zones — loaded from backend, cached 5 minutes.
+// Returns array of { domain, forward_to } for matching against query names.
+// ---------------------------------------------------------------------------
+const FORWARD_ZONES_KEY = 'classguard:forward-zones';
+const FORWARD_ZONES_TTL = 300;
+
+async function getForwardZones() {
+  const raw = await redis.get(FORWARD_ZONES_KEY).catch(() => null);
+  if (raw) {
+    try { return JSON.parse(raw); } catch {}
+  }
+  try {
+    const { data } = await axios.get(
+      `${config.backend.url}/api/v1/network/dns-forward-zones`,
+      {
+        headers: { 'x-internal-secret': config.backend.internalSecret },
+        timeout: 2000,
+      }
+    );
+    const zones = (Array.isArray(data) ? data : [])
+      .filter(z => z.is_active)
+      .map(z => ({ domain: z.domain.toLowerCase(), forwardTo: z.forward_to }));
+    await redis.set(FORWARD_ZONES_KEY, JSON.stringify(zones), 'EX', FORWARD_ZONES_TTL);
+    return zones;
+  } catch {
+    return [];
+  }
+}
+
+module.exports = {
+  getDevice, setDevice, getPolicy, invalidatePolicy,
+  getGlobalAllowlist, invalidateGlobalAllowlist,
+  getForwardZones,
+};

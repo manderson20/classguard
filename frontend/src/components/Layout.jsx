@@ -20,6 +20,7 @@ const ADMIN_NAV = [
   { to: '/admin/integrations',   icon: '🔌', label: 'Integrations' },
   { to: '/admin/ntp',            icon: '🕐', label: 'NTP' },
   { to: '/admin/ha',             icon: '🔄', label: 'HA Cluster' },
+  { to: '/admin/network',        icon: '🌐', label: 'Network Infra' },
   { to: '/admin/ai',             icon: '🤖', label: 'AI Classifier' },
   { to: '/admin/settings',       icon: '⚙️', label: 'Settings' },
 ];
