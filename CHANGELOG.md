@@ -17,7 +17,7 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 > Changes staged for the next release are listed here during development.
 > This section is moved and dated when a release is cut.
 
-### Added (Phases 4–6 in progress)
+### Added (Phases 4–8 complete)
 - **Phase 4 — Policy Engine**: `policyResolver` service with full 6-level precedence chain
   (lesson → penalty_box → student → group → OU → district default); 60-second Redis cache;
   full CRUD routes for policies, assignments, groups, classes, penalty box, and users
@@ -45,6 +45,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 - **Real-time student activity**: Socket.io bridge from extension tab events to teacher
   class rooms via Redis-cached class membership; `student:activity` events highlight
   navigations in the active lesson view
+- **Phase 8 — Google Workspace Sync**: `services/google.js` with `initGoogleAdmin()`
+  (service account + domain-wide delegation), `syncUsers()` (paginated upsert + deactivate
+  stale users), `syncGroups()` (upsert groups + members), `syncOrgUnits()` (OU tree stored
+  in settings as JSON); exponential backoff for rate limits; audit log entries per sync step
+- **Sync routes**: `POST /api/v1/sync/google` (async trigger, admin+),
+  `GET /api/v1/sync/status` (last sync time + active user/group counts)
+- **Migration 006**: partial unique index on `groups.google_group_email` (WHERE NOT NULL)
+  enabling upsert on Google-backed groups while allowing multiple NULL rows
 
 ---
 
