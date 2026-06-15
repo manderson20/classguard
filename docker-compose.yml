@@ -103,8 +103,8 @@ services:
       REDIS_URL:   redis://redis:6379
       BACKEND_URL: http://api:3001
     ports:
-      - "53:53/udp"
-      - "53:53/tcp"
+      - "172.16.1.250:53:53/udp"
+      - "172.16.1.250:53:53/tcp"
     networks:
       - classguard-net
     cap_add:
