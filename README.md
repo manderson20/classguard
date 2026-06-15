@@ -4,7 +4,7 @@
 
 [![Version](https://img.shields.io/badge/version-0.0.1-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-AGPLv3-green)](LICENSE)
-[![CI](https://github.com/YOUR_ORG/classguard/actions/workflows/ci.yml/badge.svg)](https://github.com/YOUR_ORG/classguard/actions/workflows/ci.yml)
+[![CI](https://github.com/manderson20/classguard/actions/workflows/ci.yml/badge.svg)](https://github.com/manderson20/classguard/actions/workflows/ci.yml)
 
 ---
 
@@ -56,7 +56,7 @@ See [`imageref/ClassGuard-Specification.md`](imageref/ClassGuard-Specification.m
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/YOUR_ORG/classguard.git
+git clone https://github.com/manderson20/classguard.git
 cd classguard
 
 # 2. Configure environment

@@ -44,5 +44,5 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 ---
 
 <!-- Links updated each release -->
-[Unreleased]: https://github.com/YOUR_ORG/classguard/compare/v0.0.1...HEAD
-[0.0.1]: https://github.com/YOUR_ORG/classguard/releases/tag/v0.0.1
+[Unreleased]: https://github.com/manderson20/classguard/compare/v0.0.1...HEAD
+[0.0.1]: https://github.com/manderson20/classguard/releases/tag/v0.0.1
