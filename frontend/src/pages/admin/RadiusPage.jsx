@@ -1,0 +1,829 @@
+import { useState, useCallback } from 'react';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import api from '../../lib/api';
+
+// ---------------------------------------------------------------------------
+// Shared primitives
+// ---------------------------------------------------------------------------
+const INPUT = 'border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full';
+const SELECT = INPUT + ' bg-white';
+
+function Field({ label, hint, children }) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+      <span>{label}{hint && <span className="font-normal text-slate-400 ml-1">— {hint}</span>}</span>
+      {children}
+    </label>
+  );
+}
+
+function Modal({ title, onClose, children, wide }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className={`bg-white rounded-xl shadow-xl ${wide ? 'w-full max-w-3xl' : 'w-full max-w-lg'} max-h-[90vh] overflow-y-auto`}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="font-bold text-slate-900">{title}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+        </div>
+        <div className="px-6 py-4">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+function StatusBadge({ status }) {
+  const map = {
+    approved: 'bg-green-100 text-green-800',
+    blocked:  'bg-red-100 text-red-800',
+    pending:  'bg-amber-100 text-amber-800',
+  };
+  return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${map[status] || 'bg-slate-100 text-slate-600'}`}>{status}</span>;
+}
+
+const SOURCE_STYLE = {
+  mosyle:             { bg: 'bg-blue-100',   text: 'text-blue-700',   label: 'Mosyle'      },
+  snipeit:            { bg: 'bg-purple-100', text: 'text-purple-700', label: 'Snipe-IT'    },
+  google_admin:       { bg: 'bg-indigo-100', text: 'text-indigo-700', label: 'Google Admin' },
+  network_controller: { bg: 'bg-teal-100',   text: 'text-teal-700',   label: 'Network'     },
+  radius_seen:        { bg: 'bg-orange-100', text: 'text-orange-700', label: 'RADIUS seen' },
+  manual:             { bg: 'bg-slate-100',  text: 'text-slate-600',  label: 'Manual'      },
+};
+
+function SourceBadge({ source, inactive }) {
+  const s = SOURCE_STYLE[source] || { bg:'bg-slate-100', text:'text-slate-500', label: source };
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full ${s.bg} ${s.text} ${inactive?'opacity-40 line-through':''}`} title={inactive?'Removed from this source':undefined}>
+      {s.label}
+    </span>
+  );
+}
+
+function SourcesList({ sources = [] }) {
+  if (!sources.length) return <span className="text-xs text-slate-400">—</span>;
+  return (
+    <div className="flex flex-wrap gap-1">
+      {sources.map(s => (
+        <SourceBadge key={s.source} source={s.source} inactive={!s.is_active}/>
+      ))}
+    </div>
+  );
+}
+
+function ResultBadge({ result }) {
+  if (!result) return null;
+  return (
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${result === 'accepted' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+      {result}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Overview Tab
+// ---------------------------------------------------------------------------
+function OverviewTab() {
+  const { data: stats = {} } = useQuery({
+    queryKey: ['radius-stats'],
+    queryFn:  () => api.get('/radius/stats'),
+    refetchInterval: 15_000,
+  });
+
+  const { data: logData = [] } = useQuery({
+    queryKey: ['radius-log-recent'],
+    queryFn:  () => api.get('/radius/log?limit=15'),
+    refetchInterval: 10_000,
+  });
+
+  return (
+    <div className="flex flex-col gap-5">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+        {[
+          { label: 'Active sessions',    value: stats.active_sessions ?? '—', color: 'blue'  },
+          { label: 'Accepted (24h)',      value: stats.accepted_24h    ?? '—', color: 'green' },
+          { label: 'Rejected (24h)',      value: stats.rejected_24h    ?? '—', color: 'red'   },
+          { label: 'Pending devices',     value: stats.pending_devices ?? '—', color: 'amber' },
+        ].map(({ label, value, color }) => (
+          <div key={label} className="bg-white border border-slate-200 rounded-xl p-4 text-center shadow-sm">
+            <div className={`text-3xl font-bold text-${color}-600`}>{value}</div>
+            <div className="text-xs text-slate-500 mt-1">{label}</div>
+          </div>
+        ))}
+      </div>
+
+      {/* Architecture diagram / explanation */}
+      <div className="bg-slate-50 border border-slate-200 rounded-xl p-5">
+        <h3 className="font-semibold text-slate-800 text-sm mb-3">IP Address Architecture</h3>
+        <div className="grid md:grid-cols-3 gap-4 text-xs text-slate-600">
+          <div className="bg-white rounded-lg p-3 border border-blue-200">
+            <div className="font-semibold text-blue-800 mb-1">Primary Node (real IP)</div>
+            <div>DNS resolver — listed in DHCP Option 6</div>
+            <div className="text-slate-400 mt-1">Always answers DNS independently</div>
+          </div>
+          <div className="bg-white rounded-lg p-3 border border-blue-200">
+            <div className="font-semibold text-blue-800 mb-1">Secondary Node (real IP)</div>
+            <div>DNS resolver — also in DHCP Option 6</div>
+            <div className="text-slate-400 mt-1">Also set as fallback RADIUS on switches/APs</div>
+          </div>
+          <div className="bg-white rounded-lg p-3 border border-primary-200">
+            <div className="font-semibold text-primary-800 mb-1">VIP (Keepalived VRRP)</div>
+            <div>RADIUS · DHCP · Web UI</div>
+            <div className="text-slate-400 mt-1">Floats to standby if primary fails (~2s)</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Recent auth log */}
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+        <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
+          <h3 className="font-semibold text-slate-800 text-sm">Recent auth activity</h3>
+          <span className="text-xs text-slate-400">auto-refreshes every 10s</span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+              <tr>{['Time','User / MAC','SSID','Auth type','Result','Reason'].map(h=>
+                <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {logData.map(r => (
+                <tr key={r.id} className="hover:bg-slate-50">
+                  <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{new Date(r.logged_at).toLocaleTimeString()}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-700">{r.username || r.mac_address || '—'}</td>
+                  <td className="px-3 py-2 text-xs">{r.ssid || '—'}</td>
+                  <td className="px-3 py-2 text-xs text-slate-500">{r.auth_type || '—'}</td>
+                  <td className="px-3 py-2"><ResultBadge result={r.result}/></td>
+                  <td className="px-3 py-2 text-xs text-slate-400 truncate max-w-xs">{r.reject_reason || '—'}</td>
+                </tr>
+              ))}
+              {!logData.length && <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-400">No auth activity yet</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// NAS Clients Tab
+// ---------------------------------------------------------------------------
+const VENDORS = ['unifi','meraki','aruba','ruckus','cisco','other'];
+const EMPTY_NAS = { name:'', shortname:'', ip_address:'', shared_secret:'', vendor:'other', description:'', default_vlan:'' };
+
+function NasTab() {
+  const qc = useQueryClient();
+  const [modal, setModal] = useState(null);
+  const [form, setForm]   = useState(EMPTY_NAS);
+
+  const { data: nas = [] } = useQuery({ queryKey: ['radius-nas'], queryFn: () => api.get('/radius/nas') });
+
+  const add = useMutation({
+    mutationFn: () => api.post('/radius/nas', form),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['radius-nas']}); setModal(null); },
+  });
+  const upd = useMutation({
+    mutationFn: () => api.put(`/radius/nas/${modal?.id}`, form),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['radius-nas']}); setModal(null); },
+  });
+  const del = useMutation({
+    mutationFn: id => api.delete(`/radius/nas/${id}`),
+    onSuccess: () => qc.invalidateQueries({queryKey:['radius-nas']}),
+  });
+
+  const f = (k, v) => setForm(p => ({...p, [k]: v}));
+
+  const NasForm = () => (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Name" hint="e.g. Main Office Switch">
+          <input className={INPUT} value={form.name} onChange={e=>f('name',e.target.value)} placeholder="Core-Switch-01"/>
+        </Field>
+        <Field label="Short name" hint="no spaces">
+          <input className={INPUT} value={form.shortname} onChange={e=>f('shortname',e.target.value)} placeholder="core-sw-01"/>
+        </Field>
+      </div>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="IP Address">
+          <input className={INPUT} value={form.ip_address} onChange={e=>f('ip_address',e.target.value)} placeholder="192.168.1.1"/>
+        </Field>
+        <Field label="Vendor">
+          <select className={SELECT} value={form.vendor} onChange={e=>f('vendor',e.target.value)}>
+            {VENDORS.map(v=><option key={v} value={v}>{v}</option>)}
+          </select>
+        </Field>
+      </div>
+      <Field label="Shared secret" hint="must match switch/AP RADIUS config">
+        <input type="password" className={INPUT} value={form.shared_secret} onChange={e=>f('shared_secret',e.target.value)} placeholder="••••••••"/>
+      </Field>
+      <div className="grid grid-cols-2 gap-3">
+        <Field label="Default VLAN" hint="optional">
+          <input type="number" className={INPUT} value={form.default_vlan} onChange={e=>f('default_vlan',e.target.value)} placeholder="10"/>
+        </Field>
+        <Field label="Description" hint="optional">
+          <input className={INPUT} value={form.description} onChange={e=>f('description',e.target.value)}/>
+        </Field>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800 mt-1">
+        <strong>Switch/AP config tip:</strong> Set primary RADIUS = VIP address · Set secondary RADIUS = Secondary node real IP · Timeout = 5s · 3 retries. This gives sub-5s failover without relying solely on Keepalived.
+      </div>
+
+      <div className="flex justify-end gap-2 mt-2">
+        <button onClick={()=>setModal(null)} className="btn-secondary text-sm">Cancel</button>
+        <button onClick={()=>modal==='add'?add.mutate():upd.mutate()} disabled={add.isPending||upd.isPending} className="btn-primary text-sm">
+          {add.isPending||upd.isPending?'Saving…':'Save'}
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <>
+      <div className="flex justify-end mb-4">
+        <button onClick={()=>{setForm(EMPTY_NAS);setModal('add')}} className="btn-primary text-sm">+ Add NAS Client</button>
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>{['Name','IP Address','Vendor','Default VLAN','Status',''].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {nas.map(n=>(
+              <tr key={n.id} className="hover:bg-slate-50">
+                <td className="px-3 py-2">
+                  <div className="font-medium text-slate-800">{n.name}</div>
+                  <div className="text-xs text-slate-400">{n.shortname}</div>
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-600">{n.ip_address}</td>
+                <td className="px-3 py-2 text-xs capitalize text-slate-500">{n.vendor}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{n.default_vlan || '—'}</td>
+                <td className="px-3 py-2">
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${n.is_active?'bg-green-100 text-green-800':'bg-slate-100 text-slate-500'}`}>
+                    {n.is_active?'active':'inactive'}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right space-x-2 text-xs">
+                  <button onClick={()=>{setForm({...n,shared_secret:''});setModal(n)}} className="text-slate-500 hover:underline">Edit</button>
+                  <button onClick={()=>del.mutate(n.id)} className="text-red-500 hover:underline">Remove</button>
+                </td>
+              </tr>
+            ))}
+            {!nas.length && <tr><td colSpan={6} className="px-3 py-8 text-center text-sm text-slate-400">No NAS clients yet — add your switches and access points</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {modal && <Modal title={modal==='add'?'Add NAS Client':'Edit NAS Client'} onClose={()=>setModal(null)}><NasForm/></Modal>}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Devices (NAC) Tab
+// ---------------------------------------------------------------------------
+const DEVICE_TYPES = ['laptop','desktop','phone','tablet','chromebook','printer','tv','ap','switch','server','other'];
+const EMPTY_DEVICE = { mac_address:'', device_name:'', device_type:'other', status:'approved', assigned_vlan:'', notes:'' };
+
+function DevicesTab() {
+  const qc = useQueryClient();
+  const [statusFilter, setStatusFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [search, setSearch]             = useState('');
+  const [selected, setSelected]         = useState(new Set());
+  const [editModal, setEditModal]       = useState(null);
+  const [addModal, setAddModal]         = useState(false);
+  const [addForm, setAddForm]           = useState(EMPTY_DEVICE);
+  const [syncing, setSyncing]           = useState(false);
+
+  const { data = { devices: [], counts: {}, total: 0 } } = useQuery({
+    queryKey: ['radius-devices', statusFilter, sourceFilter, search],
+    queryFn:  () => {
+      const p = new URLSearchParams({ limit: 200 });
+      if (statusFilter) p.set('status', statusFilter);
+      if (sourceFilter) p.set('source', sourceFilter);
+      if (search)       p.set('search', search);
+      return api.get('/radius/devices?' + p);
+    },
+    refetchInterval: 20_000,
+  });
+
+  const updateDev = useMutation({
+    mutationFn: ({ id, ...body }) => api.put(`/radius/devices/${id}`, body),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['radius-devices']}); setEditModal(null); },
+  });
+
+  const addDev = useMutation({
+    mutationFn: () => api.post('/radius/devices', addForm),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['radius-devices']}); setAddModal(false); setAddForm(EMPTY_DEVICE); },
+  });
+
+  const bulk = useMutation({
+    mutationFn: status => api.post('/radius/devices/bulk', { ids: [...selected], status }),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['radius-devices']}); setSelected(new Set()); },
+  });
+
+  const syncDevices = async () => {
+    setSyncing(true);
+    try { await api.post('/radius/sync-devices'); }
+    finally { setTimeout(()=>{ setSyncing(false); qc.invalidateQueries({queryKey:['radius-devices']}); }, 3000); }
+  };
+
+  const toggleSel = id => setSelected(s => { const n=new Set(s); n.has(id)?n.delete(id):n.add(id); return n; });
+  const selAll    = () => setSelected(new Set(data.devices.map(d=>d.id)));
+  const selNone   = () => setSelected(new Set());
+
+  const c = data.counts || {};
+  const total_pending  = parseInt(c.pending  || 0);
+  const total_approved = parseInt(c.approved || 0);
+  const total_blocked  = parseInt(c.blocked  || 0);
+
+  const EditModal = ({ dev }) => {
+    const [form, setForm] = useState({
+      status:       dev.status,
+      device_name:  dev.device_name || '',
+      device_type:  dev.device_type || 'other',
+      assigned_vlan: dev.assigned_vlan || '',
+      notes:        dev.notes || '',
+    });
+    const f = (k, v) => setForm(p=>({...p,[k]:v}));
+    return (
+      <Modal title="Edit Device" onClose={()=>setEditModal(null)}>
+        <div className="flex flex-col gap-3">
+          <div className="bg-slate-50 rounded-lg p-3 font-mono text-sm text-slate-700">{dev.mac_address}</div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Status">
+              <select className={SELECT} value={form.status} onChange={e=>f('status',e.target.value)}>
+                <option value="approved">Approved — allow network access</option>
+                <option value="blocked">Blocked — always reject</option>
+                <option value="pending">Pending — hold for review</option>
+              </select>
+            </Field>
+            <Field label="Device type">
+              <select className={SELECT} value={form.device_type} onChange={e=>f('device_type',e.target.value)}>
+                {DEVICE_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field label="Device name">
+            <input className={INPUT} value={form.device_name} onChange={e=>f('device_name',e.target.value)} placeholder="Lab-MacBook-01"/>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Assigned VLAN" hint="overrides policy">
+              <input type="number" className={INPUT} value={form.assigned_vlan} onChange={e=>f('assigned_vlan',e.target.value)} placeholder="20"/>
+            </Field>
+          </div>
+          <Field label="Notes">
+            <textarea className={INPUT + ' resize-none'} rows={2} value={form.notes} onChange={e=>f('notes',e.target.value)}
+              placeholder="Smart TV in Room 101 — no network access"/>
+          </Field>
+          {/* Source feed details */}
+          {(dev.sources||[]).length > 0 && (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-3">
+              <div className="text-xs font-semibold text-slate-600 mb-2">Data sources for this device</div>
+              <div className="space-y-1.5">
+                {dev.sources.map(s=>(
+                  <div key={s.source} className="flex items-start gap-2 text-xs">
+                    <SourceBadge source={s.source} inactive={!s.is_active}/>
+                    <div className="flex-1 text-slate-500">
+                      {s.source_name && <span className="mr-1">{s.source_name}</span>}
+                      {s.source_device_id && <span className="font-mono text-slate-400 mr-1">#{s.source_device_id}</span>}
+                      {s.is_active
+                        ? <span className="text-green-600">Active · synced {new Date(s.last_synced_at).toLocaleDateString()}</span>
+                        : <span className="text-red-500">Removed {s.removed_at ? new Date(s.removed_at).toLocaleDateString() : ''} — device may have been decommissioned or graduated</span>
+                      }
+                      {s.source_extra?.assigned_to && <span className="ml-1 text-slate-400">({s.source_extra.assigned_to})</span>}
+                      {s.source_extra?.annotated_user && <span className="ml-1 text-slate-400">({s.source_extra.annotated_user})</span>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {form.status === 'blocked' && (
+            <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-800">
+              This device will be rejected at the WiFi level — it cannot connect to any network.
+            </div>
+          )}
+          <div className="flex justify-end gap-2 mt-2">
+            <button onClick={()=>setEditModal(null)} className="btn-secondary text-sm">Cancel</button>
+            <button onClick={()=>updateDev.mutate({id:dev.id,...form})} disabled={updateDev.isPending} className="btn-primary text-sm">
+              {updateDev.isPending?'Saving…':'Save'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  };
+
+  const AddModal = () => {
+    const f = (k, v) => setAddForm(p=>({...p,[k]:v}));
+    return (
+      <Modal title="Add Device" onClose={()=>setAddModal(false)}>
+        <div className="flex flex-col gap-3">
+          <Field label="MAC Address">
+            <input className={INPUT} value={addForm.mac_address} onChange={e=>f('mac_address',e.target.value)} placeholder="AA:BB:CC:DD:EE:FF"/>
+          </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Status">
+              <select className={SELECT} value={addForm.status} onChange={e=>f('status',e.target.value)}>
+                <option value="approved">Approved</option>
+                <option value="blocked">Blocked</option>
+                <option value="pending">Pending</option>
+              </select>
+            </Field>
+            <Field label="Device type">
+              <select className={SELECT} value={addForm.device_type} onChange={e=>f('device_type',e.target.value)}>
+                {DEVICE_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+              </select>
+            </Field>
+          </div>
+          <Field label="Device name">
+            <input className={INPUT} value={addForm.device_name} onChange={e=>f('device_name',e.target.value)}/>
+          </Field>
+          <Field label="Assigned VLAN" hint="optional">
+            <input type="number" className={INPUT} value={addForm.assigned_vlan} onChange={e=>f('assigned_vlan',e.target.value)}/>
+          </Field>
+          <Field label="Notes" hint="optional">
+            <textarea className={INPUT + ' resize-none'} rows={2} value={addForm.notes} onChange={e=>f('notes',e.target.value)}
+              placeholder="Smart TV in Library — blocked per IT policy"/>
+          </Field>
+          <div className="flex justify-end gap-2 mt-2">
+            <button onClick={()=>setAddModal(false)} className="btn-secondary text-sm">Cancel</button>
+            <button onClick={()=>addDev.mutate()} disabled={addDev.isPending} className="btn-primary text-sm">
+              {addDev.isPending?'Adding…':'Add Device'}
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  };
+
+  return (
+    <>
+      {/* Count pills */}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        {[
+          { s:'', label:`All (${total_approved+total_blocked+total_pending})`, color:'slate' },
+          { s:'pending',  label:`Pending (${total_pending})`,  color:'amber' },
+          { s:'approved', label:`Approved (${total_approved})`, color:'green' },
+          { s:'blocked',  label:`Blocked (${total_blocked})`,  color:'red'   },
+        ].map(({s, label, color})=>(
+          <button key={s} onClick={()=>setStatusFilter(s)}
+            className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors
+              ${statusFilter===s ? `bg-${color}-600 text-white border-${color}-600` : `text-${color}-700 border-${color}-200 bg-${color}-50 hover:bg-${color}-100`}`}>
+            {label}
+          </button>
+        ))}
+
+        <div className="ml-auto flex gap-2">
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search MAC or name…"
+            className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs w-48 focus:outline-none focus:ring-1 focus:ring-primary-500"/>
+          <select className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white" value={sourceFilter} onChange={e=>setSourceFilter(e.target.value)}>
+            <option value="">All sources</option>
+            {['mosyle','snipeit','google_admin','network_controller','radius_seen','manual'].map(s=><option key={s} value={s}>{s.replace('_',' ')}</option>)}
+          </select>
+          <button onClick={syncDevices} disabled={syncing} className="btn-secondary text-xs">
+            {syncing?'Syncing…':'Sync from MDM'}
+          </button>
+          <button onClick={()=>setAddModal(true)} className="btn-primary text-xs">+ Add Device</button>
+        </div>
+      </div>
+
+      {/* Bulk actions */}
+      {selected.size > 0 && (
+        <div className="flex items-center gap-3 mb-3 bg-primary-50 border border-primary-200 rounded-lg px-4 py-2">
+          <span className="text-sm font-medium text-primary-800">{selected.size} selected</span>
+          <button onClick={()=>bulk.mutate('approved')} className="text-xs text-green-700 hover:underline font-semibold">Approve all</button>
+          <button onClick={()=>bulk.mutate('blocked')}  className="text-xs text-red-700 hover:underline font-semibold">Block all</button>
+          <button onClick={selNone} className="text-xs text-slate-500 hover:underline ml-auto">Clear selection</button>
+        </div>
+      )}
+
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>
+              <th className="px-3 py-2"><input type="checkbox" onChange={e=>e.target.checked?selAll():selNone()} checked={selected.size===data.devices.length&&data.devices.length>0}/></th>
+              {['MAC Address','Device','Type','Data Sources','Status','Last seen','Auth',''].map(h=>
+                <th key={h} className="px-3 py-2 text-left">{h}</th>)}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {data.devices.map(d=>(
+              <tr key={d.id} className={`hover:bg-slate-50 ${d.status==='blocked'?'bg-red-50/30':d.status==='pending'?'bg-amber-50/30':''}`}>
+                <td className="px-3 py-2"><input type="checkbox" checked={selected.has(d.id)} onChange={()=>toggleSel(d.id)}/></td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-700">{d.mac_address}</td>
+                <td className="px-3 py-2">
+                  <div className="text-sm font-medium text-slate-800">{d.device_name || '—'}</div>
+                  {d.assigned_user_name && <div className="text-xs text-slate-400">{d.assigned_user_name}</div>}
+                  {d.notes && <div className="text-xs text-slate-400 italic truncate max-w-xs">{d.notes}</div>}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-500 capitalize">{d.device_type}</td>
+                <td className="px-3 py-2 max-w-xs"><SourcesList sources={d.sources||[]}/></td>
+                <td className="px-3 py-2"><StatusBadge status={d.status}/></td>
+                <td className="px-3 py-2 text-xs text-slate-400">
+                  {d.last_seen ? new Date(d.last_seen).toLocaleDateString() : '—'}
+                </td>
+                <td className="px-3 py-2"><ResultBadge result={d.last_auth_result}/></td>
+                <td className="px-3 py-2">
+                  <button onClick={()=>setEditModal(d)} className="text-xs text-primary-600 hover:underline">Edit</button>
+                </td>
+              </tr>
+            ))}
+            {!data.devices.length && (
+              <tr><td colSpan={9} className="px-3 py-8 text-center text-sm text-slate-400">
+                {statusFilter === 'pending' ? 'No pending devices — all devices have been reviewed' : 'No devices yet — click "Sync from MDM" to import from Mosyle, Snipe-IT, and Google Admin'}
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {editModal && <EditModal dev={editModal}/>}
+      {addModal  && <AddModal/>}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Auth Log Tab
+// ---------------------------------------------------------------------------
+function LogTab() {
+  const [resultFilter, setResultFilter] = useState('');
+
+  const { data: log = [] } = useQuery({
+    queryKey: ['radius-log', resultFilter],
+    queryFn:  () => api.get(`/radius/log?limit=200${resultFilter ? '&result='+resultFilter : ''}`),
+    refetchInterval: 10_000,
+  });
+
+  return (
+    <>
+      <div className="flex gap-2 mb-4">
+        {[['','All'],['accepted','Accepted'],['rejected','Rejected']].map(([v,l])=>(
+          <button key={v} onClick={()=>setResultFilter(v)}
+            className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors
+              ${resultFilter===v ? 'bg-primary-600 text-white border-primary-600' : 'text-slate-600 border-slate-200 hover:bg-slate-100'}`}>
+            {l}
+          </button>
+        ))}
+        <span className="ml-auto text-xs text-slate-400 self-center">auto-refreshes every 10s</span>
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>{['Time','User / MAC','NAS IP','SSID','Auth type','VLAN','Result','Reason'].map(h=>
+              <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {log.map(r=>(
+              <tr key={r.id} className={`hover:bg-slate-50 ${r.result==='rejected'?'bg-red-50/20':''}`}>
+                <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{new Date(r.logged_at).toLocaleString()}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-700">{r.username || r.mac_address || '—'}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">{r.nas_ip || '—'}</td>
+                <td className="px-3 py-2 text-xs">{r.ssid || '—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{r.auth_type || '—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{r.vlan_assigned || '—'}</td>
+                <td className="px-3 py-2"><ResultBadge result={r.result}/></td>
+                <td className="px-3 py-2 text-xs text-slate-400 max-w-xs truncate">{r.reject_reason || '—'}</td>
+              </tr>
+            ))}
+            {!log.length && <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-400">No log entries yet</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// HA & Config Tab
+// ---------------------------------------------------------------------------
+function HaConfigTab() {
+  const qc = useQueryClient();
+  const [haForm, setHaForm] = useState(null);
+  const [bundle, setBundle] = useState(null);
+  const [loadingBundle, setLoadingBundle] = useState(false);
+  const [ldapTesting, setLdapTesting]     = useState(false);
+  const [ldapResult, setLdapResult]       = useState(null);
+  const [activeFile, setActiveFile]       = useState(null);
+
+  const { data: ha = {} } = useQuery({
+    queryKey: ['radius-ha'],
+    queryFn:  () => api.get('/radius/ha'),
+    onSuccess: d => { if (!haForm) setHaForm(d); },
+  });
+
+  const saveHa = useMutation({
+    mutationFn: () => api.put('/radius/ha', haForm || ha),
+    onSuccess: () => qc.invalidateQueries({queryKey:['radius-ha']}),
+  });
+
+  const loadBundle = async () => {
+    setLoadingBundle(true);
+    try {
+      const b = await api.get('/radius/config-bundle');
+      setBundle(b);
+      setActiveFile(Object.keys(b)[0]);
+    } finally { setLoadingBundle(false); }
+  };
+
+  const testLdap = async () => {
+    setLdapTesting(true);
+    try { setLdapResult(await api.post('/radius/ldap/test')); }
+    catch(e) { setLdapResult({ ok: false, reason: e.message }); }
+    setLdapTesting(false);
+  };
+
+  const downloadFile = (name, content) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
+    a.download = name; a.click();
+  };
+
+  const cfg = haForm || ha;
+  const set = (k, v) => setHaForm(p => ({...(p||ha),[k]:v}));
+
+  return (
+    <div className="flex flex-col gap-6">
+      {/* VRRP config */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+        <h3 className="font-semibold text-slate-900 mb-4">VRRP / Keepalived — Virtual IP Configuration</h3>
+        <div className="grid md:grid-cols-3 gap-4">
+          <Field label="Virtual IP Address (VIP)" hint="shared between nodes">
+            <input className={INPUT} value={cfg.vip_address||''} onChange={e=>set('vip_address',e.target.value)} placeholder="172.16.1.249"/>
+          </Field>
+          <Field label="Subnet prefix length">
+            <input type="number" className={INPUT} value={cfg.vip_prefix_len||24} onChange={e=>set('vip_prefix_len',parseInt(e.target.value))} min={1} max={32}/>
+          </Field>
+          <Field label="Network interface" hint="on both nodes">
+            <input className={INPUT} value={cfg.vip_interface||'eth0'} onChange={e=>set('vip_interface',e.target.value)}/>
+          </Field>
+          <Field label="VRRP instance name">
+            <input className={INPUT} value={cfg.vrrp_instance_name||'CLASSGUARD_APPS'} onChange={e=>set('vrrp_instance_name',e.target.value)}/>
+          </Field>
+          <Field label="Virtual Router ID" hint="51–254, unique per VIP">
+            <input type="number" className={INPUT} value={cfg.vrrp_virtual_router_id||51} onChange={e=>set('vrrp_virtual_router_id',parseInt(e.target.value))} min={1} max={255}/>
+          </Field>
+          <Field label="VRRP auth password">
+            <input type="password" className={INPUT} value={cfg.vrrp_auth_password||''} onChange={e=>set('vrrp_auth_password',e.target.value)}/>
+          </Field>
+          <Field label="Primary priority" hint="default 150">
+            <input type="number" className={INPUT} value={cfg.priority_primary||150} onChange={e=>set('priority_primary',parseInt(e.target.value))}/>
+          </Field>
+          <Field label="Secondary priority" hint="default 100">
+            <input type="number" className={INPUT} value={cfg.priority_secondary||100} onChange={e=>set('priority_secondary',parseInt(e.target.value))}/>
+          </Field>
+        </div>
+        <div className="flex justify-end mt-4">
+          <button onClick={()=>saveHa.mutate()} disabled={saveHa.isPending} className="btn-primary text-sm">
+            {saveHa.isPending?'Saving…':'Save VIP Config'}
+          </button>
+        </div>
+      </div>
+
+      {/* Google Secure LDAP */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+        <h3 className="font-semibold text-slate-900 mb-1">Google Secure LDAP</h3>
+        <p className="text-xs text-slate-500 mb-4">Used for EAP-TTLS/PAP — FreeRADIUS passes the user's Google password to ClassGuard, which validates it via Google's LDAP endpoint.</p>
+        <div className="grid md:grid-cols-2 gap-4">
+          <Field label="Client certificate path" hint="PEM file on this server">
+            <input className={INPUT} placeholder="/etc/classguard/ldap-client.crt"/>
+          </Field>
+          <Field label="Client key path">
+            <input className={INPUT} placeholder="/etc/classguard/ldap-client.key"/>
+          </Field>
+          <Field label="LDAP base DN" hint="your domain in DC notation">
+            <input className={INPUT} placeholder="dc=school,dc=k12,dc=us"/>
+          </Field>
+        </div>
+        {ldapResult && (
+          <div className={`mt-3 text-sm px-3 py-2 rounded-lg border ${ldapResult.ok?'bg-green-50 border-green-200 text-green-800':'bg-red-50 border-red-200 text-red-800'}`}>
+            {ldapResult.ok ? '✓ Google Secure LDAP connection successful' : `✗ ${ldapResult.reason}`}
+          </div>
+        )}
+        <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-900 space-y-1">
+          <div className="font-semibold mb-2">Google Admin setup (one-time):</div>
+          <ol className="list-decimal list-inside space-y-1">
+            <li>Google Admin Console → Account → LDAP → Add LDAP Client</li>
+            <li>Name: ClassGuard FreeRADIUS · Permissions: Verify user credentials + Read user info</li>
+            <li>Download the generated certificate + private key (PEM format)</li>
+            <li>Copy files to this server (e.g. <code className="bg-blue-100 px-1 rounded">/etc/classguard/ldap-client.crt</code>)</li>
+            <li>Enter the paths above and click Test Connection</li>
+          </ol>
+          <div className="mt-2 font-semibold">Works for other schools too — each school gets their own LDAP client in their Google Admin.</div>
+        </div>
+        <div className="flex justify-end mt-3">
+          <button onClick={testLdap} disabled={ldapTesting} className="btn-secondary text-sm">
+            {ldapTesting?'Testing…':'Test LDAP Connection'}
+          </button>
+        </div>
+      </div>
+
+      {/* Android / WiFi profile guide */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+        <h3 className="font-semibold text-slate-900 mb-1">Android Device Configuration</h3>
+        <p className="text-xs text-slate-500 mb-3">iPhones auto-negotiate EAP-TTLS. Android requires explicit configuration — push a WiFi profile via Google Admin for managed devices, or share these manual settings for BYOD.</p>
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="bg-slate-50 rounded-lg p-4 text-xs space-y-2 font-mono">
+            <div className="font-sans font-semibold text-slate-700 text-sm mb-2">Managed Android (Google Admin → Devices → Networks → WiFi)</div>
+            <div><span className="text-slate-500">EAP method:</span> TTLS</div>
+            <div><span className="text-slate-500">Phase 2 auth:</span> PAP</div>
+            <div><span className="text-slate-500">CA certificate:</span> (upload your FreeRADIUS server.crt)</div>
+            <div><span className="text-slate-500">Domain:</span> your school domain</div>
+            <div><span className="text-slate-500">Identity:</span> {'${USER_EMAIL}'}</div>
+            <div><span className="text-slate-500">Anonymous identity:</span> anonymous</div>
+          </div>
+          <div className="bg-slate-50 rounded-lg p-4 text-xs space-y-2">
+            <div className="font-semibold text-slate-700 text-sm mb-2">BYOD Android (manual steps)</div>
+            <ol className="list-decimal list-inside space-y-1 text-slate-600">
+              <li>Settings → WiFi → (hold SSID) → Modify network</li>
+              <li>Show advanced options → EAP method: TTLS</li>
+              <li>Phase 2 authentication: PAP</li>
+              <li>CA certificate: Use system certificates (or install your cert)</li>
+              <li>Domain / Online certificate status: your server hostname</li>
+              <li>Identity: full email (user@school.edu)</li>
+              <li>Password: Google Workspace password</li>
+            </ol>
+            <div className="text-slate-400 mt-2">No MSCHAPv2 needed — PAP inside TLS is fully compatible with Google passwords.</div>
+          </div>
+        </div>
+      </div>
+
+      {/* Config file download */}
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-semibold text-slate-900">FreeRADIUS + Keepalived Config Files</h3>
+            <p className="text-xs text-slate-500 mt-0.5">Generated from your NAS clients and VIP settings. Deploy to each node.</p>
+          </div>
+          <button onClick={loadBundle} disabled={loadingBundle} className="btn-primary text-sm">
+            {loadingBundle?'Generating…':'Generate Configs'}
+          </button>
+        </div>
+
+        {bundle && (
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <div className="flex border-b border-slate-200 overflow-x-auto">
+              {Object.keys(bundle).map(name=>(
+                <button key={name} onClick={()=>setActiveFile(name)}
+                  className={`px-3 py-2 text-xs font-mono whitespace-nowrap border-r border-slate-200 transition-colors
+                    ${activeFile===name?'bg-primary-600 text-white':'hover:bg-slate-50 text-slate-600'}`}>
+                  {name}
+                </button>
+              ))}
+            </div>
+            {activeFile && (
+              <div className="relative">
+                <div className="absolute top-2 right-2 flex gap-2">
+                  <button onClick={()=>navigator.clipboard.writeText(bundle[activeFile])}
+                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Copy</button>
+                  <button onClick={()=>downloadFile(activeFile, bundle[activeFile])}
+                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Download</button>
+                </div>
+                <pre className="p-4 text-xs font-mono bg-slate-900 text-slate-100 overflow-x-auto max-h-96 overflow-y-auto whitespace-pre">
+                  {bundle[activeFile]}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Main page
+// ---------------------------------------------------------------------------
+const TABS = ['Overview','NAS Clients','Devices / NAC','Auth Log','HA & Config'];
+
+export default function RadiusPage() {
+  const [tab, setTab] = useState('Overview');
+
+  return (
+    <div className="p-6 max-w-6xl mx-auto">
+      <div className="mb-5">
+        <h1 className="text-2xl font-bold text-slate-900">RADIUS / NAC</h1>
+        <p className="text-slate-500 text-sm mt-0.5">
+          FreeRADIUS integration — WiFi authentication, device access control, and HA failover
+        </p>
+      </div>
+
+      <div className="flex gap-1 border-b border-slate-200 mb-5">
+        {TABS.map(t=>(
+          <button key={t} onClick={()=>setTab(t)}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors
+              ${tab===t?'bg-white border border-b-white border-slate-200 text-primary-700 -mb-px':'text-slate-500 hover:text-slate-700'}`}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab==='Overview'     && <OverviewTab/>}
+      {tab==='NAS Clients'  && <NasTab/>}
+      {tab==='Devices / NAC' && <DevicesTab/>}
+      {tab==='Auth Log'     && <LogTab/>}
+      {tab==='HA & Config'  && <HaConfigTab/>}
+    </div>
+  );
+}

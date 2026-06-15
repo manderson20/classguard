@@ -24,6 +24,7 @@ const ADMIN_NAV = [
   { to: '/admin/network',        icon: '🌐', label: 'Network Infra' },
   { to: '/admin/ai',             icon: '🤖', label: 'AI Classifier' },
   { to: '/admin/roster',         icon: '📚', label: 'Roster Sync' },
+  { to: '/admin/radius',         icon: '📡', label: 'RADIUS / NAC' },
   { to: '/admin/settings',       icon: '⚙️', label: 'Settings' },
 ];
 

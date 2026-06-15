@@ -26,6 +26,9 @@ const ALLOWED_KEYS = new Set([
   'zabbix_metrics_token',
   // Roster sync
   'last_classroom_sync',
+  // RADIUS / Google Secure LDAP
+  'ldap_google_enabled', 'ldap_client_cert_path', 'ldap_client_key_path',
+  'ldap_base_dn', 'ldap_google_domain',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object
