@@ -8,8 +8,9 @@ const { Server }    = require('socket.io');
 const { createAdapter } = require('@socket.io/redis-adapter');
 const Redis = require('ioredis');
 
-const config       = require('./config');
-const setupSockets = require('./sockets');
+const config          = require('./config');
+const setupSockets    = require('./sockets');
+const { startScheduler } = require('./services/scheduler');
 
 const app    = express();
 const server = http.createServer(app);
@@ -122,6 +123,7 @@ process.on('SIGINT',  () => shutdown('SIGINT'));
 // ---------------------------------------------------------------------------
 server.listen(config.port, () => {
   console.log(`ClassGuard API  →  http://localhost:${config.port}  [${config.nodeEnv}]`);
+  startScheduler();
 });
 
 module.exports = { app, io };
