@@ -1,0 +1,88 @@
+import { Routes, Route, Navigate } from 'react-router-dom';
+import { useAuth } from './contexts/AuthContext';
+
+// Layout
+import Layout from './components/Layout';
+
+// Auth pages
+import Login        from './pages/Login';
+import AuthCallback from './pages/AuthCallback';
+
+// Teacher pages
+import Classes      from './pages/Classes';
+import ClassDetail  from './pages/ClassDetail';
+import ActiveLesson from './pages/ActiveLesson';
+import PenaltyBox   from './pages/PenaltyBox';
+
+// Admin pages
+import AdminDashboard  from './pages/admin/AdminDashboard';
+import UsersPage       from './pages/admin/UsersPage';
+import UserDetail      from './pages/admin/UserDetail';
+import PoliciesPage    from './pages/admin/PoliciesPage';
+import PolicyEditor    from './pages/admin/PolicyEditor';
+import GroupsPage      from './pages/admin/GroupsPage';
+import DnsLogs         from './pages/admin/DnsLogs';
+import DnsStats        from './pages/admin/DnsStats';
+import BlocklistsPage  from './pages/admin/BlocklistsPage';
+import IpamPage        from './pages/admin/IpamPage';
+import SubnetDetail    from './pages/admin/SubnetDetail';
+import SettingsPage    from './pages/admin/SettingsPage';
+
+const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
+
+function RequireAuth({ children, minRole = 'teacher' }) {
+  const { user, loading } = useAuth();
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen">
+        <div className="text-slate-400 text-sm">Loading…</div>
+      </div>
+    );
+  }
+
+  if (!user) return <Navigate to="/login" replace />;
+  if ((ROLES[user.role] ?? 0) < (ROLES[minRole] ?? 0)) {
+    return <Navigate to="/login?error=insufficient_role" replace />;
+  }
+
+  return children;
+}
+
+export default function App() {
+  return (
+    <Routes>
+      <Route path="/login"         element={<Login />} />
+      <Route path="/auth/callback" element={<AuthCallback />} />
+
+      {/* Teacher + Admin shared layout */}
+      <Route element={<RequireAuth minRole="teacher"><Layout /></RequireAuth>}>
+        <Route index element={<Navigate to="/classes" replace />} />
+
+        {/* Teacher routes */}
+        <Route path="/classes"                 element={<Classes />} />
+        <Route path="/classes/:classId"        element={<ClassDetail />} />
+        <Route path="/classes/:classId/lesson" element={<ActiveLesson />} />
+        <Route path="/penalty-box"             element={<PenaltyBox />} />
+
+        {/* Admin routes */}
+        <Route element={<RequireAuth minRole="admin"><></></RequireAuth>}>
+          <Route path="/admin"                        element={<AdminDashboard />} />
+          <Route path="/admin/users"                  element={<UsersPage />} />
+          <Route path="/admin/users/:userId"          element={<UserDetail />} />
+          <Route path="/admin/policies"               element={<PoliciesPage />} />
+          <Route path="/admin/policies/:policyId"     element={<PolicyEditor />} />
+          <Route path="/admin/groups"                 element={<GroupsPage />} />
+          <Route path="/admin/dns/logs"               element={<DnsLogs />} />
+          <Route path="/admin/dns/stats"              element={<DnsStats />} />
+          <Route path="/admin/blocklists"             element={<BlocklistsPage />} />
+          <Route path="/admin/ipam"                   element={<IpamPage />} />
+          <Route path="/admin/ipam/subnets/:subnetId" element={<SubnetDetail />} />
+          <Route path="/admin/settings"               element={<SettingsPage />} />
+        </Route>
+      </Route>
+
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}

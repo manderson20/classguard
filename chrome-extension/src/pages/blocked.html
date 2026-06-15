@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Site Blocked — ClassGuard</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 16px;
+      box-shadow: 0 4px 24px rgba(0,0,0,.10);
+      max-width: 520px;
+      width: 100%;
+      padding: 48px 40px 40px;
+      text-align: center;
+    }
+
+    .icon {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 24px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+    }
+    .icon.lesson   { background: #eff6ff; }
+    .icon.penalty  { background: #fef3c7; }
+    .icon.policy   { background: #fee2e2; }
+
+    h1 {
+      font-size: 22px;
+      font-weight: 700;
+      margin-bottom: 12px;
+    }
+
+    p {
+      color: #64748b;
+      font-size: 15px;
+      line-height: 1.6;
+      margin-bottom: 8px;
+    }
+
+    .domain {
+      display: inline-block;
+      background: #f1f5f9;
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-family: monospace;
+      font-size: 14px;
+      margin: 8px 0 16px;
+      color: #475569;
+      word-break: break-all;
+    }
+
+    .allowed-list {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 16px 0;
+      text-align: left;
+    }
+    .allowed-list h3 {
+      font-size: 13px;
+      font-weight: 600;
+      color: #166534;
+      margin-bottom: 6px;
+    }
+    .allowed-list ul {
+      list-style: none;
+      font-size: 13px;
+      color: #15803d;
+    }
+    .allowed-list li::before { content: '✓ '; }
+
+    .badge {
+      display: inline-block;
+      border-radius: 9999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: .02em;
+      margin-bottom: 20px;
+    }
+    .badge.lesson  { background: #dbeafe; color: #1d4ed8; }
+    .badge.penalty { background: #fef3c7; color: #92400e; }
+    .badge.policy  { background: #fee2e2; color: #991b1b; }
+
+    .footer {
+      margin-top: 28px;
+      font-size: 12px;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon" id="icon"></div>
+    <div class="badge" id="badge"></div>
+    <h1 id="heading"></h1>
+    <p id="message"></p>
+    <div class="domain" id="domain" style="display:none"></div>
+    <div class="allowed-list" id="allowed-list" style="display:none">
+      <h3>Allowed during this lesson:</h3>
+      <ul id="allowed-items"></ul>
+    </div>
+    <p class="footer">ClassGuard — managed by your school</p>
+  </div>
+  <!-- blocked.bundle.js injected by HtmlWebpackPlugin -->
+</body>
+</html>

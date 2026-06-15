@@ -17,6 +17,35 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 > Changes staged for the next release are listed here during development.
 > This section is moved and dated when a release is cut.
 
+### Added (Phases 4–6 in progress)
+- **Phase 4 — Policy Engine**: `policyResolver` service with full 6-level precedence chain
+  (lesson → penalty_box → student → group → OU → district default); 60-second Redis cache;
+  full CRUD routes for policies, assignments, groups, classes, penalty box, and users
+- **TimescaleDB migration** (003): hypertable on `dns_logs` (1-day chunks), 2-day compression,
+  90-day retention, `dns_stats_hourly` continuous aggregate
+- **DNS logs & stats API**: paginated query history with teacher-scoped filtering;
+  `time_bucket` aggregations using TimescaleDB continuous aggregate
+- **Schema constraints** (004): partial unique indexes for penalty box and policy assignments;
+  `placed_at` column rename; `lesson_sessions.name` field
+- **Phase 5 — Chrome Extension (MV3)**: service worker with Google OAuth via
+  `chrome.identity`, `declarativeNetRequest` policy enforcement (lesson whitelist,
+  penalty box block-all, custom deny/allow lists), real-time Socket.io policy updates,
+  tab activity reporting, blocked page, popup UI; webpack build pipeline
+- **Extension backend routes**: `/extension/auth` (access-token exchange), `/extension/register`
+  (IP→student Redis mapping), `/extension/heartbeat`, `/extension/tab-event` (Redis stream +
+  Socket.io emit), `/extension/policy`
+- **Phase 6 — Teacher Dashboard (React)**: Vite + React 18 + TanStack Query + Tailwind CSS;
+  Google OAuth login, class list, class detail with real-time student activity monitoring,
+  active lesson view (grid + activity log), lesson start modal with quick-add domains,
+  penalty box management page
+- **IPAM foundation**: `ip_addresses` and `dns_records` tables extending `dhcp_subnets` as
+  the subnet source of truth; full CRUD API for subnets, IP address documentation, DNS
+  records; live Kea lease integration for subnet utilization maps; conflict detection
+  (static IPs in DHCP pool without reservations)
+- **Real-time student activity**: Socket.io bridge from extension tab events to teacher
+  class rooms via Redis-cached class membership; `student:activity` events highlight
+  navigations in the active lesson view
+
 ---
 
 ## [0.0.1] - 2026-06-15

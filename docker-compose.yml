@@ -17,7 +17,7 @@ services:
   # PostgreSQL 15
   # ---------------------------------------------------------------------------
   postgres:
-    image: postgres:15-alpine
+    image: timescale/timescaledb:latest-pg15
     container_name: classguard-postgres
     restart: unless-stopped
     environment:

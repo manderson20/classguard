@@ -123,6 +123,39 @@ jobs:
         env:
           VITE_API_URL: https://classguard.example.org
 
+  chrome-extension:
+    name: Chrome Extension — build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: chrome-extension
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: chrome-extension/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build extension
+        run: npm run build
+        env:
+          BACKEND_URL:      https://classguard.example.org
+          GOOGLE_CLIENT_ID: placeholder-ci-client-id.apps.googleusercontent.com
+
+      - name: Verify dist output
+        run: |
+          test -f dist/manifest.json
+          test -f dist/service-worker.bundle.js
+          test -f dist/popup.html
+          test -f dist/blocked.html
+
   docker-compose-check:
     name: Docker Compose — validate
     runs-on: ubuntu-latest

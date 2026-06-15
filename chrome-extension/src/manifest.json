@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "ClassGuard",
+  "short_name": "ClassGuard",
+  "version": "0.0.1",
+  "description": "ClassGuard school internet safety — student device monitoring and policy enforcement.",
+
+  "permissions": [
+    "storage",
+    "identity",
+    "tabs",
+    "declarativeNetRequest",
+    "declarativeNetRequestWithHostAccess",
+    "alarms",
+    "activeTab"
+  ],
+
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "service_worker": "service-worker.bundle.js"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content-script.bundle.js"],
+      "run_at": "document_start",
+      "all_frames": false
+    }
+  ],
+
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "ClassGuard"
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": ["blocked.html", "blocked.bundle.js"],
+      "matches":   ["<all_urls>"]
+    }
+  ],
+
+  "oauth2": {
+    "client_id": "__GOOGLE_CLIENT_ID__",
+    "scopes": ["openid", "email", "profile"]
+  },
+
+  "declarative_net_request": {
+    "rule_resources": []
+  }
+}

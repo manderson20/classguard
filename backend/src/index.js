@@ -59,9 +59,7 @@ app.use('/api/v1/classes',     require('./routes/classes'));
 app.use('/api/v1/extension',   require('./routes/extension'));
 app.use('/api/v1/sync',        require('./routes/sync'));
 app.use('/api/v1/dhcp',        require('./routes/dhcp'));
-
-// DoH endpoint forwarded from Nginx
-app.get('/dns-query', require('./routes/dns').handle ?? ((req, res) => res.status(501).end()));
+app.use('/api/v1/ipam',        require('./routes/ipam'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
 app.get('/health', async (req, res) => {
@@ -86,6 +84,10 @@ app.use((err, req, res, _next) => {
 // ---------------------------------------------------------------------------
 // Socket.io — Redis adapter enables multi-node pub/sub
 // ---------------------------------------------------------------------------
+const io = new Server(server, {
+  cors: { origin: config.frontendUrl, methods: ['GET', 'POST'] },
+});
+
 (async () => {
   try {
     const pubClient = new Redis(config.redis.url);
@@ -95,10 +97,6 @@ app.use((err, req, res, _next) => {
     console.warn('Redis adapter unavailable — Socket.io running in single-node mode');
   }
 })();
-
-const io = new Server(server, {
-  cors: { origin: config.frontendUrl, methods: ['GET', 'POST'] },
-});
 
 setupSockets(io);
 
