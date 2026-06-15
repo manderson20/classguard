@@ -60,6 +60,7 @@ app.use('/api/v1/extension',   require('./routes/extension'));
 app.use('/api/v1/sync',        require('./routes/sync'));
 app.use('/api/v1/dhcp',        require('./routes/dhcp'));
 app.use('/api/v1/ipam',        require('./routes/ipam'));
+app.use('/api/v1/settings',    require('./routes/settings'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
 app.get('/health', async (req, res) => {

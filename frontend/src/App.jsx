@@ -7,6 +7,7 @@ import Layout from './components/Layout';
 // Auth pages
 import Login        from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
+import Setup        from './pages/Setup';
 
 // Teacher pages
 import Classes      from './pages/Classes';
@@ -53,6 +54,7 @@ function RequireAuth({ children, minRole = 'teacher' }) {
 export default function App() {
   return (
     <Routes>
+      <Route path="/setup"          element={<Setup />} />
       <Route path="/login"         element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
 

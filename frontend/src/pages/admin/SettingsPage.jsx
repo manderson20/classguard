@@ -36,8 +36,31 @@ export default function SettingsPage() {
     queryFn:  () => api.get('/settings').catch(() => ({})),
   });
 
-  const [dns, setDns] = useState({});
+  const [dns, setDns]     = useState({});
+  const [google, setGoogle] = useState({
+    google_client_id: '', google_client_secret: '', google_redirect_uri: '', google_workspace_domain: '',
+  });
   const [saved, setSaved] = useState('');
+
+  useEffect(() => {
+    if (appSettings && Object.keys(appSettings).length) {
+      setGoogle(g => ({
+        google_client_id:        appSettings.google_client_id        || '',
+        google_client_secret:    appSettings.google_client_secret    || '',
+        google_redirect_uri:     appSettings.google_redirect_uri     || '',
+        google_workspace_domain: appSettings.google_workspace_domain || '',
+      }));
+    }
+  }, [appSettings]);
+
+  const saveGoogle = useMutation({
+    mutationFn: () => api.put('/settings', google),
+    onSuccess:  () => {
+      qc.invalidateQueries({ queryKey: ['app-settings'] });
+      setSaved('google');
+      setTimeout(() => setSaved(''), 2500);
+    },
+  });
 
   useEffect(() => {
     if (dnsSettings && Object.keys(dnsSettings).length) {
@@ -65,6 +88,67 @@ export default function SettingsPage() {
         <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
         <p className="text-slate-500 text-sm mt-0.5">System-wide configuration</p>
       </div>
+
+      {/* Google OAuth */}
+      <Section title="Google Workspace Login">
+        <p className="text-xs text-slate-500 mb-4">
+          Configure Google OAuth to let teachers and students sign in with their school Google accounts.
+          <br />
+          <strong>Setup steps:</strong>{' '}
+          <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer"
+            className="text-primary-600 underline">Google Cloud Console</a>
+          {' '}→ APIs &amp; Services → Credentials → Create OAuth 2.0 Client ID (Web application).
+          Add <code className="bg-slate-100 px-1 rounded font-mono text-xs">{window.location.origin}/auth/callback</code> as
+          an Authorized redirect URI.
+        </p>
+        {appLoading ? <div className="text-slate-400 text-sm">Loading…</div> : (
+          <>
+            <Field label="Google Client ID" hint="Paste from Google Cloud Console">
+              <input
+                className="input text-sm font-mono"
+                value={google.google_client_id}
+                onChange={e => setGoogle(g => ({ ...g, google_client_id: e.target.value }))}
+                placeholder="123456789-xxx.apps.googleusercontent.com"
+              />
+            </Field>
+            <Field label="Google Client Secret" hint="Keep this secret">
+              <input
+                type="password"
+                className="input text-sm font-mono"
+                value={google.google_client_secret}
+                onChange={e => setGoogle(g => ({ ...g, google_client_secret: e.target.value }))}
+                placeholder="GOCSPX-…"
+              />
+            </Field>
+            <Field label="Authorized Redirect URI" hint="Must match what you entered in Google Cloud Console">
+              <input
+                className="input text-sm font-mono"
+                value={google.google_redirect_uri}
+                onChange={e => setGoogle(g => ({ ...g, google_redirect_uri: e.target.value }))}
+                placeholder={`${window.location.origin}/auth/callback`}
+              />
+            </Field>
+            <Field label="Workspace Domain" hint="Restrict login to this domain (e.g. school.org). Leave blank to allow any Google account.">
+              <input
+                className="input text-sm font-mono"
+                value={google.google_workspace_domain}
+                onChange={e => setGoogle(g => ({ ...g, google_workspace_domain: e.target.value }))}
+                placeholder="school.org"
+              />
+            </Field>
+            <div className="flex items-center gap-3 pt-4">
+              <button
+                className="btn-primary"
+                onClick={() => saveGoogle.mutate()}
+                disabled={saveGoogle.isPending}
+              >
+                {saveGoogle.isPending ? 'Saving…' : 'Save Google Settings'}
+              </button>
+              {saved === 'google' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+            </div>
+          </>
+        )}
+      </Section>
 
       {/* DNS Settings */}
       <Section title="DNS Engine">
