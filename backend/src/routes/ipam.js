@@ -333,6 +333,369 @@ router.get('/leases', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// IPAM Sections
+// ---------------------------------------------------------------------------
+
+router.get('/sections', async (req, res) => {
+  const { rows } = await query(`SELECT * FROM ipam_sections ORDER BY name`);
+  res.json(rows);
+});
+
+router.post('/sections', async (req, res) => {
+  const { name, description, parent_id, color } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const { rows } = await query(
+    `INSERT INTO ipam_sections (name, description, parent_id, color, created_by)
+     VALUES ($1,$2,$3,$4,$5) RETURNING *`,
+    [name, description ?? null, parent_id ?? null, color ?? null, req.user.userId]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.put('/sections/:id', async (req, res) => {
+  const { name, description, parent_id, color } = req.body;
+  const { rows } = await query(
+    `UPDATE ipam_sections SET name=COALESCE($2,name), description=$3, parent_id=$4, color=$5
+     WHERE id=$1 RETURNING *`,
+    [req.params.id, name, description ?? null, parent_id ?? null, color ?? null]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Section not found' });
+  res.json(rows[0]);
+});
+
+router.delete('/sections/:id', async (req, res) => {
+  const { rows } = await query('DELETE FROM ipam_sections WHERE id=$1 RETURNING id', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Section not found' });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// VRFs
+// ---------------------------------------------------------------------------
+
+router.get('/vrfs', async (req, res) => {
+  const { rows } = await query(`SELECT * FROM vrfs ORDER BY name`);
+  res.json(rows);
+});
+
+router.post('/vrfs', async (req, res) => {
+  const { name, rd, description } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  try {
+    const { rows } = await query(
+      `INSERT INTO vrfs (name, rd, description, created_by) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [name, rd ?? null, description ?? null, req.user.userId]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'VRF name already exists' });
+    throw err;
+  }
+});
+
+router.put('/vrfs/:id', async (req, res) => {
+  const { name, rd, description } = req.body;
+  const { rows } = await query(
+    `UPDATE vrfs SET name=COALESCE($2,name), rd=$3, description=$4 WHERE id=$1 RETURNING *`,
+    [req.params.id, name, rd ?? null, description ?? null]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'VRF not found' });
+  res.json(rows[0]);
+});
+
+router.delete('/vrfs/:id', async (req, res) => {
+  const { rows } = await query('DELETE FROM vrfs WHERE id=$1 RETURNING id', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'VRF not found' });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// VLANs
+// ---------------------------------------------------------------------------
+
+router.get('/vlans', async (req, res) => {
+  const { rows } = await query(
+    `SELECT v.*, s.name AS section_name FROM vlans v
+     LEFT JOIN ipam_sections s ON s.id = v.section_id
+     ORDER BY v.vlan_id`
+  );
+  res.json(rows);
+});
+
+router.post('/vlans', async (req, res) => {
+  const { vlan_id, name, description, section_id } = req.body;
+  if (!vlan_id) return res.status(400).json({ error: 'vlan_id required' });
+  try {
+    const { rows } = await query(
+      `INSERT INTO vlans (vlan_id, name, description, section_id) VALUES ($1,$2,$3,$4) RETURNING *`,
+      [vlan_id, name ?? null, description ?? null, section_id ?? null]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'VLAN ID already exists' });
+    throw err;
+  }
+});
+
+router.put('/vlans/:id', async (req, res) => {
+  const { name, description, section_id } = req.body;
+  const { rows } = await query(
+    `UPDATE vlans SET name=$2, description=$3, section_id=$4 WHERE id=$1 RETURNING *`,
+    [req.params.id, name ?? null, description ?? null, section_id ?? null]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'VLAN not found' });
+  res.json(rows[0]);
+});
+
+router.delete('/vlans/:id', async (req, res) => {
+  const { rows } = await query('DELETE FROM vlans WHERE id=$1 RETURNING id', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'VLAN not found' });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// Locations
+// ---------------------------------------------------------------------------
+
+router.get('/locations', async (req, res) => {
+  const { rows } = await query(`SELECT * FROM locations ORDER BY name`);
+  res.json(rows);
+});
+
+router.post('/locations', async (req, res) => {
+  const { name, address, description, parent_id, lat, lng } = req.body;
+  if (!name) return res.status(400).json({ error: 'name required' });
+  const { rows } = await query(
+    `INSERT INTO locations (name, address, description, parent_id, lat, lng)
+     VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+    [name, address ?? null, description ?? null, parent_id ?? null, lat ?? null, lng ?? null]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.put('/locations/:id', async (req, res) => {
+  const { name, address, description, lat, lng } = req.body;
+  const { rows } = await query(
+    `UPDATE locations SET name=COALESCE($2,name), address=$3, description=$4, lat=$5, lng=$6
+     WHERE id=$1 RETURNING *`,
+    [req.params.id, name, address ?? null, description ?? null, lat ?? null, lng ?? null]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Location not found' });
+  res.json(rows[0]);
+});
+
+router.delete('/locations/:id', async (req, res) => {
+  const { rows } = await query('DELETE FROM locations WHERE id=$1 RETURNING id', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Location not found' });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// IPAM Subnets (IPv4 + IPv6, nested)
+// ---------------------------------------------------------------------------
+
+router.get('/ipam-subnets', async (req, res) => {
+  const { section_id, vrf_id, ip_version, parent_id } = req.query;
+  const conds = [], vals = [];
+  if (section_id)  { conds.push(`s.section_id  = $${vals.length+1}`); vals.push(section_id); }
+  if (vrf_id)      { conds.push(`s.vrf_id      = $${vals.length+1}`); vals.push(vrf_id); }
+  if (ip_version)  { conds.push(`s.ip_version  = $${vals.length+1}`); vals.push(ip_version); }
+  if (parent_id === 'null') { conds.push('s.parent_id IS NULL'); }
+  else if (parent_id) { conds.push(`s.parent_id = $${vals.length+1}`); vals.push(parent_id); }
+
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const { rows } = await query(
+    `SELECT s.*,
+            sec.name AS section_name,
+            v.name AS vrf_name,
+            vl.vlan_id, vl.name AS vlan_name,
+            l.name AS location_name,
+            COUNT(ia.id) AS ip_count
+     FROM ipam_subnets s
+     LEFT JOIN ipam_sections sec ON sec.id = s.section_id
+     LEFT JOIN vrfs v            ON v.id   = s.vrf_id
+     LEFT JOIN vlans vl          ON vl.id  = s.vlan_id
+     LEFT JOIN locations l       ON l.id   = s.location_id
+     LEFT JOIN ip_addresses ia   ON ia.ipam_subnet_id = s.id
+     ${where}
+     GROUP BY s.id, sec.name, v.name, vl.vlan_id, vl.name, l.name
+     ORDER BY s.subnet`, vals
+  );
+  res.json(rows);
+});
+
+router.get('/ipam-subnets/:id', async (req, res) => {
+  const { rows } = await query(
+    `SELECT s.*, sec.name AS section_name, v.name AS vrf_name,
+            vl.vlan_id, vl.name AS vlan_name, l.name AS location_name
+     FROM ipam_subnets s
+     LEFT JOIN ipam_sections sec ON sec.id = s.section_id
+     LEFT JOIN vrfs v            ON v.id   = s.vrf_id
+     LEFT JOIN vlans vl          ON vl.id  = s.vlan_id
+     LEFT JOIN locations l       ON l.id   = s.location_id
+     WHERE s.id = $1`, [req.params.id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Subnet not found' });
+
+  // Children
+  const { rows: children } = await query(
+    'SELECT * FROM ipam_subnets WHERE parent_id = $1 ORDER BY subnet', [req.params.id]
+  );
+  res.json({ ...rows[0], children });
+});
+
+router.post('/ipam-subnets', async (req, res) => {
+  const {
+    subnet, ip_version = 4, name, description, section_id, vrf_id, vlan_id,
+    location_id, parent_id, gateway, dns_servers, tags, notes,
+  } = req.body;
+  if (!subnet) return res.status(400).json({ error: 'subnet required' });
+  try {
+    const { rows } = await query(
+      `INSERT INTO ipam_subnets
+         (subnet,ip_version,name,description,section_id,vrf_id,vlan_id,location_id,
+          parent_id,gateway,dns_servers,tags,notes,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [subnet, ip_version, name??null, description??null, section_id??null, vrf_id??null,
+       vlan_id??null, location_id??null, parent_id??null, gateway??null,
+       dns_servers ?? [], tags ?? [], notes??null, req.user.userId]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Subnet already exists in this VRF' });
+    throw err;
+  }
+});
+
+router.put('/ipam-subnets/:id', async (req, res) => {
+  const allowed = ['name','description','section_id','vrf_id','vlan_id','location_id',
+                   'parent_id','gateway','dns_servers','tags','notes','is_full','allow_requests'];
+  const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
+  if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+  const sets = fields.map((f,i) => `${f}=$${i+2}`).join(', ');
+  const vals = fields.map(f => req.body[f]);
+  const { rows } = await query(
+    `UPDATE ipam_subnets SET ${sets}, updated_at=NOW() WHERE id=$1 RETURNING *`,
+    [req.params.id, ...vals]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Subnet not found' });
+  res.json(rows[0]);
+});
+
+router.delete('/ipam-subnets/:id', async (req, res) => {
+  const { rows } = await query('DELETE FROM ipam_subnets WHERE id=$1 RETURNING id', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Subnet not found' });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// BGP Prefixes
+// ---------------------------------------------------------------------------
+
+router.get('/bgp', async (req, res) => {
+  const { ip_version, status, asn } = req.query;
+  const conds = [], vals = [];
+  if (ip_version) { conds.push(`ip_version=$${vals.length+1}`); vals.push(ip_version); }
+  if (status)     { conds.push(`status=$${vals.length+1}`);     vals.push(status); }
+  if (asn)        { conds.push(`(asn=$${vals.length+1} OR peer_asn=$${vals.length+1})`); vals.push(parseInt(asn, 10)); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const { rows } = await query(
+    `SELECT b.*, v.name AS vrf_name FROM bgp_prefixes b
+     LEFT JOIN vrfs v ON v.id = b.vrf_id
+     ${where} ORDER BY b.prefix`, vals
+  );
+  res.json(rows);
+});
+
+router.post('/bgp', async (req, res) => {
+  const { prefix, ip_version=4, description, asn, peer_asn, peer_ip, next_hop,
+          origin, status='active', communities=[], vrf_id, notes } = req.body;
+  if (!prefix) return res.status(400).json({ error: 'prefix required' });
+  const { rows } = await query(
+    `INSERT INTO bgp_prefixes
+       (prefix,ip_version,description,asn,peer_asn,peer_ip,next_hop,origin,status,communities,vrf_id,notes,created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+    [prefix, ip_version, description??null, asn??null, peer_asn??null, peer_ip??null,
+     next_hop??null, origin??null, status, communities, vrf_id??null, notes??null, req.user.userId]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.put('/bgp/:id', async (req, res) => {
+  const allowed = ['description','asn','peer_asn','peer_ip','next_hop','origin','status','communities','vrf_id','notes'];
+  const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
+  if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+  const sets = fields.map((f,i) => `${f}=$${i+2}`).join(', ');
+  const { rows } = await query(
+    `UPDATE bgp_prefixes SET ${sets}, updated_at=NOW() WHERE id=$1 RETURNING *`,
+    [req.params.id, ...fields.map(f => req.body[f])]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'BGP prefix not found' });
+  res.json(rows[0]);
+});
+
+router.delete('/bgp/:id', async (req, res) => {
+  const { rows } = await query('DELETE FROM bgp_prefixes WHERE id=$1 RETURNING id', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'BGP prefix not found' });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// NAT Rules
+// ---------------------------------------------------------------------------
+
+router.get('/nat', async (req, res) => {
+  const { nat_type, is_active } = req.query;
+  const conds = [], vals = [];
+  if (nat_type)  { conds.push(`nat_type=$${vals.length+1}`);  vals.push(nat_type); }
+  if (is_active !== undefined) { conds.push(`is_active=$${vals.length+1}`); vals.push(is_active === 'true'); }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const { rows } = await query(
+    `SELECT * FROM nat_rules ${where} ORDER BY name`, vals
+  );
+  res.json(rows);
+});
+
+router.post('/nat', async (req, res) => {
+  const {
+    name, nat_type, src_prefix, dst_prefix, translated_src, translated_dst,
+    src_port, dst_port, translated_port, protocol='any', interface: iface,
+    description, is_active=true, notes,
+  } = req.body;
+  if (!name || !nat_type) return res.status(400).json({ error: 'name and nat_type required' });
+  const { rows } = await query(
+    `INSERT INTO nat_rules
+       (name,nat_type,src_prefix,dst_prefix,translated_src,translated_dst,
+        src_port,dst_port,translated_port,protocol,interface,description,is_active,notes,created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15) RETURNING *`,
+    [name, nat_type, src_prefix??null, dst_prefix??null, translated_src??null,
+     translated_dst??null, src_port??null, dst_port??null, translated_port??null,
+     protocol, iface??null, description??null, is_active, notes??null, req.user.userId]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.put('/nat/:id', async (req, res) => {
+  const allowed = ['name','nat_type','src_prefix','dst_prefix','translated_src','translated_dst',
+                   'src_port','dst_port','translated_port','protocol','interface','description','is_active','notes'];
+  const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
+  if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+  const sets = fields.map((f,i) => `"${f}"=$${i+2}`).join(', ');
+  const { rows } = await query(
+    `UPDATE nat_rules SET ${sets}, updated_at=NOW() WHERE id=$1 RETURNING *`,
+    [req.params.id, ...fields.map(f => req.body[f])]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'NAT rule not found' });
+  res.json(rows[0]);
+});
+
+router.delete('/nat/:id', async (req, res) => {
+  const { rows } = await query('DELETE FROM nat_rules WHERE id=$1 RETURNING id', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'NAT rule not found' });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
 // IP arithmetic helpers
 // ---------------------------------------------------------------------------
 function ipToInt(ip) {

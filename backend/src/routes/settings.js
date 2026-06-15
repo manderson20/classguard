@@ -8,16 +8,18 @@ const auth = [authenticate, requireMinRole('admin')];
 
 // Keys that admins are allowed to read/write via this endpoint
 const ALLOWED_KEYS = new Set([
-  'google_client_id',
-  'google_client_secret',
-  'google_redirect_uri',
-  'google_workspace_domain',
-  'google_customer_id',
-  'default_policy_id',
-  'blocklist_sync_cron',
-  'dns_log_retention_days',
-  'last_google_sync',
-  'google_ous',
+  'google_client_id', 'google_client_secret', 'google_redirect_uri',
+  'google_workspace_domain', 'google_customer_id',
+  'default_policy_id', 'blocklist_sync_cron', 'dns_log_retention_days',
+  'last_google_sync', 'google_ous',
+  // Integrations
+  'zammad_url', 'zammad_token',
+  'mosyle_access_token',
+  'snipeit_url', 'snipeit_token',
+  'phpipam_url', 'phpipam_app_id', 'phpipam_username', 'phpipam_password',
+  'last_mosyle_sync', 'last_snipeit_sync', 'last_zammad_sync',
+  // AD/LDAP
+  'ldap_url', 'ldap_bind_dn', 'ldap_bind_password', 'ldap_base_dn', 'ldap_user_filter',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object

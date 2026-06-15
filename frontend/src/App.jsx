@@ -26,9 +26,13 @@ import DnsLogs         from './pages/admin/DnsLogs';
 import DnsStats        from './pages/admin/DnsStats';
 import BlocklistsPage  from './pages/admin/BlocklistsPage';
 import IpamPage        from './pages/admin/IpamPage';
+import IpamFullPage    from './pages/admin/IpamFullPage';
 import SubnetDetail    from './pages/admin/SubnetDetail';
-import DhcpManagement from './pages/admin/DhcpManagement';
+import DhcpManagement  from './pages/admin/DhcpManagement';
 import SettingsPage    from './pages/admin/SettingsPage';
+import IntegrationsPage from './pages/admin/IntegrationsPage';
+import HaPage          from './pages/admin/HaPage';
+import NtpPage         from './pages/admin/NtpPage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
@@ -79,9 +83,13 @@ export default function App() {
           <Route path="/admin/dns/logs"               element={<DnsLogs />} />
           <Route path="/admin/dns/stats"              element={<DnsStats />} />
           <Route path="/admin/blocklists"             element={<BlocklistsPage />} />
-          <Route path="/admin/ipam"                   element={<IpamPage />} />
+          <Route path="/admin/ipam"                   element={<IpamFullPage />} />
+          <Route path="/admin/ipam/subnets"           element={<IpamPage />} />
           <Route path="/admin/ipam/subnets/:subnetId" element={<SubnetDetail />} />
           <Route path="/admin/dhcp"                   element={<DhcpManagement />} />
+          <Route path="/admin/integrations"           element={<IntegrationsPage />} />
+          <Route path="/admin/ha"                     element={<HaPage />} />
+          <Route path="/admin/ntp"                    element={<NtpPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
         </Route>
       </Route>

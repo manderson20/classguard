@@ -11,6 +11,7 @@ const Redis = require('ioredis');
 const config          = require('./config');
 const setupSockets    = require('./sockets');
 const { startScheduler } = require('./services/scheduler');
+const { startHeartbeat } = require('./routes/ha');
 
 const app    = express();
 const server = http.createServer(app);
@@ -60,7 +61,10 @@ app.use('/api/v1/extension',   require('./routes/extension'));
 app.use('/api/v1/sync',        require('./routes/sync'));
 app.use('/api/v1/dhcp',        require('./routes/dhcp'));
 app.use('/api/v1/ipam',        require('./routes/ipam'));
-app.use('/api/v1/settings',    require('./routes/settings'));
+app.use('/api/v1/settings',      require('./routes/settings'));
+app.use('/api/v1/integrations',  require('./routes/integrations'));
+app.use('/api/v1/ha',            require('./routes/ha'));
+app.use('/api/v1/ntp',           require('./routes/ntp'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
 app.get('/health', async (req, res) => {
@@ -123,6 +127,7 @@ process.on('SIGINT',  () => shutdown('SIGINT'));
 server.listen(config.port, () => {
   console.log(`ClassGuard API  →  http://localhost:${config.port}  [${config.nodeEnv}]`);
   startScheduler();
+  startHeartbeat();
 });
 
 module.exports = { app, io };

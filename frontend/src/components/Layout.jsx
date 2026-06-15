@@ -8,16 +8,19 @@ const TEACHER_NAV = [
 ];
 
 const ADMIN_NAV = [
-  { to: '/admin',           icon: '📊', label: 'Dashboard' },
-  { to: '/admin/users',     icon: '👥', label: 'Users' },
-  { to: '/admin/policies',  icon: '📋', label: 'Policies' },
-  { to: '/admin/groups',    icon: '🔗', label: 'Groups' },
-  { to: '/admin/dns/logs',  icon: '🌐', label: 'DNS Logs' },
-  { to: '/admin/dns/stats', icon: '📈', label: 'DNS Stats' },
-  { to: '/admin/blocklists',icon: '🛡️', label: 'Blocklists' },
-  { to: '/admin/ipam',      icon: '🗺️', label: 'IPAM' },
-  { to: '/admin/dhcp',      icon: '📡', label: 'DHCP' },
-  { to: '/admin/settings',  icon: '⚙️', label: 'Settings' },
+  { to: '/admin',                icon: '📊', label: 'Dashboard' },
+  { to: '/admin/users',          icon: '👥', label: 'Users' },
+  { to: '/admin/policies',       icon: '📋', label: 'Policies' },
+  { to: '/admin/groups',         icon: '🔗', label: 'Groups' },
+  { to: '/admin/dns/logs',       icon: '🌐', label: 'DNS Logs' },
+  { to: '/admin/dns/stats',      icon: '📈', label: 'DNS Stats' },
+  { to: '/admin/blocklists',     icon: '🛡️', label: 'Blocklists' },
+  { to: '/admin/ipam',           icon: '🗺️', label: 'IPAM' },
+  { to: '/admin/dhcp',           icon: '📡', label: 'DHCP' },
+  { to: '/admin/integrations',   icon: '🔌', label: 'Integrations' },
+  { to: '/admin/ntp',            icon: '🕐', label: 'NTP' },
+  { to: '/admin/ha',             icon: '🔄', label: 'HA Cluster' },
+  { to: '/admin/settings',       icon: '⚙️', label: 'Settings' },
 ];
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };

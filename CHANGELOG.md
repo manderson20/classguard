@@ -17,7 +17,7 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 > Changes staged for the next release are listed here during development.
 > This section is moved and dated when a release is cut.
 
-### Added (Phases 4–10 complete — full feature set built)
+### Added (Phases 4–10 + integrations, full IPAM, HA, NTP, Windows AD prep)
 - **Phase 4 — Policy Engine**: `policyResolver` service with full 6-level precedence chain
   (lesson → penalty_box → student → group → OU → district default); 60-second Redis cache;
   full CRUD routes for policies, assignments, groups, classes, penalty box, and users
@@ -82,6 +82,69 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
     Control Agent config, and idempotent schema-init entrypoint
   - `frontend/Dockerfile`: multi-stage build (Vite → nginx:alpine); `nginx.conf` for SPA routing
   - `docker-compose.override.yml`: dev mode — mounts source directories for `--watch` hot reload
+- **First-run setup wizard**: `GET /auth/setup-status` detects empty users table; `POST /auth/setup`
+  creates first superadmin; Setup.jsx wizard page redirects to settings on completion
+- **Local password auth**: `POST /auth/login` using `crypto.scryptSync` + `timingSafeEqual`
+  (no external deps); password min 10 chars enforced in UI
+- **Google OAuth UI config**: all Google credentials readable/writable via `PUT /api/v1/settings`;
+  `GET /auth/public-config` surfaces clientId for login page; `getGoogleConfig()` checks DB
+  settings with env-var override
+- **Settings API** (`routes/settings.js`): admin-only; ALLOWED_KEYS whitelist; upsert via
+  `ON CONFLICT (key)` pattern; covers Google, Zammad, Mosyle, Snipe-IT, PHPiPAM, LDAP keys
+- **Migration 007**: `ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash TEXT`
+- **Full IPAM replacement** (migration 008):
+  - `ipam_sections`, `locations`, `vrfs`, `vlans` tables for organisational hierarchy
+  - `ipam_subnets` with IPv4/IPv6, nested subnets (`parent_id`), section/VRF/VLAN/location FK,
+    gateway, dns_servers, DHCP link, tags, notes
+  - `bgp_prefixes` — prefix, ASN, peer ASN/IP, next-hop, origin (IGP/EGP/INCOMPLETE), status,
+    communities array, VRF FK; covers both IPv4 and IPv6
+  - `nat_rules` — source/destination/masquerade/static/PAT types, src/dst prefix, port ranges,
+    protocol, interface, active flag
+  - `ip_addresses` extended: ipam_subnet_id, ip_version, status (used/free/reserved/offline/dhcp),
+    ping_status, last_seen
+- **IPAM API extended** (`routes/ipam.js`): full CRUD for sections, VRFs, VLANs, locations,
+  ipam-subnets (with filtering), BGP prefixes, NAT rules
+- **IpamFullPage.jsx**: tabbed admin page — Subnets (IPv4/IPv6 filter), VLANs, VRFs, Sections
+  (color swatch), BGP prefixes (origin/status badges, offset bar), NAT rules; all tabs with
+  add/edit/delete modals; links back to classic subnet view
+- **Integration suite** (migration 009 + `routes/integrations.js` + four service modules):
+  - `integration_devices` table with source enum, serial, MAC array, OS type/version, assigned
+    user/email, IP addresses, status, raw_data JSONB
+  - `zammad_tickets` table linked to devices and IPs
+  - **Zammad** (`services/zammad.js`): Token auth; list/get/create ticket, add note, syncTickets;
+    reads URL+token from settings or env
+  - **Mosyle MDM** (`services/mosyle.js`): form-encoded POST with accesstoken; iOS/macOS/tvOS
+    device list; upserts to integration_devices
+  - **Snipe-IT** (`services/snipeit.js`): Bearer token; paginated asset list (500/page); upserts
+    to integration_devices
+  - **Google Admin Chromebook sync** (inline in integrations.js): pages ChromeOS device list,
+    upserts mac_addresses array, serialNumber, model, annotatedUser, lastSync
+  - **PHPiPAM import** (`services/phpipam.js`): authenticates, imports sections → VRFs → VLANs
+    → subnets → IP addresses, revokes token; async with progress callbacks
+  - `IntegrationsPage.jsx`: tabbed hub — Overview (4 status cards), All Devices (source filter),
+    per-integration tabs with sync buttons, credential settings modals, Zammad ticket creation form,
+    PHPiPAM migration wizard with connection test
+- **HA cluster management** (migration 010 + `routes/ha.js`):
+  - `nodes` table extended: ha_role (primary/standby/replica), api_url, last_seen, db_lag_bytes, version
+  - Self-registration on startup + 30s heartbeat via `startHeartbeat()`
+  - `GET /ha/nodes` probes each node's `/health` in parallel (3s timeout) for real-time health
+  - Role change, node removal, summary endpoints
+  - `HaPage.jsx`: node cards with role badges, health status, seconds-since-seen; role change modal;
+    cluster setup guide; auto-refreshes every 15s
+- **NTP monitoring** (migration 010 + `routes/ntp.js` + `services/ntp.js`):
+  - Pure Node `dgram` UDP implementation — sends 48-byte NTP client packet, parses stratum,
+    reference clock ID, offset (ms), delay (ms), jitter; no external packages
+  - `ntp_servers` seeded with Cloudflare + Google NTP; `ntp_peer_status` stores per-poll results
+  - CRUD for NTP servers; `POST /ntp/poll` async trigger; `GET /ntp/status` returns synced flag
+    and min stratum
+  - `NtpPage.jsx`: server list with poll-on-demand, stratum badges, offset visualisation bar,
+    reachability column, per-server last-checked timestamp; overall sync status banner
+- **Windows AD / LDAP prep**: `ldap_url`, `ldap_bind_dn`, `ldap_bind_password`, `ldap_base_dn`,
+  `ldap_user_filter` added to settings ALLOWED_KEYS; foundation for upcoming AD user sync and
+  LDAP login support
+- **Navigation**: Layout.jsx updated with Integrations, NTP, HA Cluster nav items
+- **Routing**: App.jsx updated with `/admin/integrations`, `/admin/ha`, `/admin/ntp`,
+  `/admin/ipam/subnets` (classic view preserved)
 
 ---
 
