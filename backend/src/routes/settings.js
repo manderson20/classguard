@@ -20,6 +20,10 @@ const ALLOWED_KEYS = new Set([
   'last_mosyle_sync', 'last_snipeit_sync', 'last_zammad_sync',
   // AD/LDAP
   'ldap_url', 'ldap_bind_dn', 'ldap_bind_password', 'ldap_base_dn', 'ldap_user_filter',
+  // AI classification
+  'ai_provider', 'ai_api_key', 'ai_model', 'ai_base_url',
+  // Zabbix
+  'zabbix_metrics_token',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object

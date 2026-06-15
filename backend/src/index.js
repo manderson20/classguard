@@ -65,6 +65,8 @@ app.use('/api/v1/settings',      require('./routes/settings'));
 app.use('/api/v1/integrations',  require('./routes/integrations'));
 app.use('/api/v1/ha',            require('./routes/ha'));
 app.use('/api/v1/ntp',           require('./routes/ntp'));
+app.use('/api/v1/ai',            require('./routes/ai'));
+app.use('/metrics',              require('./routes/metrics'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
 app.get('/health', async (req, res) => {

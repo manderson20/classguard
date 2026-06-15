@@ -40,6 +40,7 @@ export default function SettingsPage() {
   const [google, setGoogle] = useState({
     google_client_id: '', google_client_secret: '', google_redirect_uri: '', google_workspace_domain: '',
   });
+  const [zabbixToken, setZabbixToken] = useState('');
   const [saved, setSaved] = useState('');
 
   useEffect(() => {
@@ -50,6 +51,7 @@ export default function SettingsPage() {
         google_redirect_uri:     appSettings.google_redirect_uri     || '',
         google_workspace_domain: appSettings.google_workspace_domain || '',
       }));
+      setZabbixToken(appSettings.zabbix_metrics_token || '');
     }
   }, [appSettings]);
 
@@ -223,6 +225,46 @@ export default function SettingsPage() {
             SELECT alter_data_retention_policy('dns_logs', INTERVAL '90 days');
           </code>
         </p>
+      </Section>
+
+      {/* Zabbix monitoring */}
+      <Section title="Zabbix Monitoring">
+        <p className="text-sm text-slate-600 mb-4">
+          ClassGuard exposes a <code className="bg-slate-100 px-1 rounded font-mono text-xs">/metrics</code> endpoint
+          that Zabbix polls via HTTP agent items. Add a metrics token to secure the endpoint,
+          then download the host template to auto-create all Zabbix items.
+        </p>
+        <Field label="Metrics Token (X-Metrics-Token header)" hint="Leave blank to allow unauthenticated requests from localhost only">
+          <input
+            type="password"
+            className="input"
+            value={zabbixToken}
+            onChange={e => setZabbixToken(e.target.value)}
+            placeholder="Set a secret token for Zabbix to use"
+          />
+        </Field>
+        <div className="mt-3 bg-slate-50 rounded-lg p-3 text-xs font-mono text-slate-600 space-y-1">
+          <div><span className="text-slate-400">Endpoint URL:</span> {window.location.origin.replace(':5173','').replace(':5174','') || window.location.origin}:3001/metrics</div>
+          <div><span className="text-slate-400">Zabbix item type:</span> HTTP agent</div>
+          <div><span className="text-slate-400">Header:</span> X-Metrics-Token: &lt;your token&gt;</div>
+          <div><span className="text-slate-400">Output format:</span> JSON</div>
+        </div>
+        <div className="flex items-center gap-3 mt-4">
+          <button
+            className="btn-primary"
+            onClick={() => api.put('/settings', { zabbix_metrics_token: zabbixToken }).then(() => { setSaved('zabbix'); setTimeout(()=>setSaved(''),2000); })}
+          >
+            Save
+          </button>
+          <a
+            href={`/metrics/zabbix-template?token=${zabbixToken}`}
+            className="btn-secondary text-sm"
+            target="_blank" rel="noreferrer"
+          >
+            Download Zabbix Template XML
+          </a>
+          {saved === 'zabbix' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+        </div>
       </Section>
 
       {/* About */}

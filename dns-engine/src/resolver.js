@@ -7,10 +7,6 @@ const upstream       = require('./upstream');
 const policyCache    = require('./policyCache');
 const { logQuery }   = require('./logger');
 
-/**
- * Check whether a domain is covered by a list of allowed domains.
- * An entry of 'khanacademy.org' also allows 'www.khanacademy.org'.
- */
 function isInAllowList(domain, allowList) {
   if (!allowList || allowList.length === 0) return false;
   const lower = domain.toLowerCase();
@@ -21,10 +17,8 @@ function isInAllowList(domain, allowList) {
 }
 
 /**
- * Core resolution function called for every DNS query.
- *
- * Returns an object:
- *   { action: 'allowed'|'blocked', answers: [...], blockReason: string|null }
+ * Core resolution function — DNS answer is returned BEFORE the log write.
+ * All logQuery() calls are fire-and-forget to keep resolution latency near zero.
  */
 async function resolveQuery(name, typeNum, sourceIp) {
   const domain    = name.toLowerCase().replace(/\.$/, '');
@@ -46,43 +40,49 @@ async function resolveQuery(name, typeNum, sourceIp) {
     ...(policy?.resolvedAllowDomains || []),
   ];
 
-  // --- 3. Explicit allow-list check (highest priority — always passes) ---
-  if (isInAllowList(domain, allowList)) {
+  // --- 3. Global whitelist override (managed bookmarks / admin allowlist) --
+  // This runs before ANY policy block including lesson/penalty_box mode.
+  const globalAllowList = await policyCache.getGlobalAllowlist().catch(() => []);
+  if (isInAllowList(domain, globalAllowList)) {
     const answers = await forwardToUpstream(domain, typeNum);
-    await logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+    logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
     return { action: 'allowed', answers };
   }
 
-  // --- 4. Mode-based restrictions -----------------------------------------
+  // --- 4. Explicit allow-list check (per-policy) --------------------------
+  if (isInAllowList(domain, allowList)) {
+    const answers = await forwardToUpstream(domain, typeNum);
+    logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+    return { action: 'allowed', answers };
+  }
+
+  // --- 5. Mode-based restrictions -----------------------------------------
   if (mode === 'penalty_box') {
-    // Penalty box: block everything not already in the allow list
-    await logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'penalty_box' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'penalty_box' });
     return { action: 'blocked', answers: [], blockReason: 'penalty_box' };
   }
 
   if (mode === 'lesson') {
-    // Lesson mode: block everything not in the lesson allow list
-    await logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'lesson_mode' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'lesson_mode' });
     return { action: 'blocked', answers: [], blockReason: 'lesson_mode' };
   }
 
   if (mode === 'open') {
-    // Open mode: pass-through, no filtering
     const answers = await forwardToUpstream(domain, typeNum);
-    await logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+    logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
     return { action: 'allowed', answers };
   }
 
-  // --- 5. Blocklist check (standard mode) ---------------------------------
+  // --- 6. Blocklist check (standard mode) ---------------------------------
   const blocked = await blocklist.isBlocked(domain);
   if (blocked) {
-    await logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'blocklist' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'blocklist' });
     return { action: 'blocked', answers: [], blockReason: 'blocklist' };
   }
 
-  // --- 6. Allowed — forward to upstream -----------------------------------
+  // --- 7. Allowed — forward to upstream -----------------------------------
   const answers = await forwardToUpstream(domain, typeNum);
-  await logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+  logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
   return { action: 'allowed', answers };
 }
 
@@ -90,7 +90,6 @@ async function resolveQuery(name, typeNum, sourceIp) {
  * Forward to upstream resolver with Redis response caching.
  */
 async function forwardToUpstream(domain, typeNum) {
-  // Check response cache first
   const cached = await cache.get(domain, typeNum);
   if (cached) return cached;
 
@@ -106,15 +105,11 @@ async function forwardToUpstream(domain, typeNum) {
   }
 }
 
-/**
- * Build the dns2 response Packet for a given query result.
- */
 function buildResponse(request, result) {
   const response = Packet.createResponseFromRequest(request);
 
   if (result.action === 'blocked') {
     if (config.dns.blockPageIp) {
-      // Return an A record pointing to the block page server
       const [question] = request.questions;
       if (question) {
         response.answers.push({

@@ -2,8 +2,10 @@ const redis  = require('./redis');
 const axios  = require('axios');
 const config = require('./config');
 
-const POLICY_TTL    = 60;  // seconds
-const DEVICE_TTL    = 300;
+const POLICY_TTL       = 60;   // seconds
+const DEVICE_TTL       = 300;
+const ALLOWLIST_TTL    = 300;  // global allowlist refreshes every 5 minutes
+const ALLOWLIST_KEY    = 'classguard:global-allowlist';
 const DEFAULT_POLICY = { mode: 'standard', resolvedAllowDomains: [], resolvedDenyDomains: [], activeBloclistIds: [] };
 
 function policyKey(studentId) { return `student:policy:${studentId}`; }
@@ -64,4 +66,34 @@ async function invalidatePolicy(studentId) {
   await redis.del(policyKey(studentId));
 }
 
-module.exports = { getDevice, setDevice, getPolicy, invalidatePolicy };
+/**
+ * Global allowlist — managed bookmarks and admin overrides.
+ * Cached in Redis for 5 minutes; fetched from backend API on miss.
+ * Applied BEFORE any policy block — if a domain is here it's always allowed.
+ */
+async function getGlobalAllowlist() {
+  const raw = await redis.get(ALLOWLIST_KEY).catch(() => null);
+  if (raw) {
+    try { return JSON.parse(raw); } catch {}
+  }
+  try {
+    const { data } = await axios.get(
+      `${config.backend.url}/api/v1/ai/allowlist`,
+      {
+        headers: { 'x-internal-secret': config.backend.internalSecret },
+        timeout: 2000,
+      }
+    );
+    const domains = Array.isArray(data) ? data.map(r => r.domain) : [];
+    await redis.set(ALLOWLIST_KEY, JSON.stringify(domains), 'EX', ALLOWLIST_TTL);
+    return domains;
+  } catch {
+    return [];
+  }
+}
+
+async function invalidateGlobalAllowlist() {
+  await redis.del(ALLOWLIST_KEY);
+}
+
+module.exports = { getDevice, setDevice, getPolicy, invalidatePolicy, getGlobalAllowlist, invalidateGlobalAllowlist };

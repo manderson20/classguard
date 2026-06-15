@@ -33,6 +33,7 @@ import SettingsPage    from './pages/admin/SettingsPage';
 import IntegrationsPage from './pages/admin/IntegrationsPage';
 import HaPage          from './pages/admin/HaPage';
 import NtpPage         from './pages/admin/NtpPage';
+import AiPage          from './pages/admin/AiPage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
@@ -90,6 +91,7 @@ export default function App() {
           <Route path="/admin/integrations"           element={<IntegrationsPage />} />
           <Route path="/admin/ha"                     element={<HaPage />} />
           <Route path="/admin/ntp"                    element={<NtpPage />} />
+          <Route path="/admin/ai"                     element={<AiPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
         </Route>
       </Route>

@@ -10,9 +10,11 @@ const { syncAll } = require('./blocklistSync');
 // DNS engine and bulk-inserts them into the dns_logs PostgreSQL table.
 // ---------------------------------------------------------------------------
 
-const DNS_STREAM   = 'classguard:dns-log';
-const CURSOR_KEY   = 'classguard:dns-log:cursor';
-const DRAIN_BATCH  = 500;
+const DNS_STREAM  = 'classguard:dns-log';
+const CURSOR_KEY  = 'classguard:dns-log:cursor';
+// Read up to 50k entries per cycle. At 100 q/s average and 5s interval that's
+// 500 entries; 50k handles bursts of up to ~10,000 q/s without backpressure.
+const DRAIN_BATCH = 50_000;
 
 function parseStreamEntry(fields) {
   const obj = {};
@@ -23,39 +25,50 @@ function parseStreamEntry(fields) {
 }
 
 async function drainDnsLog() {
-  const cursor = (await redis.get(CURSOR_KEY)) || '0';
+  let cursor = (await redis.get(CURSOR_KEY)) || '0';
+  let total  = 0;
 
-  const result = await redis.xread('COUNT', DRAIN_BATCH, 'STREAMS', DNS_STREAM, cursor);
-  if (!result || result.length === 0) return;
+  // Drain loop — keep reading until the stream is empty so we don't fall behind
+  while (true) {
+    const result = await redis.xread('COUNT', DRAIN_BATCH, 'STREAMS', DNS_STREAM, cursor);
+    if (!result || result.length === 0) break;
 
-  const [, entries] = result[0];
-  if (!entries || entries.length === 0) return;
+    const [, entries] = result[0];
+    if (!entries || entries.length === 0) break;
 
-  const records = entries.map(([id, fields]) => ({ id, ...parseStreamEntry(fields) }));
+    const records = entries.map(([id, fields]) => ({ id, ...parseStreamEntry(fields) }));
 
-  // Batch INSERT — 5 columns × up to 500 rows = up to 2500 params (well under pg limit)
-  const valueParts = records.map((_, i) => {
-    const b = i * 5;
-    return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5})`;
-  });
+    // Use unnest() arrays — single round-trip regardless of row count,
+    // and avoids the 65535-parameter limit of $1..$N style inserts.
+    const userIds      = records.map(r => r.studentId   || null);
+    const domains      = records.map(r => r.domain      || '');
+    const actions      = records.map(r => r.action      || 'allowed');
+    const blockReasons = records.map(r => r.blockReason || null);
+    const queriedAts   = records.map(r =>
+      r.timestamp ? new Date(parseInt(r.timestamp, 10)) : new Date()
+    );
 
-  const params = records.flatMap(r => [
-    r.studentId   || null,
-    r.domain      || '',
-    r.action      || 'allowed',
-    r.blockReason || null,
-    r.timestamp   ? new Date(parseInt(r.timestamp, 10)) : new Date(),
-  ]);
+    await query(
+      `INSERT INTO dns_logs (user_id, domain, action, block_reason, queried_at)
+       SELECT * FROM unnest(
+         $1::uuid[], $2::text[], $3::text[], $4::text[], $5::timestamptz[]
+       )
+       ON CONFLICT DO NOTHING`,
+      [userIds, domains, actions, blockReasons, queriedAts]
+    );
 
-  await query(
-    `INSERT INTO dns_logs (user_id, domain, action, block_reason, queried_at)
-     VALUES ${valueParts.join(', ')}
-     ON CONFLICT DO NOTHING`,
-    params
-  );
+    cursor = entries[entries.length - 1][0];
+    total += entries.length;
 
-  const lastId = entries[entries.length - 1][0];
-  await redis.set(CURSOR_KEY, lastId);
+    // Trim already-consumed entries from the stream
+    await redis.xtrim(DNS_STREAM, 'MINID', cursor).catch(() => {});
+
+    if (entries.length < DRAIN_BATCH) break; // caught up
+  }
+
+  if (total > 0) {
+    await redis.set(CURSOR_KEY, cursor);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -122,8 +135,8 @@ function startScheduler() {
 
   console.log('[scheduler] starting background jobs');
 
-  // DNS log drain — every 30 seconds
-  cron.schedule('*/30 * * * * *', () => {
+  // DNS log drain — every 5 seconds (handles 269M+/month without backlog)
+  cron.schedule('*/5 * * * * *', () => {
     drainDnsLog().catch(err => console.error('[scheduler] dns-log drain error:', err.message));
   });
 
