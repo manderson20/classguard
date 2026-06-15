@@ -1,0 +1,63 @@
+{
+  "_comment": [
+    "ClassGuard Chrome Extension — Google Admin Force-Install Policy",
+    "",
+    "Upload instructions:",
+    "  1. In Google Admin Console, go to:",
+    "       Devices > Chrome > Apps & Extensions > Users & Browsers",
+    "  2. Select the target Organizational Unit (OU) or group.",
+    "  3. Click the '+' button > Add from Chrome Web Store.",
+    "     Enter the Extension ID: EXTENSION_ID",
+    "  4. Set Installation Policy to 'Force install'.",
+    "  5. Under 'Policy for extensions', paste the contents of the",
+    "     'ExtensionSettings' object below.",
+    "  6. Alternatively, upload this file at:",
+    "       Devices > Chrome > Policy > Upload Chrome policy",
+    "     and select 'User policy'.",
+    "",
+    "Before deploying:",
+    "  - Replace EXTENSION_ID with the published Chrome Web Store extension ID.",
+    "  - Replace CLASSGUARD_BACKEND_URL with your server URL,",
+    "    e.g. https://classguard.school.org",
+    "  - Replace CLASSGUARD_GOOGLE_CLIENT_ID with your OAuth 2.0 client ID",
+    "    (found in Google Cloud Console > APIs & Services > Credentials)."
+  ],
+
+  "ExtensionInstallForcelist": [
+    "EXTENSION_ID;https://clients2.google.com/service/update2/crx"
+  ],
+
+  "ExtensionSettings": {
+    "EXTENSION_ID": {
+      "installation_mode": "force_installed",
+      "update_url": "https://clients2.google.com/service/update2/crx",
+
+      "toolbar_pin": "force_pinned",
+
+      "blocked_permissions": [],
+      "allowed_permissions": [
+        "declarativeNetRequest",
+        "declarativeNetRequestWithHostAccess",
+        "identity",
+        "storage",
+        "tabs",
+        "webNavigation"
+      ],
+
+      "runtime_blocked_hosts": [],
+      "runtime_allowed_hosts": ["<all_urls>"],
+
+      "managed_configuration": {
+        "backendUrl":     "CLASSGUARD_BACKEND_URL",
+        "googleClientId": "CLASSGUARD_GOOGLE_CLIENT_ID",
+        "heartbeatMs":    30000,
+        "debug":          false
+      }
+    }
+  },
+
+  "ExtensionInstallBlocklist": ["*"],
+  "ExtensionInstallAllowlist": [
+    "EXTENSION_ID"
+  ]
+}

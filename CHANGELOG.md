@@ -17,7 +17,7 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 > Changes staged for the next release are listed here during development.
 > This section is moved and dated when a release is cut.
 
-### Added (Phases 4–8 complete)
+### Added (Phases 4–9 complete)
 - **Phase 4 — Policy Engine**: `policyResolver` service with full 6-level precedence chain
   (lesson → penalty_box → student → group → OU → district default); 60-second Redis cache;
   full CRUD routes for policies, assignments, groups, classes, penalty box, and users
@@ -53,6 +53,19 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
   `GET /api/v1/sync/status` (last sync time + active user/group counts)
 - **Migration 006**: partial unique index on `groups.google_group_email` (WHERE NOT NULL)
   enabling upsert on Google-backed groups while allowing multiple NULL rows
+- **Phase 9 — Deployment configs**:
+  - `infrastructure/profiles/ios-doh-profile.mobileconfig`: Apple Configuration Profile
+    (MV3 plist) deploying DoH to iOS/iPadOS/macOS via Jamf, Mosyle, or Apple Configurator
+  - `infrastructure/google-admin/forced-extension-policy.json`: Chrome policy JSON that
+    force-installs the ClassGuard extension with managed-storage config; includes upload guide
+  - `infrastructure/nginx/classguard.conf`: production Nginx config with HTTPS redirect,
+    TLS (Certbot placeholders), security headers, React SPA serving, API proxy,
+    Socket.io upgrade, and DoH endpoint proxy
+  - `infrastructure/pm2/ecosystem.config.js`: PM2 ecosystem managing `classguard-api`
+    and `classguard-dns` with OOM restarts and structured log paths
+  - `DEPLOYMENT.md`: end-to-end deployment guide covering DNS/DHCP setup, MDM DoH
+    profile delivery, Google service account + domain-wide delegation (step-by-step),
+    Chrome extension force-install, SSL renewal, and pg_dump backup cron
 
 ---
 
