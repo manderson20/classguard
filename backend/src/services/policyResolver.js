@@ -162,12 +162,29 @@ async function resolvePolicy(studentId) {
     activeBloclistIds = blRows.map(r => r.source_id);
   }
 
+  // --- Category rules for this policy ---
+  let blockedCategories = [];
+  let allowedCategories = [];
+  if (policy) {
+    const { rows: catRows } = await query(
+      `SELECT wc.slug, pcr.action
+       FROM policy_category_rules pcr
+       JOIN website_categories wc ON wc.id = pcr.category_id
+       WHERE pcr.policy_id = $1`,
+      [policy.id]
+    );
+    blockedCategories = catRows.filter(r => r.action === 'block').map(r => r.slug);
+    allowedCategories = catRows.filter(r => r.action === 'allow').map(r => r.slug);
+  }
+
   const result = {
     ...(policy || {}),
     mode:                mode || policy?.mode || 'standard',
     resolvedAllowDomains,
     resolvedDenyDomains,
     activeBloclistIds,
+    blockedCategories,
+    allowedCategories,
   };
 
   // Cache the resolved policy

@@ -24,7 +24,8 @@ import PolicyEditor    from './pages/admin/PolicyEditor';
 import GroupsPage      from './pages/admin/GroupsPage';
 import DnsLogs         from './pages/admin/DnsLogs';
 import DnsStats        from './pages/admin/DnsStats';
-import BlocklistsPage  from './pages/admin/BlocklistsPage';
+import BlocklistsPage     from './pages/admin/BlocklistsPage';
+import ContentCategories  from './pages/admin/ContentCategories';
 import IpamPage        from './pages/admin/IpamPage';
 import IpamFullPage    from './pages/admin/IpamFullPage';
 import SubnetDetail    from './pages/admin/SubnetDetail';
@@ -90,6 +91,7 @@ export default function App() {
           <Route path="/admin/dns/logs"               element={<DnsLogs />} />
           <Route path="/admin/dns/stats"              element={<DnsStats />} />
           <Route path="/admin/blocklists"             element={<BlocklistsPage />} />
+          <Route path="/admin/categories"            element={<ContentCategories />} />
           <Route path="/admin/ipam"                   element={<IpamFullPage />} />
           <Route path="/admin/ipam/subnets"           element={<IpamPage />} />
           <Route path="/admin/ipam/subnets/:subnetId" element={<SubnetDetail />} />

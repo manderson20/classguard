@@ -4,6 +4,7 @@ const { query } = require('../db');
 const config = require('../config');
 const { syncAll } = require('./blocklistSync');
 const { syncNetworkClientsToIpam } = require('./ipamSync');
+const { syncAll: syncCategories, classifyRecentDomains } = require('./categoryImport');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -163,9 +164,19 @@ function startScheduler() {
   });
 
   // Network controller → IPAM sync — every 15 minutes
-  // Syncs live network clients (MAC, IP, hostname) into IPAM ip_addresses records.
   cron.schedule('*/15 * * * *', () => {
     syncNetworkClientsToIpam().catch(err => console.error('[scheduler] ipam-sync error:', err.message));
+  });
+
+  // Category list sync — weekly Sunday 3am (UT1 + Shallalist)
+  cron.schedule('0 3 * * 0', () => {
+    console.log('[scheduler] starting weekly category list sync');
+    syncCategories().catch(err => console.error('[scheduler] category sync error:', err.message));
+  });
+
+  // Keyword classifier — daily 4am, processes uncategorized domains from DNS logs
+  cron.schedule('0 4 * * *', () => {
+    classifyRecentDomains(1000).catch(err => console.error('[scheduler] keyword classifier error:', err.message));
   });
 }
 

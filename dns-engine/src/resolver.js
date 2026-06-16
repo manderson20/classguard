@@ -2,6 +2,7 @@ const DNS            = require('dns2');
 const { Packet }     = DNS;
 const config         = require('./config');
 const blocklist      = require('./blocklistLoader');
+const categoryLookup = require('./categoryLookup');
 const cache          = require('./cache');
 const upstream       = require('./upstream');
 const policyCache    = require('./policyCache');
@@ -88,6 +89,17 @@ async function resolveQuery(name, typeNum, sourceIp) {
   if (blocked) {
     logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'blocklist' });
     return { action: 'blocked', answers: [], blockReason: 'blocklist' };
+  }
+
+  // --- 7.5. Category check ------------------------------------------------
+  // One Redis HGET (pipelined across parent domains) — sub-millisecond.
+  const category       = await categoryLookup.getCategoryForDomain(domain).catch(() => null);
+  const blockedCats    = policy?.blockedCategories || [];
+  const allowedCatSet  = new Set(policy?.allowedCategories || []);
+
+  if (category && blockedCats.includes(category)) {
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: `category:${category}` });
+    return { action: 'blocked', answers: [], blockReason: `category:${category}` };
   }
 
   // --- 8. Allowed — forward to upstream -----------------------------------
