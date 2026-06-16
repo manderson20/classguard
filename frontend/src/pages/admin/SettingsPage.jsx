@@ -23,6 +23,80 @@ function Field({ label, hint, children }) {
   );
 }
 
+function ExtensionDeploySection({ googleClientId }) {
+  const [copied, setCopied] = useState('');
+  const serverUrl = window.location.origin;
+
+  const policy = JSON.stringify({
+    serverUrl,
+    googleClientId: googleClientId || '<paste-client-id-above>',
+  }, null, 2);
+
+  const copy = (key, text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(''), 2000);
+  };
+
+  return (
+    <Section title="Chrome Extension — Google Admin Deployment">
+      <p className="text-xs text-slate-500 mb-4">
+        ClassGuard uses a single generic extension that self-configures per school via Google Admin Console
+        managed storage — no custom build required. Follow these steps to deploy it.
+      </p>
+
+      <div className="space-y-5">
+        {/* Step 1 */}
+        <div>
+          <div className="text-sm font-semibold text-slate-700 mb-1">Step 1 — Publish or sideload the extension</div>
+          <p className="text-xs text-slate-500">
+            Either upload the built <code className="bg-slate-100 px-1 rounded font-mono">dist/</code> folder to the Chrome Web Store
+            as an unlisted extension, or use Google Admin → Devices → Chrome → Apps &amp; Extensions → Force-install from CRX.
+            Copy the extension ID once it's installed.
+          </p>
+        </div>
+
+        {/* Step 2 */}
+        <div>
+          <div className="text-sm font-semibold text-slate-700 mb-2">Step 2 — Deploy this policy via Google Admin Console</div>
+          <p className="text-xs text-slate-500 mb-2">
+            Google Admin → Devices → Chrome → Apps &amp; Extensions → select your extension → Policy for extensions (JSON) → paste below.
+          </p>
+          <div className="relative">
+            <pre className="bg-slate-800 text-green-300 text-xs rounded p-3 overflow-auto leading-5">{policy}</pre>
+            <button
+              onClick={() => copy('policy', policy)}
+              className="absolute top-2 right-2 text-xs bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded"
+            >
+              {copied === 'policy' ? 'Copied!' : 'Copy'}
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-1">
+            <strong>serverUrl</strong> is pre-filled with this server's origin.{' '}
+            <strong>googleClientId</strong> comes from the Google Workspace Login section above — save that first.
+          </p>
+        </div>
+
+        {/* Step 3 */}
+        <div>
+          <div className="text-sm font-semibold text-slate-700 mb-1">Step 3 — Force-install the extension</div>
+          <p className="text-xs text-slate-500">
+            In the same Apps &amp; Extensions screen, set the install policy to <strong>Force install</strong> for your student OUs.
+            The extension will auto-configure itself on next device sync (usually within 15 minutes).
+          </p>
+        </div>
+
+        {/* What managed storage replaces */}
+        <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-700">
+          <strong>How it works:</strong> The extension reads <code className="font-mono">chrome.storage.managed</code> at runtime to
+          discover the ClassGuard server URL. This means one extension package works for every school district —
+          each school's admin sets their own server URL via the Google Admin policy, exactly like GoGuardian's deployment model.
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 export default function SettingsPage() {
   const qc = useQueryClient();
 
@@ -266,6 +340,9 @@ export default function SettingsPage() {
           {saved === 'zabbix' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
         </div>
       </Section>
+
+      {/* Chrome Extension Deployment */}
+      <ExtensionDeploySection googleClientId={google.google_client_id} />
 
       {/* About */}
       <Section title="About">

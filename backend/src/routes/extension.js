@@ -3,12 +3,19 @@
 const { Router }          = require('express');
 const { OAuth2Client }    = require('google-auth-library');
 const jwt                 = require('jsonwebtoken');
+const fs                  = require('fs');
+const path                = require('path');
 const config              = require('../config');
-const { query }           = require('../db');
+const { query, pool }     = require('../db');
 const redis               = require('../redis');
 const { authenticate }    = require('../middleware/auth');
+const { requireMinRole }  = require('../middleware/roles');
 const { resolvePolicy }   = require('../services/policyResolver');
 const events              = require('../events');
+
+// Screenshot storage directory (inside the Docker app-logs volume or local path)
+const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || path.join(__dirname, '../../screenshots');
+fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 const router     = Router();
 const oauthClient = new OAuth2Client(config.google.clientId);
@@ -169,6 +176,249 @@ router.post('/tab-event', authenticate, async (req, res) => {
 router.get('/policy', authenticate, async (req, res) => {
   const policy = await resolvePolicy(req.user.userId);
   res.json(policy);
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/extension/managed-config
+// Returns the public server config that the extension needs.
+// This is unauthenticated so unregistered devices can bootstrap.
+// ---------------------------------------------------------------------------
+router.get('/managed-config', (req, res) => {
+  res.json({
+    serverUrl:      config.appUrl || process.env.APP_URL || '',
+    googleClientId: config.google?.clientId || '',
+    version:        process.env.npm_package_version || '0.0.1',
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/extension/keywords
+// Returns the active keyword list for in-extension content scanning.
+// Returned as a compact array — extension does local matching, never sends text.
+// ---------------------------------------------------------------------------
+router.get('/keywords', authenticate, async (req, res) => {
+  const { rows } = await query(
+    `SELECT keyword, category FROM content_keywords WHERE is_active = true ORDER BY keyword`
+  );
+  res.json(rows);
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/extension/screenshot
+// Receives a screenshot (PNG data URL) from the extension.
+// Body: { data_url, url, title, trigger, trigger_detail }
+// ---------------------------------------------------------------------------
+router.post('/screenshot', authenticate, async (req, res) => {
+  const { data_url, url, title, trigger = 'manual', trigger_detail } = req.body;
+
+  if (!data_url || !url) return res.status(400).json({ error: 'data_url and url required' });
+
+  // Strip the data URL header and decode
+  const matches = data_url.match(/^data:image\/(png|jpeg|webp);base64,(.+)$/);
+  if (!matches) return res.status(400).json({ error: 'invalid data_url format' });
+
+  const ext    = matches[1];
+  const buffer = Buffer.from(matches[2], 'base64');
+
+  // Store in YYYY/MM/DD subdirectory
+  const now     = new Date();
+  const dateDir = path.join(SCREENSHOT_DIR,
+    now.getFullYear().toString(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  );
+  fs.mkdirSync(dateDir, { recursive: true });
+
+  const filename  = `${Date.now()}-${req.user.userId.slice(0, 8)}.${ext}`;
+  const filePath  = path.join(dateDir, filename);
+  const relPath   = path.relative(SCREENSHOT_DIR, filePath);
+
+  fs.writeFileSync(filePath, buffer);
+
+  const { rows } = await query(
+    `INSERT INTO screenshots
+       (student_id, url, page_title, trigger, trigger_detail, file_path, file_size)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, created_at`,
+    [req.user.userId, url.substring(0, 2000), title?.substring(0, 500) || null,
+     trigger, trigger_detail || null, relPath, buffer.length]
+  );
+
+  const screenshot = rows[0];
+
+  // Emit to teacher dashboards
+  events.emit('student:screenshot', {
+    studentId:    req.user.userId,
+    screenshotId: screenshot.id,
+    url,
+    trigger,
+    trigger_detail,
+    created_at: screenshot.created_at,
+  });
+
+  // Kick off async AI analysis for violation triggers
+  if (trigger === 'content_violation' || trigger === 'policy_block') {
+    analyseScreenshot(screenshot.id, filePath, buffer).catch(() => {});
+  }
+
+  res.json({ ok: true, id: screenshot.id });
+});
+
+// Fire-and-forget AI vision analysis
+async function analyseScreenshot(screenshotId, filePath, buffer) {
+  const { rows: cfg } = await pool.query(
+    `SELECT key, value FROM settings WHERE key IN ('ai_provider','ai_api_key','ai_model')`
+  );
+  const settings = Object.fromEntries(cfg.map(r => [r.key, r.value]));
+  if (!settings.ai_provider || settings.ai_provider === 'none') return;
+
+  try {
+    let result = null;
+
+    if (settings.ai_provider === 'claude') {
+      const { default: Anthropic } = await import('@anthropic-ai/sdk');
+      const client = new Anthropic({ apiKey: settings.ai_api_key });
+      const response = await client.messages.create({
+        model: settings.ai_model || 'claude-haiku-4-5-20251001',
+        max_tokens: 256,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: buffer.toString('base64') } },
+            { type: 'text', text: 'Analyze this school browser screenshot for inappropriate content. Respond with JSON only: {"flagged": bool, "category": "adult|violence|self_harm|profanity|other|safe", "confidence": 0.0-1.0, "reasoning": "one sentence"}' },
+          ],
+        }],
+      });
+      result = JSON.parse(response.content[0].text.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    } else if (settings.ai_provider === 'openai') {
+      const axios = require('axios');
+      const r = await axios.post(
+        `${settings.ai_base_url || 'https://api.openai.com'}/v1/chat/completions`,
+        {
+          model: settings.ai_model || 'gpt-4o-mini',
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'image_url', image_url: { url: `data:image/png;base64,${buffer.toString('base64')}` } },
+              { type: 'text', text: 'Is this school browser screenshot inappropriate? JSON only: {"flagged": bool, "category": "adult|violence|self_harm|profanity|other|safe", "confidence": 0.0-1.0, "reasoning": "one sentence"}' },
+            ],
+          }],
+          max_tokens: 256,
+        },
+        { headers: { Authorization: `Bearer ${settings.ai_api_key}` } }
+      );
+      result = JSON.parse(r.data.choices[0].message.content.match(/\{[\s\S]*\}/)?.[0] || '{}');
+    }
+
+    if (result && typeof result.flagged === 'boolean') {
+      await pool.query(
+        `UPDATE screenshots SET ai_flagged = $1, ai_category = $2, ai_confidence = $3, ai_reasoning = $4
+         WHERE id = $5`,
+        [result.flagged, result.category, result.confidence, result.reasoning, screenshotId]
+      );
+    }
+  } catch (err) {
+    console.error('[screenshot/ai]', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/extension/screenshots  — admin/teacher list
+// ---------------------------------------------------------------------------
+router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { student_id, trigger, flagged, limit = 50, offset = 0 } = req.query;
+
+  const conditions = [];
+  const params     = [];
+
+  if (student_id) { conditions.push(`s.student_id = $${params.length+1}`); params.push(student_id); }
+  if (trigger)    { conditions.push(`s.trigger = $${params.length+1}`);    params.push(trigger); }
+  if (flagged !== undefined) {
+    conditions.push(`s.ai_flagged = $${params.length+1}`);
+    params.push(flagged === 'true');
+  }
+
+  const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
+  const { rows } = await pool.query(
+    `SELECT s.*, u.full_name AS student_name, u.email AS student_email
+     FROM screenshots s
+     JOIN users u ON u.id = s.student_id
+     ${where}
+     ORDER BY s.created_at DESC
+     LIMIT $${params.length+1} OFFSET $${params.length+2}`,
+    [...params, limit, offset]
+  );
+  res.json(rows);
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/extension/screenshots/:id/image  — stream the PNG file
+// ---------------------------------------------------------------------------
+router.get('/screenshots/:id/image', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { rows } = await pool.query('SELECT file_path FROM screenshots WHERE id = $1', [req.params.id]);
+  if (!rows.length) return res.status(404).json({ error: 'not found' });
+
+  const abs = path.join(SCREENSHOT_DIR, rows[0].file_path);
+  if (!fs.existsSync(abs)) return res.status(404).json({ error: 'file not found' });
+
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  fs.createReadStream(abs).pipe(res);
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/extension/screenshots/:id/review
+// Teacher/admin marks a screenshot as reviewed
+// ---------------------------------------------------------------------------
+router.post('/screenshots/:id/review', authenticate, requireMinRole('teacher'), async (req, res) => {
+  await pool.query(
+    'UPDATE screenshots SET reviewed_by = $1, reviewed_at = NOW() WHERE id = $2',
+    [req.user.userId, req.params.id]
+  );
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/extension/request-screenshot
+// Teacher requests a live screenshot from a student's device via Socket.io.
+// Body: { student_id }
+// ---------------------------------------------------------------------------
+router.post('/request-screenshot', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { student_id } = req.body;
+  if (!student_id) return res.status(400).json({ error: 'student_id required' });
+
+  // Emit to the student's connected extension socket
+  events.emit('teacher:screenshot_request', {
+    studentId:   student_id,
+    requestedBy: req.user.userId,
+  });
+
+  res.json({ ok: true, message: 'Screenshot request sent to device' });
+});
+
+// ---------------------------------------------------------------------------
+// Keyword management (admin)
+// ---------------------------------------------------------------------------
+router.get('/keywords/manage', authenticate, requireMinRole('admin'), async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT * FROM content_keywords ORDER BY category, keyword'
+  );
+  res.json(rows);
+});
+
+router.post('/keywords', authenticate, requireMinRole('admin'), async (req, res) => {
+  const { keyword, category } = req.body;
+  if (!keyword) return res.status(400).json({ error: 'keyword required' });
+  const { rows } = await pool.query(
+    `INSERT INTO content_keywords (keyword, category, added_by)
+     VALUES (lower($1),$2,$3) ON CONFLICT (keyword) DO UPDATE SET is_active=true RETURNING *`,
+    [keyword.trim(), category || 'profanity', req.user.userId]
+  );
+  res.status(201).json(rows[0]);
+});
+
+router.delete('/keywords/:id', authenticate, requireMinRole('admin'), async (req, res) => {
+  await pool.query('DELETE FROM content_keywords WHERE id = $1', [req.params.id]);
+  res.json({ deleted: true });
 });
 
 module.exports = router;

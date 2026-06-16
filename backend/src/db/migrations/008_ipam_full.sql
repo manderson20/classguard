@@ -79,9 +79,12 @@ CREATE TABLE IF NOT EXISTS ipam_subnets (
   notes           TEXT,
   created_by      UUID         REFERENCES users(id),
   created_at      TIMESTAMPTZ  DEFAULT NOW(),
-  updated_at      TIMESTAMPTZ  DEFAULT NOW(),
-  UNIQUE(subnet, COALESCE(vrf_id, '00000000-0000-0000-0000-000000000000'::UUID))
+  updated_at      TIMESTAMPTZ  DEFAULT NOW()
 );
+
+-- Enforce uniqueness of subnet within a VRF (NULL vrf treated as a sentinel UUID)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_ipam_subnets_subnet_vrf
+  ON ipam_subnets(subnet, COALESCE(vrf_id, '00000000-0000-0000-0000-000000000000'::UUID));
 
 CREATE INDEX IF NOT EXISTS idx_ipam_subnets_section  ON ipam_subnets(section_id);
 CREATE INDEX IF NOT EXISTS idx_ipam_subnets_vrf      ON ipam_subnets(vrf_id);

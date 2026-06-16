@@ -101,6 +101,11 @@ const webConfig = {
             return JSON.stringify(manifest, null, 2);
           },
         },
+        // Managed storage schema — must ship at dist root so Chrome can reference it
+        {
+          from: 'src/managed_schema.json',
+          to:   'managed_schema.json',
+        },
         // Icons — place PNG files in src/icons/ before building
         {
           from:    'src/icons',

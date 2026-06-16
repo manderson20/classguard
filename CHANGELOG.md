@@ -17,7 +17,35 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 > Changes staged for the next release are listed here during development.
 > This section is moved and dated when a release is cut.
 
-### Added (DNS at scale, AI classification, Zabbix, Network infra, Roster sync, Logo)
+### Added (Screenshot capture, generic Chrome extension, RADIUS/NAC, multi-source device tracking, DNS at scale, AI classification, Zabbix, Network infra, Roster sync, Logo)
+
+- **Screenshot capture** (migration 015 + `routes/extension.js` + `pages/admin/ScreenshotsPage.jsx`):
+  - Extension content script scans page text for blocked keywords (loaded from server, stored in `chrome.storage.local`)
+  - On keyword match, service worker calls `chrome.tabs.captureVisibleTab()` and POSTs PNG to `/api/v1/extension/screenshot`
+  - Teachers can request live screenshots via `/api/v1/extension/request-screenshot` — pushed to student's extension via Socket.io
+  - Optional AI vision analysis (Claude or OpenAI) flags captured screenshots by category: adult, violence, self-harm, profanity
+  - Screenshots stored under `SCREENSHOT_DIR` (Docker named volume `screenshots`) in `YYYY/MM/DD/` subdirectories
+  - Admin/teacher review UI at `/admin/screenshots` with trigger filter, AI-flagged filter, full-size modal viewer, mark-as-reviewed
+
+- **Generic Chrome extension with managed storage** (GoGuardian deployment model):
+  - Extension now reads `serverUrl` and `googleClientId` from `chrome.storage.managed` at runtime — no per-school rebuild
+  - `managed_schema.json` ships in the extension package; referenced from `manifest.json` `"storage"` key
+  - Google Admin → Devices → Chrome → Apps & Extensions → Policy for Extensions (JSON) to configure server per district
+  - Settings page generates ready-to-paste policy JSON pre-filled with this server's URL
+  - `__BACKEND_URL__` build-time constant becomes fallback only (for local/dev builds)
+
+- **RADIUS/NAC** (migration 014 + `routes/radius.js` + `services/radiusLdap.js` + `services/radiusSync.js` + `pages/admin/RadiusPage.jsx`):
+  - FreeRADIUS REST policy engine: MAB (MAC Auth Bypass) for devices, EAP-TTLS/PAP for users
+  - EAP-TTLS/PAP validates cleartext password against Google Secure LDAP — fixes Android MSCHAPv2 incompatibility
+  - Device status: `approved` / `blocked` / `pending` — blocked devices (smart TVs, personal) rejected at switch
+  - VRRP/Keepalived HA config generated from UI — VIP for RADIUS/DHCP/web, real IPs for DNS redundancy
+  - Config bundle download: `keepalived.conf`, `freeradius/mods-available/rest`, `freeradius/mods-available/eap`, virtual server config
+
+- **Multi-source device tracking** (`radius_device_sources` table + `radiusSync.js`):
+  - Each device shows source badges for every system it was seen in (Mosyle, Snipe-IT, Google Admin, network controllers)
+  - Inactive sources shown with strikethrough + removed date when device is deleted from that source
+  - Deprovisioning: when device removed from all MDM sources → demoted to `pending` for admin review; `blocked` status never touched
+  - Lease-to-own graduation: delete MacBook from Mosyle → device becomes pending, admin must explicitly re-approve or block
 
 - **DNS at-scale logging** (267M+ queries/month without blocking resolution):
   - In-process ring buffer (100k entries) in `dns-engine/src/logger.js` — fire-and-forget,

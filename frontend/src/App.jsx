@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 
 // Layout
@@ -35,8 +35,10 @@ import HaPage          from './pages/admin/HaPage';
 import NtpPage         from './pages/admin/NtpPage';
 import AiPage          from './pages/admin/AiPage';
 import NetworkPage     from './pages/admin/NetworkPage';
-import RosterPage      from './pages/admin/RosterPage';
-import RadiusPage      from './pages/admin/RadiusPage';
+import RosterPage          from './pages/admin/RosterPage';
+import RadiusPage          from './pages/admin/RadiusPage';
+import ScreenshotsPage     from './pages/admin/ScreenshotsPage';
+import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
@@ -77,8 +79,9 @@ export default function App() {
         <Route path="/penalty-box"             element={<PenaltyBox />} />
 
         {/* Admin routes */}
-        <Route element={<RequireAuth minRole="admin"><></></RequireAuth>}>
+        <Route element={<RequireAuth minRole="admin"><Outlet /></RequireAuth>}>
           <Route path="/admin"                        element={<AdminDashboard />} />
+          <Route path="/admin/staff-analytics"        element={<StaffAnalyticsPage />} />
           <Route path="/admin/users"                  element={<UsersPage />} />
           <Route path="/admin/users/:userId"          element={<UserDetail />} />
           <Route path="/admin/policies"               element={<PoliciesPage />} />
@@ -98,6 +101,7 @@ export default function App() {
           <Route path="/admin/network"                element={<NetworkPage />} />
           <Route path="/admin/roster"                 element={<RosterPage />} />
           <Route path="/admin/radius"                 element={<RadiusPage />} />
+          <Route path="/admin/screenshots"            element={<ScreenshotsPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
         </Route>
       </Route>

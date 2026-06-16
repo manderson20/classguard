@@ -12,8 +12,13 @@
     "declarativeNetRequest",
     "declarativeNetRequestWithHostAccess",
     "alarms",
-    "activeTab"
+    "activeTab",
+    "scripting"
   ],
+
+  "storage": {
+    "managed_schema": "managed_schema.json"
+  },
 
   "host_permissions": ["<all_urls>"],
 

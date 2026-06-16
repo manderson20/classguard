@@ -8,6 +8,7 @@ volumes:
   kea-logs:
   app-logs:
   blocklists:
+  screenshots:
 
 services:
 
@@ -91,9 +92,11 @@ services:
       REDIS_URL:             redis://redis:6379
       KEA_CONTROL_AGENT_URL: http://kea:8000
       BACKEND_URL:           http://api:3001
+      SCREENSHOT_DIR:        /app/screenshots
     volumes:
       - app-logs:/app/logs
       - blocklists:/app/blocklists
+      - screenshots:/app/screenshots
     networks:
       - classguard-net
     healthcheck:

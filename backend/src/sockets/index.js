@@ -78,6 +78,27 @@ const setupSockets = (io) => {
       console.error('[socket] student:activity forwarding error:', err.message);
     }
   });
+
+  // Screenshot captured: notify all class rooms the student belongs to
+  events.on('student:screenshot', async ({ studentId, screenshotId, url, trigger, created_at }) => {
+    if (!studentId) return;
+    try {
+      const cacheKey = `student:classes:${studentId}`;
+      const cached   = await redis.get(cacheKey);
+      const classIds = cached ? JSON.parse(cached) : [];
+      const payload  = { studentId, screenshotId, url, trigger, created_at };
+      for (const classId of classIds) {
+        io.to(`class:${classId}`).emit('student:screenshot', payload);
+      }
+    } catch {}
+  });
+
+  // Teacher-initiated screenshot request: push to student's extension socket
+  events.on('teacher:screenshot_request', ({ studentId }) => {
+    if (studentId) {
+      io.to(`student:${studentId}`).emit('screenshot:request');
+    }
+  });
 };
 
 module.exports = setupSockets;

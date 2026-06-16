@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "serverUrl": {
+      "title": "ClassGuard Server URL",
+      "description": "The HTTPS URL of your ClassGuard server (e.g. https://classguard.yourschool.edu). Must not have a trailing slash.",
+      "type": "string"
+    },
+    "googleClientId": {
+      "title": "Google OAuth Client ID",
+      "description": "The OAuth 2.0 client ID from your Google Cloud project (ends in .apps.googleusercontent.com).",
+      "type": "string"
+    }
+  }
+}

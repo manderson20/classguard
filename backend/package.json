@@ -1,6 +1,6 @@
 {
   "name": "classguard-backend",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "ClassGuard API server, WebSocket hub, and background services",
   "main": "src/index.js",
   "scripts": {
@@ -27,6 +27,9 @@
     "socket.io": "^4.8.1",
     "uuid": "^11.0.3",
     "ldapjs": "^3.0.7"
+  },
+  "optionalDependencies": {
+    "@anthropic-ai/sdk": "^0.39.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

@@ -1,6 +1,11 @@
 -- Enable TimescaleDB extension
 CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE;
 
+-- TimescaleDB requires the partition column to be in every unique index.
+-- Drop the plain id PRIMARY KEY and replace it with (id, queried_at).
+ALTER TABLE dns_logs DROP CONSTRAINT IF EXISTS dns_logs_pkey;
+ALTER TABLE dns_logs ADD PRIMARY KEY (id, queried_at);
+
 -- Convert dns_logs into a hypertable partitioned by queried_at (1-day chunks)
 -- IMPORTANT: run BEFORE inserting data; no-op if already a hypertable.
 SELECT create_hypertable(
