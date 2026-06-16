@@ -25,10 +25,13 @@ router.get('/subnets', ...auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT s.*,
-              COUNT(r.id) AS reservation_count
+              COUNT(r.id)    AS reservation_count,
+              ins.id         AS ipam_subnet_id,
+              ins.name       AS ipam_subnet_name
        FROM dhcp_subnets s
        LEFT JOIN dhcp_reservations r ON r.subnet_id = s.id
-       GROUP BY s.id
+       LEFT JOIN ipam_subnets ins    ON ins.dhcp_subnet_id = s.id
+       GROUP BY s.id, ins.id, ins.name
        ORDER BY s.subnet`
     );
 
@@ -403,8 +406,19 @@ router.post('/sync-kea', ...auth, async (req, res) => {
   (async () => {
     try {
       const { rows: subnets } = await pool.query('SELECT * FROM dhcp_subnets WHERE is_active = true');
+      const { rows: globalOpts } = await pool.query(
+        `SELECT * FROM dhcp_options WHERE scope='global' AND is_active=true`
+      );
+
       for (const subnet of subnets) {
-        await kea.syncSubnet(subnet).catch(e => console.warn('[dhcp] syncSubnet:', e.message));
+        const { rows: subnetOpts } = await pool.query(
+          `SELECT * FROM dhcp_options WHERE scope='subnet' AND dhcp_subnet_id=$1 AND is_active=true`,
+          [subnet.id]
+        );
+        // Subnet-specific options override globals for the same option_name
+        const subnetNames = new Set(subnetOpts.map(o => o.option_name));
+        const merged = [...subnetOpts, ...globalOpts.filter(o => !subnetNames.has(o.option_name))];
+        await kea.syncSubnet(subnet, merged).catch(e => console.warn('[dhcp] syncSubnet:', e.message));
       }
 
       const { rows: reservations } = await pool.query(
@@ -421,6 +435,109 @@ router.post('/sync-kea', ...auth, async (req, res) => {
       console.error('[dhcp] sync-kea failed:', err);
     }
   })();
+});
+
+// ---------------------------------------------------------------------------
+// DHCP Options — global
+// ---------------------------------------------------------------------------
+
+// GET /api/v1/dhcp/options
+router.get('/options', ...auth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT * FROM dhcp_options WHERE scope='global' ORDER BY option_name`
+  );
+  res.json(rows);
+});
+
+// POST /api/v1/dhcp/options
+router.post('/options', ...auth, async (req, res) => {
+  const { option_name, option_label, option_data, option_code } = req.body;
+  if (!option_name || !option_data) return res.status(400).json({ error: 'option_name and option_data required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO dhcp_options (scope, option_code, option_name, option_label, option_data, created_by)
+       VALUES ('global',$1,$2,$3,$4,$5) RETURNING *`,
+      [option_code || null, option_name, option_label || null, option_data, req.user.id]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Option already exists' });
+    throw err;
+  }
+});
+
+// PUT /api/v1/dhcp/options/:id
+router.put('/options/:id', ...auth, async (req, res) => {
+  const { option_data, option_label, is_active } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE dhcp_options
+     SET option_data  = COALESCE($2, option_data),
+         option_label = COALESCE($3, option_label),
+         is_active    = COALESCE($4, is_active),
+         updated_at   = NOW()
+     WHERE id = $1 RETURNING *`,
+    [req.params.id, option_data || null, option_label || null, is_active ?? null]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Option not found' });
+  res.json(rows[0]);
+});
+
+// DELETE /api/v1/dhcp/options/:id
+router.delete('/options/:id', ...auth, async (req, res) => {
+  const { rows } = await pool.query('DELETE FROM dhcp_options WHERE id=$1 RETURNING id', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'Option not found' });
+  res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// DHCP Options — per-scope
+// ---------------------------------------------------------------------------
+
+// GET /api/v1/dhcp/subnets/:id/options
+router.get('/subnets/:id/options', ...auth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT * FROM dhcp_options WHERE scope='subnet' AND dhcp_subnet_id=$1 ORDER BY option_name`,
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
+// POST /api/v1/dhcp/subnets/:id/options
+router.post('/subnets/:id/options', ...auth, async (req, res) => {
+  const { option_name, option_label, option_data, option_code } = req.body;
+  if (!option_name || !option_data) return res.status(400).json({ error: 'option_name and option_data required' });
+  const { rows } = await pool.query(
+    `INSERT INTO dhcp_options (scope, dhcp_subnet_id, option_code, option_name, option_label, option_data, created_by)
+     VALUES ('subnet',$1,$2,$3,$4,$5,$6) RETURNING *`,
+    [req.params.id, option_code || null, option_name, option_label || null, option_data, req.user.id]
+  );
+  res.status(201).json(rows[0]);
+});
+
+// PUT /api/v1/dhcp/subnets/:id/options/:optId
+router.put('/subnets/:id/options/:optId', ...auth, async (req, res) => {
+  const { option_data, option_label, is_active } = req.body;
+  const { rows } = await pool.query(
+    `UPDATE dhcp_options
+     SET option_data  = COALESCE($3, option_data),
+         option_label = COALESCE($4, option_label),
+         is_active    = COALESCE($5, is_active),
+         updated_at   = NOW()
+     WHERE id=$1 AND dhcp_subnet_id=$2 RETURNING *`,
+    [req.params.optId, req.params.id, option_data || null, option_label || null, is_active ?? null]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Option not found' });
+  res.json(rows[0]);
+});
+
+// DELETE /api/v1/dhcp/subnets/:id/options/:optId
+router.delete('/subnets/:id/options/:optId', ...auth, async (req, res) => {
+  const { rows } = await pool.query(
+    'DELETE FROM dhcp_options WHERE id=$1 AND dhcp_subnet_id=$2 RETURNING id',
+    [req.params.optId, req.params.id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'Option not found' });
+  res.json({ deleted: true });
 });
 
 module.exports = router;

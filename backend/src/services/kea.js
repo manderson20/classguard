@@ -36,29 +36,38 @@ async function keaCommand(command, service, args = {}) {
 
 // ---------------------------------------------------------------------------
 // Convert a dhcp_subnets DB row to Kea subnet4 object
+// options: array of dhcp_options rows (global merged with per-subnet)
 // ---------------------------------------------------------------------------
-function dbRowToKeaSubnet(row) {
+function dbRowToKeaSubnet(row, options = []) {
   const subnet4 = {
-    id:             row.kea_subnet_id,
-    subnet:         row.subnet,
+    id:               row.kea_subnet_id,
+    subnet:           row.subnet,
     'valid-lifetime': row.valid_lifetime_seconds || row.lease_time_seconds || 86400,
     pools: [{ pool: `${row.pool_start} - ${row.pool_end}` }],
-    'option-data':  [],
+    'option-data':    [],
   };
 
+  // First-class fields (always included if set)
   if (row.gateway) {
-    subnet4['option-data'].push({ name: 'routers', data: row.gateway });
+    subnet4['option-data'].push({ name: 'routers', data: String(row.gateway) });
   }
-
   if (row.dns_servers && row.dns_servers.length) {
     subnet4['option-data'].push({
       name: 'domain-name-servers',
       data: row.dns_servers.join(', '),
     });
   }
-
   if (row.domain_name) {
     subnet4['option-data'].push({ name: 'domain-name', data: row.domain_name });
+  }
+
+  // Extra options from dhcp_options table (per-subnet overrides global for same name)
+  const seen = new Set(subnet4['option-data'].map(o => o.name));
+  for (const opt of options) {
+    if (!opt.is_active) continue;
+    if (seen.has(opt.option_name)) continue; // first-class fields take priority
+    subnet4['option-data'].push({ name: opt.option_name, data: opt.option_data });
+    seen.add(opt.option_name);
   }
 
   return subnet4;
@@ -66,9 +75,10 @@ function dbRowToKeaSubnet(row) {
 
 // ---------------------------------------------------------------------------
 // Sync a subnet to Kea (update → fallback to add)
+// options: combined dhcp_options rows (global + per-subnet, caller resolves)
 // ---------------------------------------------------------------------------
-async function syncSubnet(row) {
-  const subnet4 = dbRowToKeaSubnet(row);
+async function syncSubnet(row, options = []) {
+  const subnet4 = dbRowToKeaSubnet(row, options);
   try {
     await keaCommand('subnet4-update', 'dhcp4', { subnet4: [subnet4] });
   } catch {

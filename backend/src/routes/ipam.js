@@ -5,13 +5,44 @@
 
 const { Router } = require('express');
 const axios      = require('axios');
-const { query, withTransaction } = require('../db');
+const { query, withTransaction, pool } = require('../db');
 const { authenticate }    = require('../middleware/auth');
 const { requireMinRole }  = require('../middleware/roles');
 const config              = require('../config');
+const kea                 = require('../services/kea');
+const { syncNetworkClientsToIpam } = require('../services/ipamSync');
 
 const router = Router();
 router.use(authenticate, requireMinRole('admin'));
+
+// ---------------------------------------------------------------------------
+// Audit helper — fire-and-forget, never blocks the main operation
+// ---------------------------------------------------------------------------
+async function audit(table, recordId, action, summary, oldData, newData, userId) {
+  query(
+    `INSERT INTO ipam_audit (table_name,record_id,action,summary,old_data,new_data,changed_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+    [table, recordId, action, summary,
+     oldData  ? JSON.stringify(oldData)  : null,
+     newData  ? JSON.stringify(newData)  : null,
+     userId ?? null]
+  ).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Overlap helper — returns conflicting subnet if the new CIDR overlaps anything
+// in the same VRF (same VRF = same vrf_id including both NULL)
+// ---------------------------------------------------------------------------
+async function findOverlap(subnet, vrfId, excludeId = null) {
+  const conds = ['($1::inet <<= s.subnet OR $1::inet >>= s.subnet)'];
+  const vals  = [subnet];
+  conds.push(`s.vrf_id IS NOT DISTINCT FROM $${vals.length + 1}`); vals.push(vrfId ?? null);
+  if (excludeId) { conds.push(`s.id != $${vals.length + 1}`); vals.push(excludeId); }
+  const { rows } = await query(
+    `SELECT subnet, name FROM ipam_subnets s WHERE ${conds.join(' AND ')} LIMIT 1`, vals
+  );
+  return rows[0] ?? null;
+}
 
 // ---------------------------------------------------------------------------
 // Kea helper — fetch current DHCP4 leases for a subnet
@@ -544,23 +575,82 @@ router.get('/ipam-subnets/:id', async (req, res) => {
   res.json({ ...rows[0], children });
 });
 
+// Helper: create or update the linked dhcp_subnets row from an IPAM subnet
+async function syncDhcpScope(ipamSubnet, userId) {
+  if (!ipamSubnet.dhcp_enabled || !ipamSubnet.dhcp_pool_start || !ipamSubnet.dhcp_pool_end) {
+    // Disable DHCP scope if it was previously enabled
+    if (ipamSubnet.dhcp_subnet_id) {
+      await query('UPDATE dhcp_subnets SET is_active=false WHERE id=$1', [ipamSubnet.dhcp_subnet_id]);
+    }
+    return;
+  }
+
+  const dnsArr = ipamSubnet.dns_servers?.length ? ipamSubnet.dns_servers : ['127.0.0.1'];
+
+  if (ipamSubnet.dhcp_subnet_id) {
+    // Update existing DHCP scope
+    const { rows } = await query(
+      `UPDATE dhcp_subnets
+       SET label=$2, pool_start=$3, pool_end=$4, gateway=$5, dns_servers=$6, is_active=true, updated_at=NOW()
+       WHERE id=$1 RETURNING *`,
+      [ipamSubnet.dhcp_subnet_id, ipamSubnet.name ?? ipamSubnet.subnet,
+       ipamSubnet.dhcp_pool_start, ipamSubnet.dhcp_pool_end,
+       ipamSubnet.gateway ?? null, dnsArr]
+    );
+    if (rows[0]) kea.syncSubnet(rows[0]).catch(e => console.warn('[ipam] Kea sync:', e.message));
+  } else {
+    // Create new DHCP scope — auto-assign next kea_subnet_id
+    const { rows: maxRow } = await query('SELECT COALESCE(MAX(kea_subnet_id),0)+1 AS next_id FROM dhcp_subnets');
+    const keaId = maxRow[0].next_id;
+    const { rows } = await query(
+      `INSERT INTO dhcp_subnets
+         (kea_subnet_id, subnet, label, pool_start, pool_end, gateway, dns_servers, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [keaId, ipamSubnet.subnet, ipamSubnet.name ?? ipamSubnet.subnet,
+       ipamSubnet.dhcp_pool_start, ipamSubnet.dhcp_pool_end,
+       ipamSubnet.gateway ?? null, dnsArr, userId]
+    );
+    if (rows[0]) {
+      await query('UPDATE ipam_subnets SET dhcp_subnet_id=$1 WHERE id=$2', [rows[0].id, ipamSubnet.id]);
+      kea.syncSubnet(rows[0]).catch(e => console.warn('[ipam] Kea sync:', e.message));
+    }
+  }
+}
+
 router.post('/ipam-subnets', async (req, res) => {
   const {
     subnet, ip_version = 4, name, description, section_id, vrf_id, vlan_id,
     location_id, parent_id, gateway, dns_servers, tags, notes,
+    dhcp_enabled = false, dhcp_pool_start, dhcp_pool_end,
   } = req.body;
   if (!subnet) return res.status(400).json({ error: 'subnet required' });
+
+  // Overlap detection — warn if this CIDR overlaps an existing subnet in the same VRF
+  const overlap = await findOverlap(subnet, vrf_id ?? null);
+  if (overlap) {
+    return res.status(409).json({
+      error: `Overlaps existing subnet ${overlap.subnet}${overlap.name ? ` (${overlap.name})` : ''}`,
+      overlap: true, conflicting: overlap.subnet,
+    });
+  }
+
   try {
     const { rows } = await query(
       `INSERT INTO ipam_subnets
          (subnet,ip_version,name,description,section_id,vrf_id,vlan_id,location_id,
-          parent_id,gateway,dns_servers,tags,notes,created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+          parent_id,gateway,dns_servers,tags,notes,dhcp_enabled,dhcp_pool_start,dhcp_pool_end,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
       [subnet, ip_version, name??null, description??null, section_id??null, vrf_id??null,
        vlan_id??null, location_id??null, parent_id??null, gateway??null,
-       dns_servers ?? [], tags ?? [], notes??null, req.user.userId]
+       dns_servers ?? [], tags ?? [], notes??null,
+       dhcp_enabled, dhcp_pool_start??null, dhcp_pool_end??null,
+       req.user.userId]
     );
-    res.status(201).json(rows[0]);
+    const row = rows[0];
+    await syncDhcpScope(row, req.user.userId);
+    const { rows: fresh } = await query('SELECT * FROM ipam_subnets WHERE id=$1', [row.id]);
+    audit('ipam_subnets', row.id, 'INSERT', `Created ${subnet}`, null, fresh[0], req.user.userId);
+    res.status(201).json(fresh[0]);
   } catch (err) {
     if (err.code === '23505') return res.status(409).json({ error: 'Subnet already exists in this VRF' });
     throw err;
@@ -569,22 +659,30 @@ router.post('/ipam-subnets', async (req, res) => {
 
 router.put('/ipam-subnets/:id', async (req, res) => {
   const allowed = ['name','description','section_id','vrf_id','vlan_id','location_id',
-                   'parent_id','gateway','dns_servers','tags','notes','is_full','allow_requests'];
+                   'parent_id','gateway','dns_servers','tags','notes','is_full','allow_requests',
+                   'dhcp_enabled','dhcp_pool_start','dhcp_pool_end'];
   const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+
+  const { rows: [before] } = await query('SELECT * FROM ipam_subnets WHERE id=$1', [req.params.id]);
+  if (!before) return res.status(404).json({ error: 'Subnet not found' });
+
   const sets = fields.map((f,i) => `${f}=$${i+2}`).join(', ');
   const vals = fields.map(f => req.body[f]);
   const { rows } = await query(
     `UPDATE ipam_subnets SET ${sets}, updated_at=NOW() WHERE id=$1 RETURNING *`,
     [req.params.id, ...vals]
   );
-  if (!rows[0]) return res.status(404).json({ error: 'Subnet not found' });
-  res.json(rows[0]);
+  await syncDhcpScope(rows[0], req.user.userId);
+  const { rows: fresh } = await query('SELECT * FROM ipam_subnets WHERE id=$1', [req.params.id]);
+  audit('ipam_subnets', req.params.id, 'UPDATE', `Updated ${before.subnet}`, before, fresh[0], req.user.userId);
+  res.json(fresh[0]);
 });
 
 router.delete('/ipam-subnets/:id', async (req, res) => {
-  const { rows } = await query('DELETE FROM ipam_subnets WHERE id=$1 RETURNING id', [req.params.id]);
+  const { rows } = await query('DELETE FROM ipam_subnets WHERE id=$1 RETURNING *', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Subnet not found' });
+  audit('ipam_subnets', req.params.id, 'DELETE', `Deleted ${rows[0].subnet}`, rows[0], null, req.user.userId);
   res.json({ deleted: true });
 });
 
@@ -696,8 +794,355 @@ router.delete('/nat/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// IP Addresses — scoped to an IPAM subnet
+// ---------------------------------------------------------------------------
+
+// GET /ipam/ipam-subnets/:id/addresses?status=&search=
+router.get('/ipam-subnets/:id/addresses', async (req, res) => {
+  const { status, search } = req.query;
+  const conds = ['ia.ipam_subnet_id = $1'];
+  const vals  = [req.params.id];
+
+  if (status) { conds.push(`ia.status = $${vals.length+1}`); vals.push(status); }
+  if (search) {
+    const idx = vals.length + 1;
+    conds.push(`(ia.ip::text ILIKE $${idx} OR ia.hostname ILIKE $${idx} OR ia.owner ILIKE $${idx} OR ia.mac_address::text ILIKE $${idx} OR ia.description ILIKE $${idx})`);
+    vals.push(`%${search}%`);
+  }
+
+  const [{ rows: addresses }, { rows: sub }] = await Promise.all([
+    query(
+      `SELECT ia.* FROM ip_addresses ia WHERE ${conds.join(' AND ')} ORDER BY ia.ip`,
+      vals
+    ),
+    query('SELECT subnet, ip_version FROM ipam_subnets WHERE id = $1', [req.params.id]),
+  ]);
+
+  const total    = sub[0] ? hostCount(sub[0].subnet, sub[0].ip_version) : 0;
+  const used     = addresses.filter(a => a.status !== 'free').length;
+
+  res.json({ addresses, utilization: { total, used, free: Math.max(0, total - used) } });
+});
+
+// POST /ipam/ipam-subnets/:id/addresses
+router.post('/ipam-subnets/:id/addresses', async (req, res) => {
+  const {
+    ip, hostname, mac_address, owner, device_type, status = 'used',
+    description, notes, is_gateway = false,
+  } = req.body;
+  if (!ip) return res.status(400).json({ error: 'ip required' });
+  try {
+    const { rows } = await query(
+      `INSERT INTO ip_addresses
+         (ipam_subnet_id, ip, hostname, mac_address, owner, device_type, status, description, notes, is_gateway, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [req.params.id, ip, hostname||null, mac_address||null, owner||null,
+       device_type||null, status, description||null, notes||null, is_gateway, req.user.userId]
+    );
+    const row = rows[0];
+    audit('ip_addresses', row.id, 'INSERT', `Added ${ip} to subnet ${req.params.id}`, null, row, req.user.userId);
+    res.status(201).json(row);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'IP address already exists' });
+    throw err;
+  }
+});
+
+// PUT /ipam/ipam-subnets/:id/addresses/:ipId
+router.put('/ipam-subnets/:id/addresses/:ipId', async (req, res) => {
+  const allowed = ['hostname','mac_address','owner','device_type','status','description','notes','is_gateway','ping_status','last_seen','tags'];
+  const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
+  if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+  const { rows: [before] } = await query('SELECT * FROM ip_addresses WHERE id=$1', [req.params.ipId]);
+  const sets = fields.map((f, i) => `${f}=$${i+3}`).join(', ');
+  const { rows } = await query(
+    `UPDATE ip_addresses SET ${sets}, updated_at=NOW()
+     WHERE id=$1 AND ipam_subnet_id=$2 RETURNING *`,
+    [req.params.ipId, req.params.id, ...fields.map(f => req.body[f])]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'IP not found' });
+  audit('ip_addresses', req.params.ipId, 'UPDATE', `Updated ${rows[0].ip}`, before, rows[0], req.user.userId);
+  res.json(rows[0]);
+});
+
+// DELETE /ipam/ipam-subnets/:id/addresses/:ipId
+router.delete('/ipam-subnets/:id/addresses/:ipId', async (req, res) => {
+  const { rows } = await query(
+    'DELETE FROM ip_addresses WHERE id=$1 AND ipam_subnet_id=$2 RETURNING *',
+    [req.params.ipId, req.params.id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'IP not found' });
+  audit('ip_addresses', req.params.ipId, 'DELETE', `Deleted ${rows[0].ip}`, rows[0], null, req.user.userId);
+  res.json({ deleted: true });
+});
+
+// GET /ipam/ipam-subnets/:id/next-free
+router.get('/ipam-subnets/:id/next-free', async (req, res) => {
+  const { rows: subs } = await query('SELECT subnet, ip_version FROM ipam_subnets WHERE id=$1', [req.params.id]);
+  if (!subs[0]) return res.status(404).json({ error: 'Subnet not found' });
+  if (subs[0].ip_version !== 4) return res.json({ ip: null });
+
+  const { rows } = await query(
+    `WITH used_ips AS (SELECT ip FROM ip_addresses WHERE ipam_subnet_id = $1)
+     SELECT host((s.subnet + g.n)::inet) AS ip
+     FROM ipam_subnets s
+     CROSS JOIN generate_series(1, LEAST(65534, (2^(32 - masklen(s.subnet)) - 2)::int)) AS g(n)
+     WHERE s.id = $1
+       AND (s.subnet + g.n)::inet NOT IN (SELECT ip FROM used_ips)
+       AND g.n < (2^(32 - masklen(s.subnet)) - 1)::int
+     ORDER BY (s.subnet + g.n)::inet LIMIT 1`,
+    [req.params.id]
+  );
+  res.json({ ip: rows[0]?.ip ?? null });
+});
+
+// GET /ipam/search?q=
+router.get('/search', async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.length < 2) return res.status(400).json({ error: 'q must be at least 2 chars' });
+  const { rows } = await query(
+    `SELECT ia.id, ia.ip, ia.hostname, ia.owner, ia.mac_address, ia.status, ia.device_type,
+            ia.description, s.subnet, s.name AS subnet_name, s.id AS subnet_id
+     FROM ip_addresses ia
+     LEFT JOIN ipam_subnets s ON s.id = ia.ipam_subnet_id
+     WHERE ia.ipam_subnet_id IS NOT NULL
+       AND (ia.ip::text ILIKE $1 OR ia.hostname ILIKE $1 OR ia.owner ILIKE $1
+            OR ia.mac_address::text ILIKE $1 OR ia.description ILIKE $1)
+     ORDER BY ia.ip LIMIT 100`,
+    [`%${q}%`]
+  );
+  res.json(rows);
+});
+
+// ---------------------------------------------------------------------------
+// Subnet split — create equal-sized child subnets
+// ---------------------------------------------------------------------------
+router.post('/ipam-subnets/:id/split', async (req, res) => {
+  const newPrefix = parseInt(req.body.prefix, 10);
+  if (isNaN(newPrefix) || newPrefix < 1 || newPrefix > 30) {
+    return res.status(400).json({ error: 'prefix must be between 1 and 30' });
+  }
+
+  const { rows: [parent] } = await query('SELECT * FROM ipam_subnets WHERE id = $1', [req.params.id]);
+  if (!parent) return res.status(404).json({ error: 'Subnet not found' });
+
+  const parentPrefix = parseInt(parent.subnet.split('/')[1], 10);
+  if (newPrefix <= parentPrefix) {
+    return res.status(400).json({ error: `Split prefix /${newPrefix} must be larger than parent /${parentPrefix}` });
+  }
+
+  const count = Math.pow(2, newPrefix - parentPrefix);
+  if (count > 1024) {
+    return res.status(400).json({ error: `Would create ${count.toLocaleString()} subnets — limit is 1,024. Choose a larger prefix.` });
+  }
+
+  const step = Math.pow(2, 32 - newPrefix);
+
+  // CTE pre-computes the base host address (strips the prefix length from the parent CIDR)
+  const { rows: inserted } = await query(
+    `WITH base AS (SELECT host(network($1::inet))::inet AS b)
+     INSERT INTO ipam_subnets (subnet, parent_id, ip_version, created_by)
+     SELECT (host(base.b + (g.n * $3::bigint)) || '/' || $2)::inet,
+            $4, $5, $6
+     FROM generate_series(0, $7::int - 1) AS g(n), base
+     WHERE NOT EXISTS (
+       SELECT 1 FROM ipam_subnets s2
+       WHERE s2.subnet = (host(base.b + (g.n * $3::bigint)) || '/' || $2)::inet
+     )
+     RETURNING id, subnet`,
+    [parent.subnet, newPrefix, step, parent.id, parent.ip_version, req.user.userId, count]
+  );
+
+  res.json({ created: inserted.length, skipped: count - inserted.length });
+});
+
+// ---------------------------------------------------------------------------
+// CSV Import — subnets
+// ---------------------------------------------------------------------------
+router.post('/import/subnets', async (req, res) => {
+  const rows = Array.isArray(req.body) ? req.body : [];
+  if (!rows.length) return res.status(400).json({ error: 'No rows provided' });
+
+  let imported = 0, skipped = 0;
+  const errors = [];
+
+  for (const row of rows) {
+    const subnet = (row.subnet || '').trim();
+    if (!subnet) { errors.push('Row missing subnet field'); continue; }
+
+    try {
+      let section_id = null;
+      if (row.section?.trim()) {
+        const sr = await query('SELECT id FROM ipam_sections WHERE name ILIKE $1 LIMIT 1', [row.section.trim()]);
+        section_id = sr.rows[0]?.id ?? null;
+      }
+
+      let vlan_db_id = null;
+      if (row.vlan_id?.trim()) {
+        const vr = await query('SELECT id FROM vlans WHERE vlan_id = $1 LIMIT 1', [parseInt(row.vlan_id, 10)]);
+        vlan_db_id = vr.rows[0]?.id ?? null;
+      }
+
+      const ip_version = parseInt(row.ip_version, 10) || 4;
+      const { rowCount } = await query(
+        `INSERT INTO ipam_subnets
+           (subnet, name, gateway, ip_version, description, notes, section_id, vlan_id, created_by)
+         SELECT $1::inet, $2, $3, $4, $5, $6, $7, $8, $9
+         WHERE NOT EXISTS (SELECT 1 FROM ipam_subnets WHERE subnet = $1::inet)`,
+        [subnet, row.name?.trim() || null, row.gateway?.trim() || null, ip_version,
+         row.description?.trim() || null, row.notes?.trim() || null,
+         section_id, vlan_db_id, req.user?.userId ?? null]
+      );
+      if (rowCount > 0) imported++; else skipped++;
+    } catch (e) {
+      errors.push(`${subnet}: ${e.message}`);
+    }
+  }
+
+  res.json({ imported, skipped, errors });
+});
+
+// ---------------------------------------------------------------------------
+// CSV Import — IP addresses
+// ---------------------------------------------------------------------------
+router.post('/import/addresses', async (req, res) => {
+  const rows = Array.isArray(req.body) ? req.body : [];
+  if (!rows.length) return res.status(400).json({ error: 'No rows provided' });
+
+  let imported = 0, skipped = 0;
+  const errors = [];
+  const subnetCache = {};
+
+  for (const row of rows) {
+    const subnetCidr = (row.subnet || '').trim();
+    const ip         = (row.ip    || '').trim();
+    if (!subnetCidr || !ip) {
+      errors.push(`Row missing subnet or ip: ${JSON.stringify(row)}`);
+      continue;
+    }
+
+    try {
+      if (!subnetCache[subnetCidr]) {
+        const sr = await query('SELECT id FROM ipam_subnets WHERE subnet = $1::inet LIMIT 1', [subnetCidr]);
+        subnetCache[subnetCidr] = sr.rows[0]?.id ?? null;
+      }
+      const ipam_subnet_id = subnetCache[subnetCidr];
+      if (!ipam_subnet_id) {
+        errors.push(`${ip}: subnet ${subnetCidr} not found in IPAM`);
+        continue;
+      }
+
+      const VALID_STATUS = ['used', 'free', 'reserved', 'offline', 'dhcp'];
+      const status = VALID_STATUS.includes(row.status?.trim()) ? row.status.trim() : 'used';
+      const mac    = row.mac_address?.trim() || null;
+
+      const { rowCount } = await query(
+        `INSERT INTO ip_addresses
+           (ip, ipam_subnet_id, hostname, mac_address, owner, description, status, device_type)
+         SELECT $1::inet, $2, $3, $4::macaddr, $5, $6, $7, $8
+         WHERE NOT EXISTS (
+           SELECT 1 FROM ip_addresses WHERE ip = $1::inet AND ipam_subnet_id = $2
+         )`,
+        [ip, ipam_subnet_id, row.hostname?.trim() || null, mac,
+         row.owner?.trim() || null, row.description?.trim() || null,
+         status, row.device_type?.trim() || null]
+      );
+      if (rowCount > 0) imported++; else skipped++;
+    } catch (e) {
+      errors.push(`${ip}: ${e.message}`);
+    }
+  }
+
+  res.json({ imported, skipped, errors });
+});
+
+// ---------------------------------------------------------------------------
+// CSV Export
+// ---------------------------------------------------------------------------
+function csvRow(vals) {
+  return vals.map(v => {
+    if (v == null) return '';
+    const s = Array.isArray(v) ? v.join(';') : String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+  }).join(',');
+}
+
+router.get('/export/subnets', async (req, res) => {
+  const { rows } = await query(
+    `SELECT s.subnet, s.name, s.gateway, s.ip_version, s.description, s.notes,
+            sec.name AS section, v.name AS vrf, vl.vlan_id, s.tags
+     FROM ipam_subnets s
+     LEFT JOIN ipam_sections sec ON sec.id = s.section_id
+     LEFT JOIN vrfs v             ON v.id   = s.vrf_id
+     LEFT JOIN vlans vl           ON vl.id  = s.vlan_id
+     ORDER BY s.subnet`
+  );
+  const header = 'subnet,name,gateway,ip_version,description,notes,section,vrf,vlan_id,tags\n';
+  const body   = rows.map(r => csvRow([r.subnet, r.name, r.gateway, r.ip_version,
+    r.description, r.notes, r.section, r.vrf, r.vlan_id, r.tags])).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="classguard_subnets.csv"');
+  res.send(header + body);
+});
+
+router.get('/export/addresses', async (req, res) => {
+  const { subnet_id } = req.query;
+  const where = subnet_id ? 'WHERE ia.ipam_subnet_id = $1' : 'WHERE ia.ipam_subnet_id IS NOT NULL';
+  const vals  = subnet_id ? [subnet_id] : [];
+  const { rows } = await query(
+    `SELECT s.subnet, ia.ip, ia.hostname, ia.mac_address, ia.owner,
+            ia.description, ia.status, ia.device_type, ia.last_seen, ia.tags
+     FROM ip_addresses ia
+     JOIN ipam_subnets s ON s.id = ia.ipam_subnet_id
+     ${where} ORDER BY s.subnet, ia.ip`, vals
+  );
+  const header = 'subnet,ip,hostname,mac_address,owner,description,status,device_type,last_seen,tags\n';
+  const body   = rows.map(r => csvRow([r.subnet, r.ip, r.hostname, r.mac_address, r.owner,
+    r.description, r.status, r.device_type, r.last_seen, r.tags])).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="classguard_addresses.csv"');
+  res.send(header + body);
+});
+
+// ---------------------------------------------------------------------------
+// Controller → IPAM sync
+// ---------------------------------------------------------------------------
+router.post('/sync-from-controllers', async (req, res) => {
+  const result = await syncNetworkClientsToIpam();
+  res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// Audit log query
+// ---------------------------------------------------------------------------
+router.get('/audit', async (req, res) => {
+  const { table_name, record_id, limit = 50 } = req.query;
+  const conds = [], vals = [];
+  if (table_name) { conds.push(`a.table_name=$${vals.length+1}`); vals.push(table_name); }
+  if (record_id)  { conds.push(`a.record_id=$${vals.length+1}`);  vals.push(record_id);  }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+  const { rows } = await query(
+    `SELECT a.*, u.full_name AS changed_by_name
+     FROM ipam_audit a
+     LEFT JOIN users u ON u.id = a.changed_by
+     ${where} ORDER BY a.changed_at DESC LIMIT $${vals.length+1}`,
+    [...vals, parseInt(limit, 10)]
+  );
+  res.json(rows);
+});
+
+// ---------------------------------------------------------------------------
 // IP arithmetic helpers
 // ---------------------------------------------------------------------------
+function hostCount(cidr, ipVersion = 4) {
+  if (ipVersion === 6) return null;
+  try {
+    const prefix = parseInt(cidr.toString().split('/')[1], 10);
+    if (prefix >= 31) return Math.pow(2, 32 - prefix);
+    return Math.pow(2, 32 - prefix) - 2;
+  } catch { return 0; }
+}
+
 function ipToInt(ip) {
   return ip.split('.').reduce((acc, oct) => (acc << 8) | parseInt(oct, 10), 0) >>> 0;
 }

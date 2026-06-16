@@ -3,6 +3,7 @@ const redis  = require('../redis');
 const { query } = require('../db');
 const config = require('../config');
 const { syncAll } = require('./blocklistSync');
+const { syncNetworkClientsToIpam } = require('./ipamSync');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -159,6 +160,12 @@ function startScheduler() {
   // Google Workspace sync — nightly 2am
   cron.schedule('0 2 * * *', () => {
     syncGoogleWorkspace().catch(err => console.error('[scheduler] google sync error:', err.message));
+  });
+
+  // Network controller → IPAM sync — every 15 minutes
+  // Syncs live network clients (MAC, IP, hostname) into IPAM ip_addresses records.
+  cron.schedule('*/15 * * * *', () => {
+    syncNetworkClientsToIpam().catch(err => console.error('[scheduler] ipam-sync error:', err.message));
   });
 }
 

@@ -21,7 +21,9 @@ async function apiFetch(path, options = {}) {
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || `Request failed: ${res.status}`);
+    const error = new Error(err.error || `Request failed: ${res.status}`);
+    Object.assign(error, err); // carry overlap, conflicting, etc. through to callers
+    throw error;
   }
 
   if (res.status === 204) return null;

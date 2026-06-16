@@ -151,7 +151,7 @@ function SubnetsTab() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
             <tr>
-              {['Label','Subnet','Pool Range','Gateway','DNS','Lease Time','Utilization',''].map(h => (
+              {['Label','Subnet','Pool Range','Gateway','DNS','Lease Time','Utilization','IPAM',''].map(h => (
                 <th key={h} className="px-3 py-2">{h}</th>
               ))}
             </tr>
@@ -172,6 +172,11 @@ function SubnetsTab() {
                 <td className="px-3 py-2">
                   <UtilBar used={s.kea_stats?.used} total={s.kea_stats?.total} />
                 </td>
+                <td className="px-3 py-2 text-xs text-slate-500">
+                  {s.ipam_subnet_name
+                    ? <a href="/admin/ipam" className="text-primary-600 hover:underline">{s.ipam_subnet_name}</a>
+                    : <span className="text-slate-300">—</span>}
+                </td>
                 <td className="px-3 py-2 whitespace-nowrap">
                   <button onClick={() => openEdit(s)}
                     className="text-xs text-primary-600 hover:underline mr-2">Edit</button>
@@ -181,7 +186,7 @@ function SubnetsTab() {
               </tr>
             ))}
             {!subnets.length && (
-              <tr><td colSpan={8} className="text-center text-slate-400 py-8">No subnets configured</td></tr>
+              <tr><td colSpan={9} className="text-center text-slate-400 py-8">No subnets configured</td></tr>
             )}
           </tbody>
         </table>
@@ -494,9 +499,213 @@ function LeasesTab() {
 }
 
 // ---------------------------------------------------------------------------
+// Options tab
+// ---------------------------------------------------------------------------
+const COMMON_OPTIONS = [
+  { label: 'DNS Servers',  option_name: 'domain-name-servers', option_code: 6,  placeholder: '8.8.8.8, 8.8.4.4' },
+  { label: 'NTP Server',   option_name: 'ntp-servers',         option_code: 42, placeholder: '192.168.1.1' },
+  { label: 'Domain Name',  option_name: 'domain-name',         option_code: 15, placeholder: 'school.local' },
+  { label: 'TFTP Server',  option_name: 'tftp-server-name',    option_code: 66, placeholder: '192.168.1.10' },
+  { label: 'Boot File',    option_name: 'bootfile-name',       option_code: 67, placeholder: 'pxelinux.0' },
+];
+const EMPTY_OPT = { option_name: '', option_label: '', option_data: '', option_code: '' };
+
+function OptionsSection({ title, note, fetchFn, queryKey, createFn, updateFn, deleteFn }) {
+  const qc = useQueryClient();
+  const [modal, setModal] = useState(null); // null | 'add' | { ...row }
+  const [form, setForm]   = useState(EMPTY_OPT);
+  const [quick, setQuick] = useState(null); // filled when quick-add chip clicked
+
+  const { data: options = [] } = useQuery({ queryKey, queryFn: fetchFn });
+  const inv = () => qc.invalidateQueries({ queryKey });
+
+  const save = useMutation({
+    mutationFn: () => {
+      const payload = { ...form, option_code: form.option_code ? parseInt(form.option_code, 10) : null };
+      return modal === 'add' ? createFn(payload) : updateFn(modal.id, payload);
+    },
+    onSuccess: () => { inv(); setModal(null); setQuick(null); },
+  });
+
+  const del = useMutation({
+    mutationFn: id => deleteFn(id),
+    onSuccess: inv,
+  });
+
+  const toggle = useMutation({
+    mutationFn: opt => updateFn(opt.id, { ...opt, is_active: !opt.is_active }),
+    onSuccess: inv,
+  });
+
+  function openQuick(preset) {
+    setForm({ option_name: preset.option_name, option_label: preset.label, option_data: '', option_code: String(preset.option_code) });
+    setQuick(preset);
+    setModal('add');
+  }
+
+  function openEdit(opt) {
+    setForm({ option_name: opt.option_name, option_label: opt.option_label || '', option_data: opt.option_data, option_code: opt.option_code ? String(opt.option_code) : '' });
+    setModal(opt);
+  }
+
+  const INP = 'border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary-500 w-full';
+
+  return (
+    <div>
+      <div className="flex items-start justify-between mb-2">
+        <div>
+          <h3 className="text-sm font-semibold text-slate-800">{title}</h3>
+          {note && <p className="text-xs text-slate-400 mt-0.5">{note}</p>}
+        </div>
+        <button className="btn-primary text-sm" onClick={() => { setForm(EMPTY_OPT); setQuick(null); setModal('add'); }}>
+          + Add Option
+        </button>
+      </div>
+
+      {/* Quick-add chips */}
+      <div className="flex flex-wrap gap-1.5 mb-3">
+        {COMMON_OPTIONS.map(p => (
+          <button key={p.option_name} onClick={() => openQuick(p)}
+            className="text-xs px-2.5 py-1 rounded-full border border-slate-300 text-slate-600 hover:border-primary-400 hover:text-primary-700 transition-colors">
+            + {p.label}
+          </button>
+        ))}
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>
+              {['Code','Option Name','Label','Value','Active',''].map(h => (
+                <th key={h} className="px-3 py-2 text-left">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {options.map(o => (
+              <tr key={o.id} className={`hover:bg-slate-50 ${!o.is_active ? 'opacity-50' : ''}`}>
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">{o.option_code ?? '—'}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-700">{o.option_name}</td>
+                <td className="px-3 py-2 text-slate-600">{o.option_label || '—'}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-800 max-w-xs truncate" title={o.option_data}>{o.option_data}</td>
+                <td className="px-3 py-2">
+                  <button onClick={() => toggle.mutate(o)}
+                    className={`text-xs px-2 py-0.5 rounded-full font-medium ${o.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {o.is_active ? 'Active' : 'Disabled'}
+                  </button>
+                </td>
+                <td className="px-3 py-2 whitespace-nowrap text-right space-x-2">
+                  <button onClick={() => openEdit(o)} className="text-xs text-primary-600 hover:underline">Edit</button>
+                  <button onClick={() => { if (confirm(`Delete option "${o.option_name}"?`)) del.mutate(o.id); }}
+                    className="text-xs text-red-500 hover:underline">Del</button>
+                </td>
+              </tr>
+            ))}
+            {!options.length && (
+              <tr><td colSpan={6} className="text-center text-slate-400 py-6 text-sm">
+                No options configured — use quick-add chips or + Add Option above
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+
+      {modal && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+            <h2 className="text-lg font-bold text-slate-900 mb-4">
+              {modal === 'add' ? (quick ? `Add: ${quick.label}` : 'Add Option') : `Edit: ${modal.option_name}`}
+            </h2>
+            <div className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                Option Name (Kea canonical)
+                <input className={INP} value={form.option_name} placeholder="domain-name-servers"
+                  onChange={e => setForm(f => ({ ...f, option_name: e.target.value }))} />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                Label (human-readable, optional)
+                <input className={INP} value={form.option_label} placeholder="DNS Servers"
+                  onChange={e => setForm(f => ({ ...f, option_label: e.target.value }))} />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                Value {quick && <span className="font-normal text-slate-400">e.g. {quick.placeholder}</span>}
+                <input className={INP} value={form.option_data} placeholder={quick?.placeholder ?? ''}
+                  onChange={e => setForm(f => ({ ...f, option_data: e.target.value }))} />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+                Option Code (optional)
+                <input className={INP} type="number" value={form.option_code}
+                  onChange={e => setForm(f => ({ ...f, option_code: e.target.value }))} />
+              </label>
+            </div>
+            {save.isError && <p className="text-red-500 text-xs mt-2">{save.error?.message}</p>}
+            <div className="flex justify-end gap-2 mt-5">
+              <button onClick={() => { setModal(null); setQuick(null); }} className="btn-secondary text-sm">Cancel</button>
+              <button onClick={() => save.mutate()} disabled={save.isPending} className="btn-primary text-sm">
+                {save.isPending ? 'Saving…' : 'Save'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OptionsTab({ subnets }) {
+  const [scopeId, setScopeId] = useState('');
+
+  return (
+    <div className="space-y-8">
+      {/* Global options */}
+      <OptionsSection
+        title="Global Options"
+        note="Applied to all DHCP scopes. Per-scope options below override these for the same option name."
+        queryKey={['dhcp-options-global']}
+        fetchFn={() => api.get('/dhcp/options')}
+        createFn={payload => api.post('/dhcp/options', { ...payload, scope: 'global' })}
+        updateFn={(id, payload) => api.put(`/dhcp/options/${id}`, payload)}
+        deleteFn={id => api.delete(`/dhcp/options/${id}`)}
+      />
+
+      {/* Per-scope options */}
+      <div className="border-t border-slate-200 pt-6">
+        <div className="flex items-center gap-3 mb-4">
+          <h3 className="text-sm font-semibold text-slate-800 whitespace-nowrap">Per-Scope Options</h3>
+          <select
+            value={scopeId}
+            onChange={e => setScopeId(e.target.value)}
+            className="border border-slate-300 rounded-md px-2 py-1.5 text-sm text-slate-800 focus:outline-none focus:ring-1 focus:ring-primary-500 flex-1 max-w-xs">
+            <option value="">Select a DHCP scope…</option>
+            {subnets.map(s => (
+              <option key={s.id} value={s.id}>{s.label ? `${s.label} (${s.subnet})` : s.subnet}</option>
+            ))}
+          </select>
+        </div>
+
+        {scopeId ? (
+          <OptionsSection
+            key={scopeId}
+            title=""
+            note="These override global options with the same name for this scope only."
+            queryKey={['dhcp-options-subnet', scopeId]}
+            fetchFn={() => api.get(`/dhcp/subnets/${scopeId}/options`)}
+            createFn={payload => api.post(`/dhcp/subnets/${scopeId}/options`, { ...payload, scope: 'subnet' })}
+            updateFn={(id, payload) => api.put(`/dhcp/subnets/${scopeId}/options/${id}`, payload)}
+            deleteFn={id => api.delete(`/dhcp/subnets/${scopeId}/options/${id}`)}
+          />
+        ) : (
+          <p className="text-sm text-slate-400 py-4 text-center">Select a scope above to manage its options</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Subnets', 'Reservations', 'Active Leases'];
+const TABS = ['Subnets', 'Reservations', 'Active Leases', 'Options'];
 
 export default function DhcpManagement() {
   const [tab, setTab] = useState('Subnets');
@@ -543,6 +752,7 @@ export default function DhcpManagement() {
       {tab === 'Subnets'       && <SubnetsTab />}
       {tab === 'Reservations'  && <ReservationsTab subnets={subnets} />}
       {tab === 'Active Leases' && <LeasesTab />}
+      {tab === 'Options'       && <OptionsTab subnets={subnets} />}
     </div>
   );
 }
