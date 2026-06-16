@@ -4,7 +4,7 @@ const redis    = require('../redis');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { classify }       = require('../services/domainClassifier');
-const { syncAll, importSource, rebuildRedisCache, classifyRecentDomains } = require('../services/categoryImport');
+const { syncAll, importSource, rebuildRedisCache, classifyRecentDomains, getStatus } = require('../services/categoryImport');
 
 const router    = express.Router();
 const adminOnly = [authenticate, requireMinRole('admin')];
@@ -37,11 +37,24 @@ router.get('/sources', ...adminOnly, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/categories/sync-status
+// Poll the current sync status from Redis
+// ---------------------------------------------------------------------------
+router.get('/sync-status', ...adminOnly, async (req, res) => {
+  const status = await getStatus();
+  res.json(status);
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/v1/categories/sync
 // Trigger full UT1 + Shallalist sync (async, returns immediately)
 // ---------------------------------------------------------------------------
 router.post('/sync', ...adminOnly, async (req, res) => {
-  const { source } = req.body; // optional: sync one source only
+  const existing = await getStatus();
+  if (existing?.running) {
+    return res.status(409).json({ error: 'A sync is already running', status: existing });
+  }
+  const { source } = req.body;
   res.json({ status: 'sync started', source: source || 'all' });
   (source ? importSource(source) : syncAll())
     .then(r => console.log('[categories] sync complete:', r))

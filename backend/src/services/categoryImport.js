@@ -12,7 +12,23 @@ const redis    = require('../redis');
 
 const execFileAsync = util.promisify(execFile);
 const CATEGORY_KEY  = 'classguard:domain:category';
+const STATUS_KEY    = 'classguard:category-sync:status';
 const CHUNK         = 500;
+
+// ---------------------------------------------------------------------------
+// Sync status helpers — write to Redis so the UI can poll
+// ---------------------------------------------------------------------------
+async function setStatus(patch) {
+  const raw = await redis.get(STATUS_KEY).catch(() => null);
+  const current = raw ? JSON.parse(raw) : {};
+  const next = { ...current, ...patch, updated_at: new Date().toISOString() };
+  await redis.set(STATUS_KEY, JSON.stringify(next), 'EX', 3600); // auto-expire after 1h
+}
+
+async function getStatus() {
+  const raw = await redis.get(STATUS_KEY).catch(() => null);
+  return raw ? JSON.parse(raw) : { running: false };
+}
 
 // UT1 category folder name → our slug
 const UT1_MAP = {
@@ -214,22 +230,24 @@ async function importSource(sourceSlug) {
   const tmpDir  = path.join(os.tmpdir(), `classguard-${sourceSlug}-${Date.now()}`);
   const tarFile = path.join(os.tmpdir(), `classguard-${sourceSlug}.tar.gz`);
 
+  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'downloading', started_at: new Date().toISOString() } });
   console.log(`[category-import] downloading ${src.name} from ${src.url}`);
   await downloadToFile(src.url, tarFile);
 
-  console.log(`[category-import] extracting ${sourceSlug}`);
+  const fileSizeMb = (fs.statSync(tarFile).size / 1024 / 1024).toFixed(1);
+  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'extracting', file_size_mb: fileSizeMb } });
+  console.log(`[category-import] extracting ${sourceSlug} (${fileSizeMb} MB)`);
   await extractTarGz(tarFile, tmpDir);
   fs.unlinkSync(tarFile);
 
   const categoryMap  = sourceSlug === 'ut1' ? UT1_MAP : SHALLA_MAP;
   const subDirName   = sourceSlug === 'ut1' ? 'blacklists' : 'BL';
   const baseDir      = path.join(tmpDir, subDirName);
-
-  // UT1 may have a different inner dir structure — find the first subdir
-  const actualBase = fs.existsSync(baseDir)
+  const actualBase   = fs.existsSync(baseDir)
     ? baseDir
     : path.join(tmpDir, fs.readdirSync(tmpDir)[0] || '');
 
+  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'parsing', file_size_mb: fileSizeMb } });
   console.log(`[category-import] parsing domain files from ${actualBase}`);
   const pairs = [];
   for (const { filePath, slug } of walkDomainFiles(actualBase, categoryMap)) {
@@ -239,17 +257,17 @@ async function importSource(sourceSlug) {
     }
   }
 
+  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'importing', pairs: pairs.length } });
   console.log(`[category-import] ${pairs.length} domain-category pairs parsed, upserting...`);
   const inserted = await upsertDomains(pairs, sourceSlug);
 
-  // Update source stats
   await query(
     `UPDATE category_sources SET last_synced_at = NOW(), domain_count = $1 WHERE slug = $2`,
     [inserted, sourceSlug]
   );
-
-  // Cleanup
   fs.rmSync(tmpDir, { recursive: true, force: true });
+
+  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'done', domains: inserted } });
   console.log(`[category-import] ${sourceSlug} done — ${inserted} domains imported`);
   return inserted;
 }
@@ -262,6 +280,15 @@ async function syncAll() {
     'SELECT slug FROM category_sources WHERE is_active = true'
   );
 
+  await setStatus({
+    running: true,
+    started_at: new Date().toISOString(),
+    completed_at: null,
+    error: null,
+    phase: 'starting',
+    sources: Object.fromEntries(sources.map(s => [s.slug, { phase: 'queued' }])),
+  });
+
   const results = {};
   for (const { slug } of sources) {
     try {
@@ -269,10 +296,19 @@ async function syncAll() {
     } catch (e) {
       console.error(`[category-import] ${slug} failed:`, e.message);
       results[slug] = { error: e.message };
+      await setStatus({ [`sources.${slug}`]: { phase: 'error', error: e.message } });
     }
   }
 
+  await setStatus({ phase: 'rebuilding_cache' });
   const cacheSize = await rebuildRedisCache();
+
+  await setStatus({
+    running: false,
+    phase: 'done',
+    completed_at: new Date().toISOString(),
+    cache_size: cacheSize,
+  });
   return { sources: results, cacheSize };
 }
 
@@ -333,4 +369,4 @@ async function classifyRecentDomains(limit = 500) {
   return classified;
 }
 
-module.exports = { syncAll, importSource, rebuildRedisCache, classifyRecentDomains };
+module.exports = { syncAll, importSource, rebuildRedisCache, classifyRecentDomains, getStatus };

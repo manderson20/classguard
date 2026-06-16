@@ -373,19 +373,70 @@ function DomainLookupTab({ categories }) {
 }
 
 // ---------------------------------------------------------------------------
+// Phase label helper
+// ---------------------------------------------------------------------------
+const PHASE_LABEL = {
+  queued:          'Queued',
+  downloading:     'Downloading…',
+  extracting:      'Extracting archive…',
+  parsing:         'Parsing domain files…',
+  importing:       'Importing to database…',
+  done:            'Done',
+  error:           'Error',
+  rebuilding_cache:'Building Redis cache…',
+  starting:        'Starting…',
+};
+
+function PhaseIndicator({ phase, error, domains, pairs, fileSizeMb }) {
+  const isDone  = phase === 'done';
+  const isError = phase === 'error';
+  const isActive = !isDone && !isError && phase !== 'queued';
+  return (
+    <div className={`flex items-center gap-2 text-xs px-2.5 py-1 rounded-full border font-medium
+      ${isDone  ? 'bg-green-50 border-green-200 text-green-700' :
+        isError ? 'bg-red-50 border-red-200 text-red-600' :
+        isActive ? 'bg-blue-50 border-blue-200 text-blue-700' :
+                   'bg-slate-50 border-slate-200 text-slate-500'}`}>
+      {isActive && (
+        <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse flex-shrink-0" />
+      )}
+      <span>{PHASE_LABEL[phase] || phase}</span>
+      {fileSizeMb && phase === 'extracting' && <span className="opacity-70">({fileSizeMb} MB)</span>}
+      {pairs && phase === 'importing' && <span className="opacity-70">({pairs.toLocaleString()} domains)</span>}
+      {isDone && domains != null && <span className="opacity-70">({domains.toLocaleString()} domains)</span>}
+      {error && <span className="opacity-70 truncate max-w-[200px]">{error}</span>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Sources tab
 // ---------------------------------------------------------------------------
 function SourcesTab() {
   const qc = useQueryClient();
-  const { data, isLoading } = useQuery({
+
+  const { data: sourcesData, isLoading } = useQuery({
     queryKey: ['cat-sources'],
     queryFn:  () => api.get('/categories/sources'),
-    refetchInterval: 5000,
   });
+
+  // Poll sync status — fast when running, idle when not
+  const { data: syncStatus = {} } = useQuery({
+    queryKey: ['cat-sync-status'],
+    queryFn:  () => api.get('/categories/sync-status'),
+    refetchInterval: d => d?.running ? 2000 : 10000,
+  });
+
+  // Refresh sources table when sync finishes
+  const wasRunning = syncStatus.running;
+  if (!wasRunning && syncStatus.phase === 'done') {
+    qc.invalidateQueries({ queryKey: ['cat-sources'] });
+    qc.invalidateQueries({ queryKey: ['categories'] });
+  }
 
   const sync = useMutation({
     mutationFn: source => api.post('/categories/sync', source ? { source } : {}),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ['cat-sources'] }),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['cat-sync-status'] }),
   });
 
   const classify = useMutation({
@@ -394,19 +445,73 @@ function SourcesTab() {
 
   const rebuild = useMutation({
     mutationFn: () => api.post('/categories/rebuild-cache', {}),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ['cat-sources'] }),
+    onSuccess:  () => { qc.invalidateQueries({ queryKey: ['cat-sources'] }); qc.invalidateQueries({ queryKey: ['cat-sync-status'] }); },
   });
+
+  const isRunning = syncStatus.running;
 
   return (
     <div className="space-y-5">
+
+      {/* Live sync status banner */}
+      {(isRunning || syncStatus.phase === 'done' || syncStatus.phase === 'error') && (
+        <div className={`rounded-xl border p-4 ${
+          isRunning         ? 'bg-blue-50 border-blue-200' :
+          syncStatus.phase === 'error' ? 'bg-red-50 border-red-200' :
+                             'bg-green-50 border-green-200'}`}>
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              {isRunning && <span className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse" />}
+              <span className={`font-semibold text-sm ${isRunning ? 'text-blue-800' : syncStatus.phase === 'error' ? 'text-red-700' : 'text-green-800'}`}>
+                {isRunning ? 'Sync in progress…' : syncStatus.phase === 'done' ? 'Sync complete' : 'Sync failed'}
+              </span>
+              {syncStatus.started_at && (
+                <span className="text-xs text-slate-500">
+                  Started {new Date(syncStatus.started_at).toLocaleTimeString()}
+                </span>
+              )}
+            </div>
+            {syncStatus.completed_at && (
+              <span className="text-xs text-slate-500">
+                Finished {new Date(syncStatus.completed_at).toLocaleTimeString()}
+              </span>
+            )}
+          </div>
+
+          {/* Per-source status */}
+          {syncStatus.sources && (
+            <div className="space-y-2">
+              {Object.entries(syncStatus.sources).map(([slug, s]) => (
+                <div key={slug} className="flex items-center gap-3">
+                  <span className="text-xs font-semibold text-slate-600 w-24 flex-shrink-0 uppercase">{slug}</span>
+                  <PhaseIndicator phase={s.phase} error={s.error} domains={s.domains}
+                    pairs={s.pairs} fileSizeMb={s.file_size_mb} />
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Rebuilding cache / done totals */}
+          {(syncStatus.phase === 'rebuilding_cache' || syncStatus.phase === 'done') && (
+            <div className="mt-2 flex items-center gap-2">
+              <span className="text-xs font-semibold text-slate-600 w-24 flex-shrink-0">Cache</span>
+              <PhaseIndicator
+                phase={syncStatus.phase === 'rebuilding_cache' ? 'rebuilding_cache' : 'done'}
+                domains={syncStatus.cache_size}
+              />
+            </div>
+          )}
+        </div>
+      )}
+
       <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-700">
         Category lists are downloaded from external servers. The first sync may take several minutes
         and import millions of domains. Syncs run automatically every Sunday at 3am.
       </div>
 
       <div className="flex gap-3 flex-wrap">
-        <button onClick={() => sync.mutate(null)} disabled={sync.isPending} className="btn-primary text-sm">
-          {sync.isPending ? 'Sync started…' : 'Sync All Sources'}
+        <button onClick={() => sync.mutate(null)} disabled={isRunning || sync.isPending} className="btn-primary text-sm">
+          {isRunning ? 'Sync running…' : 'Sync All Sources'}
         </button>
         <button onClick={() => classify.mutate()} disabled={classify.isPending} className="btn-secondary text-sm">
           {classify.isPending ? 'Running…' : 'Run Keyword Classifier'}
@@ -432,34 +537,50 @@ function SourcesTab() {
         <>
           <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 text-sm">
             <span className="font-semibold text-slate-700">Redis cache:</span>{' '}
-            <span className="font-mono text-primary-700">{(data?.cacheSize || 0).toLocaleString()}</span>{' '}
+            <span className="font-mono text-primary-700">{(sourcesData?.cacheSize || 0).toLocaleString()}</span>{' '}
             <span className="text-slate-500">domains available for real-time DNS filtering</span>
           </div>
 
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-                <tr>{['Source','URL','Last Synced','Domains',''].map(h =>
+                <tr>{['Source','Last Synced','Domains Imported','Status',''].map(h =>
                   <th key={h} className="px-3 py-2 text-left">{h}</th>)}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {data?.sources.map(s => (
-                  <tr key={s.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-2 font-semibold text-slate-800">{s.name}</td>
-                    <td className="px-3 py-2 text-xs text-slate-400 max-w-[260px] truncate font-mono">{s.url}</td>
-                    <td className="px-3 py-2 text-xs text-slate-500">
-                      {s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : 'Never'}
-                    </td>
-                    <td className="px-3 py-2 text-xs font-medium text-slate-700">
-                      {(s.domain_count || 0).toLocaleString()}
-                    </td>
-                    <td className="px-3 py-2 text-right">
-                      <button onClick={() => sync.mutate({ source: s.slug })} disabled={sync.isPending}
-                        className="text-xs text-primary-600 hover:underline">Sync now</button>
-                    </td>
-                  </tr>
-                ))}
+                {sourcesData?.sources.map(s => {
+                  const live = syncStatus.sources?.[s.slug];
+                  return (
+                    <tr key={s.id} className="hover:bg-slate-50">
+                      <td className="px-3 py-2">
+                        <div className="font-semibold text-slate-800">{s.name}</div>
+                        <div className="text-xs text-slate-400 font-mono truncate max-w-[260px]">{s.url}</div>
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-500">
+                        {s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : <span className="text-slate-300">Never</span>}
+                      </td>
+                      <td className="px-3 py-2 text-sm font-medium text-slate-700">
+                        {(s.domain_count || 0).toLocaleString()}
+                      </td>
+                      <td className="px-3 py-2">
+                        {live ? (
+                          <PhaseIndicator phase={live.phase} error={live.error}
+                            domains={live.domains} pairs={live.pairs} fileSizeMb={live.file_size_mb} />
+                        ) : (
+                          <span className="text-xs text-slate-400">{s.last_synced_at ? 'Up to date' : 'Not synced'}</span>
+                        )}
+                      </td>
+                      <td className="px-3 py-2 text-right">
+                        <button onClick={() => sync.mutate({ source: s.slug })}
+                          disabled={isRunning || sync.isPending}
+                          className="text-xs text-primary-600 hover:underline disabled:opacity-40">
+                          Sync now
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -468,8 +589,8 @@ function SourcesTab() {
             <h3 className="font-semibold text-slate-700 mb-2 text-sm">How categorization works</h3>
             <ol className="text-sm text-slate-500 space-y-1.5 list-decimal list-inside">
               <li><strong className="text-slate-700">UT1 + Shallalist</strong> — ~5–8M pre-categorized domains, updated weekly</li>
-              <li><strong className="text-slate-700">Keyword classifier</strong> — pattern matches domain names (e.g. "casino-poker.com" → gambling), runs daily on new domains</li>
-              <li><strong className="text-slate-700">Manual overrides</strong> — admin-set, take priority over all other sources</li>
+              <li><strong className="text-slate-700">Keyword classifier</strong> — pattern matches domain names (e.g. "casino-poker.com" → gambling), runs daily on new domains seen in DNS logs</li>
+              <li><strong className="text-slate-700">Manual overrides</strong> — admin-set in Domain Lookup tab, take priority over all other sources</li>
               <li><strong className="text-slate-700">AI classifier</strong> — optional future enhancement for ambiguous domains</li>
             </ol>
           </div>
