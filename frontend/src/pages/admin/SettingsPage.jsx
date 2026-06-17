@@ -350,8 +350,11 @@ function BlockPageBrandingSection({ appSettings, appLoading, saved, setSaved }) 
   );
 }
 
+const TABS = ['General', 'Branding', 'DNS & Retention', 'Monitoring', 'Extension', 'About'];
+
 export default function SettingsPage() {
   const qc = useQueryClient();
+  const [tab, setTab] = useState('General');
 
   const { data: dnsSettings = {}, isLoading: dnsLoading } = useQuery({
     queryKey: ['dns-settings'],
@@ -420,6 +423,20 @@ export default function SettingsPage() {
         <p className="text-slate-500 text-sm mt-0.5">System-wide configuration</p>
       </div>
 
+      <div className="flex gap-1 border-b border-slate-200 mb-5">
+        {TABS.map(t => (
+          <button key={t} onClick={() => setTab(t)}
+            className={`px-4 py-2 text-sm font-medium rounded-t-lg transition-colors
+              ${tab === t
+                ? 'bg-white border border-b-white border-slate-200 text-primary-700 -mb-px'
+                : 'text-slate-500 hover:text-slate-700'}`}>
+            {t}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'General' && (
+      <>
       {/* Google OAuth */}
       <Section title="Google Workspace Login">
         <p className="text-xs text-slate-500 mb-4">
@@ -524,10 +541,15 @@ export default function SettingsPage() {
           </>
         )}
       </Section>
+      </>
+      )}
 
-      {/* Block Page Branding */}
-      <BlockPageBrandingSection appSettings={appSettings} appLoading={appLoading} saved={saved} setSaved={setSaved} />
+      {tab === 'Branding' && (
+        <BlockPageBrandingSection appSettings={appSettings} appLoading={appLoading} saved={saved} setSaved={setSaved} />
+      )}
 
+      {tab === 'DNS & Retention' && (
+      <>
       {/* DNS Settings */}
       <Section title="DNS Engine">
         {dnsLoading ? (
@@ -602,7 +624,11 @@ export default function SettingsPage() {
           </code>
         </p>
       </Section>
+      </>
+      )}
 
+      {tab === 'Monitoring' && (
+      <>
       {/* Zabbix monitoring */}
       <Section title="Zabbix Monitoring">
         <p className="text-sm text-slate-600 mb-4">
@@ -642,10 +668,15 @@ export default function SettingsPage() {
           {saved === 'zabbix' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
         </div>
       </Section>
+      </>
+      )}
 
-      {/* Chrome Extension Deployment */}
-      <ExtensionDeploySection googleClientId={google.google_client_id} />
+      {tab === 'Extension' && (
+        <ExtensionDeploySection googleClientId={google.google_client_id} />
+      )}
 
+      {tab === 'About' && (
+      <>
       {/* About */}
       <Section title="About">
         <Field label="Version" hint="ClassGuard open-source release">
@@ -661,6 +692,8 @@ export default function SettingsPage() {
           <div className="text-sm text-slate-500">Open an issue on GitHub</div>
         </Field>
       </Section>
+      </>
+      )}
     </div>
   );
 }
