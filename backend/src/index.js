@@ -56,6 +56,7 @@ app.use('/api/v1/assignments', require('./routes/assignments'));
 app.use('/api/v1/blocklists',  require('./routes/blocklists'));
 app.use('/api/v1/categories',  require('./routes/categories'));
 app.use('/api/v1/dns',         require('./routes/dns'));
+app.use('/api/v1/dns',         require('./routes/dnsRecords'));
 app.use('/api/v1/penalty-box', require('./routes/penaltyBox'));
 app.use('/api/v1/classes',     require('./routes/classes'));
 app.use('/api/v1/extension',   require('./routes/extension'));

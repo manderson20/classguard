@@ -14,6 +14,7 @@ import {
   mdiLockOutline,
   mdiRobotOutline,
   mdiIpNetworkOutline,
+  mdiDnsOutline,
   mdiServerOutline,
   mdiSitemap,
   mdiSwapHorizontal,
@@ -67,8 +68,9 @@ const ADMIN_SECTIONS = [
   {
     label: 'DNS & Network',
     items: [
-      { to: '/admin/dns/logs',  icon: mdiFormatListBulletedSquare, label: 'DNS Logs'      },
-      { to: '/admin/dns/stats', icon: mdiChartBar,                 label: 'DNS Stats'     },
+      { to: '/admin/dns/logs',     icon: mdiFormatListBulletedSquare, label: 'DNS Logs'     },
+      { to: '/admin/dns/stats',    icon: mdiChartBar,                 label: 'DNS Stats'    },
+      { to: '/admin/dns/records',  icon: mdiDnsOutline,               label: 'DNS Records'  },
       { to: '/admin/radius',    icon: mdiLockOutline,              label: 'RADIUS / NAC'  },
       { to: '/admin/ipam',      icon: mdiIpNetworkOutline,         label: 'IPAM'          },
       { to: '/admin/dhcp',      icon: mdiServerOutline,            label: 'DHCP'          },

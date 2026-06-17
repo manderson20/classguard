@@ -3,6 +3,7 @@ const { Packet }     = DNS;
 const config         = require('./config');
 const blocklist      = require('./blocklistLoader');
 const categoryLookup = require('./categoryLookup');
+const localRecords   = require('./localRecords');
 const cache          = require('./cache');
 const upstream       = require('./upstream');
 const policyCache    = require('./policyCache');
@@ -25,6 +26,16 @@ async function resolveQuery(name, typeNum, sourceIp) {
   const domain    = name.toLowerCase().replace(/\.$/, '');
   let   studentId = null;
   let   policyId  = null;
+
+  // --- 0. Local authoritative records (managed in ClassGuard) -------------
+  // Checked before all filtering — infrastructure queries (printers, servers)
+  // are answered directly without touching the student policy pipeline.
+  const localAnswers = await localRecords.lookupLocal(domain, typeNum).catch(() => null);
+  if (localAnswers !== null) {
+    // null = not our zone; empty array = our zone but no record (NXDOMAIN)
+    logQuery({ domain, action: 'local', sourceIp, studentId: null, policyId: null, blockReason: null });
+    return { action: 'allowed', answers: localAnswers };
+  }
 
   // --- 1. Conditional forwarding zones — highest priority of all ----------
   // AD internal zones (school.local, corp.example.com) go directly to the
