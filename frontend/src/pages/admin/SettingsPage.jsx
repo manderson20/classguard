@@ -97,6 +97,228 @@ function ExtensionDeploySection({ googleClientId }) {
   );
 }
 
+const PRESET_COLORS = [
+  { label: 'Blue',    value: '#2563eb' },
+  { label: 'Indigo',  value: '#4f46e5' },
+  { label: 'Green',   value: '#16a34a' },
+  { label: 'Red',     value: '#dc2626' },
+  { label: 'Maroon',  value: '#9f1239' },
+  { label: 'Purple',  value: '#7c3aed' },
+  { label: 'Orange',  value: '#ea580c' },
+  { label: 'Teal',    value: '#0d9488' },
+];
+
+const MAX_LOGO_BYTES = 300 * 1024; // 300 KB
+
+function BlockPageBrandingSection({ appSettings, appLoading, saved, setSaved }) {
+  const qc = useQueryClient();
+  const [branding, setBranding] = useState({
+    blockpage_school_name:   '',
+    blockpage_message:       '',
+    blockpage_contact_email: '',
+    blockpage_primary_color: '#2563eb',
+  });
+  const [logoPreview, setLogoPreview] = useState(null);
+  const [logoError,   setLogoError]   = useState('');
+
+  useEffect(() => {
+    if (appSettings && Object.keys(appSettings).length) {
+      setBranding({
+        blockpage_school_name:   appSettings.blockpage_school_name   || '',
+        blockpage_message:       appSettings.blockpage_message       || '',
+        blockpage_contact_email: appSettings.blockpage_contact_email || '',
+        blockpage_primary_color: appSettings.blockpage_primary_color || '#2563eb',
+      });
+      setLogoPreview(appSettings.blockpage_logo || null);
+    }
+  }, [appSettings]);
+
+  const save = useMutation({
+    mutationFn: () => api.put('/settings', {
+      ...branding,
+      ...(logoPreview !== appSettings?.blockpage_logo ? { blockpage_logo: logoPreview || '' } : {}),
+    }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['app-settings'] });
+      setSaved('branding');
+      setTimeout(() => setSaved(''), 2500);
+    },
+  });
+
+  function handleLogoFile(file) {
+    setLogoError('');
+    if (!file) return;
+    if (!file.type.startsWith('image/')) { setLogoError('Please select an image file (PNG, JPG, or SVG)'); return; }
+
+    const reader = new FileReader();
+    reader.onload = e => {
+      const dataUrl = e.target.result;
+      const sizeBytes = Math.round((dataUrl.length * 3) / 4);
+      if (sizeBytes > MAX_LOGO_BYTES) {
+        setLogoError(`Image is too large (${Math.round(sizeBytes / 1024)} KB). Please use an image under 300 KB.`);
+        return;
+      }
+      setLogoPreview(dataUrl);
+    };
+    reader.readAsDataURL(file);
+  }
+
+  const color = branding.blockpage_primary_color || '#2563eb';
+  const colorLight = color + '22';
+
+  return (
+    <Section title="Block Page Branding">
+      <p className="text-xs text-slate-500 mb-5">
+        Customize the page students see when a website is blocked — both in the Chrome extension and
+        on non-extension devices (via DNS sinkhole). Changes take effect within 5 minutes.
+      </p>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Settings column */}
+        <div className="space-y-4">
+          {appLoading ? <div className="text-slate-400 text-sm">Loading…</div> : (
+            <>
+              {/* Logo upload */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">School Logo</label>
+                <div
+                  className="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center cursor-pointer hover:border-primary-400 hover:bg-primary-50 transition-colors"
+                  onClick={() => document.getElementById('logo-file-input').click()}
+                  onDragOver={e => e.preventDefault()}
+                  onDrop={e => { e.preventDefault(); handleLogoFile(e.dataTransfer.files[0]); }}
+                >
+                  {logoPreview ? (
+                    <div className="flex flex-col items-center gap-2">
+                      <img src={logoPreview} alt="School logo" className="max-h-16 max-w-[200px] object-contain" />
+                      <span className="text-xs text-slate-400">Click or drag to replace</span>
+                    </div>
+                  ) : (
+                    <div className="py-2">
+                      <div className="text-2xl mb-1">🏫</div>
+                      <div className="text-sm text-slate-500">Click or drag to upload your school logo</div>
+                      <div className="text-xs text-slate-400 mt-1">PNG, JPG, or SVG · max 300 KB</div>
+                    </div>
+                  )}
+                </div>
+                <input id="logo-file-input" type="file" accept="image/*" className="hidden"
+                  onChange={e => handleLogoFile(e.target.files[0])} />
+                {logoError && <p className="text-red-600 text-xs mt-1">{logoError}</p>}
+                {logoPreview && (
+                  <button className="text-xs text-red-500 hover:underline mt-1"
+                    onClick={() => setLogoPreview(null)}>Remove logo</button>
+                )}
+              </div>
+
+              {/* School name */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">School / District Name</label>
+                <input className="input text-sm" placeholder="e.g. Springfield Unified School District"
+                  value={branding.blockpage_school_name}
+                  onChange={e => setBranding(b => ({ ...b, blockpage_school_name: e.target.value }))} />
+              </div>
+
+              {/* Custom message */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Custom Message</label>
+                <textarea className="input text-sm resize-none" rows={3}
+                  placeholder="This website is not permitted on your school's network."
+                  value={branding.blockpage_message}
+                  onChange={e => setBranding(b => ({ ...b, blockpage_message: e.target.value }))} />
+              </div>
+
+              {/* Contact email */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">IT Contact Email <span className="text-slate-400 font-normal">(optional)</span></label>
+                <input className="input text-sm" type="email" placeholder="helpdesk@school.org"
+                  value={branding.blockpage_contact_email}
+                  onChange={e => setBranding(b => ({ ...b, blockpage_contact_email: e.target.value }))} />
+                <p className="text-xs text-slate-400 mt-1">Shown as a contact link students can click</p>
+              </div>
+
+              {/* Primary color */}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-2">Accent Color</label>
+                <div className="flex flex-wrap gap-2 mb-2">
+                  {PRESET_COLORS.map(p => (
+                    <button key={p.value} title={p.label}
+                      className={`w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 ${color === p.value ? 'border-slate-700 scale-110' : 'border-transparent'}`}
+                      style={{ background: p.value }}
+                      onClick={() => setBranding(b => ({ ...b, blockpage_primary_color: p.value }))}
+                    />
+                  ))}
+                  <div className="relative w-7 h-7">
+                    <input type="color" value={color}
+                      className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                      onChange={e => setBranding(b => ({ ...b, blockpage_primary_color: e.target.value }))} />
+                    <div className="w-7 h-7 rounded-full border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-xs">+</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 pt-2">
+                <button className="btn-primary" onClick={() => save.mutate()} disabled={save.isPending}>
+                  {save.isPending ? 'Saving…' : 'Save Block Page'}
+                </button>
+                {saved === 'branding' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+                {save.error && <span className="text-red-500 text-sm">{save.error.message}</span>}
+              </div>
+            </>
+          )}
+        </div>
+
+        {/* Live preview column */}
+        <div className="hidden lg:block">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Live Preview</div>
+          <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm" style={{ background: '#f1f5f9' }}>
+            <div className="p-5 flex flex-col items-center text-center" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
+
+              {/* Logo or shield */}
+              <div className="mb-3 flex items-center justify-center" style={{ minHeight: 56 }}>
+                {logoPreview
+                  ? <img src={logoPreview} alt="" style={{ maxHeight: 56, maxWidth: 140, objectFit: 'contain' }} />
+                  : <div style={{ width: 52, height: 52, borderRadius: '50%', background: colorLight, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26 }}>🛡️</div>
+                }
+              </div>
+
+              {branding.blockpage_school_name && (
+                <div style={{ fontSize: 10, fontWeight: 700, color: '#64748b', letterSpacing: '0.06em', textTransform: 'uppercase', marginBottom: 10 }}>
+                  {branding.blockpage_school_name}
+                </div>
+              )}
+
+              <div style={{ display: 'inline-block', background: colorLight, color, borderRadius: 999, padding: '3px 10px', fontSize: 10, fontWeight: 700, letterSpacing: '0.04em', textTransform: 'uppercase', marginBottom: 10 }}>
+                Access Blocked
+              </div>
+
+              <div style={{ fontSize: 15, fontWeight: 800, color: '#0f172a', marginBottom: 10, lineHeight: 1.25 }}>
+                This website has been blocked
+              </div>
+
+              <div style={{ display: 'inline-block', background: '#f8fafc', border: '1.5px solid #e2e8f0', borderRadius: 6, padding: '4px 10px', fontFamily: 'monospace', fontSize: 11, color: '#334155', marginBottom: 10 }}>
+                🔒 example-site.com
+              </div>
+
+              <div style={{ fontSize: 12, color: '#475569', lineHeight: 1.55, marginBottom: branding.blockpage_contact_email ? 8 : 0 }}>
+                {branding.blockpage_message || "This website is not permitted on your school's network."}
+              </div>
+
+              {branding.blockpage_contact_email && (
+                <div style={{ fontSize: 10, color: '#64748b', marginTop: 6 }}>
+                  Contact <span style={{ color }}>{branding.blockpage_contact_email}</span>
+                </div>
+              )}
+
+              <div style={{ borderTop: '1px solid #e2e8f0', width: '100%', marginTop: 14, paddingTop: 10, fontSize: 10, color: '#94a3b8' }}>
+                Protected by <strong style={{ color: '#64748b' }}>ClassGuard</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 export default function SettingsPage() {
   const qc = useQueryClient();
 
@@ -271,6 +493,9 @@ export default function SettingsPage() {
           </>
         )}
       </Section>
+
+      {/* Block Page Branding */}
+      <BlockPageBrandingSection appSettings={appSettings} appLoading={appLoading} saved={saved} setSaved={setSaved} />
 
       {/* DNS Settings */}
       <Section title="DNS Engine">

@@ -9,6 +9,8 @@ import { connectSocket, isConnected } from '../lib/socket.js';
 
 const POLICY_CACHE_KEY   = 'cg_policy';
 const KEYWORDS_CACHE_KEY = 'cg_keywords';
+const BRANDING_CACHE_KEY = 'cg_branding';
+const BRANDING_TS_KEY    = 'cg_branding_ts';
 const ALARM_POLICY_SYNC  = 'cg-policy-sync';
 const ALARM_HEARTBEAT    = 'cg-heartbeat';
 const ALARM_KEYWORD_SYNC = 'cg-keyword-sync';
@@ -45,6 +47,7 @@ async function init() {
   if (jwt) {
     await syncPolicy(jwt);
     await syncKeywords(jwt);
+    await syncBranding();
     await connectSocket({
       jwt,
       onPolicyUpdated:   () => syncPolicy(),
@@ -77,6 +80,7 @@ async function authenticate() {
     await storeAuth(token, user);
     await syncPolicy(token);
     await syncKeywords(token);
+    await syncBranding();
     await connectSocket({
       jwt: token,
       onPolicyUpdated:   () => syncPolicy(),
@@ -123,6 +127,28 @@ async function getCachedPolicy() {
 // Keyword sync — downloads blocked keyword list from server every 6 hours
 // Content scripts read from chrome.storage.local to avoid needing a JWT.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Branding sync — fetches school logo/message from public API, cached 1 hour.
+// No JWT required since /api/v1/branding is a public endpoint.
+// ---------------------------------------------------------------------------
+async function syncBranding() {
+  const { [BRANDING_TS_KEY]: ts } = await chrome.storage.local.get(BRANDING_TS_KEY);
+  if (ts && Date.now() - ts < 3_600_000) return; // 1 hour cache
+
+  const serverUrl = await getServerUrl();
+  if (!serverUrl) return;
+
+  try {
+    const res = await fetch(`${serverUrl}/api/v1/branding`);
+    if (!res.ok) return;
+    const branding = await res.json();
+    await chrome.storage.local.set({
+      [BRANDING_CACHE_KEY]: branding,
+      [BRANDING_TS_KEY]:    Date.now(),
+    });
+  } catch {}
+}
+
 async function syncKeywords(jwtOverride) {
   const jwt = jwtOverride || await getStoredJWT();
   if (!jwt) return;
@@ -189,6 +215,7 @@ async function onAlarm(alarm) {
       await authenticate();
     } else {
       await syncPolicy(jwt);
+      await syncBranding();
       if (!isConnected()) {
         await connectSocket({
           jwt,

@@ -182,6 +182,11 @@ services:
     depends_on:
       api:
         condition: service_healthy
+    environment:
+      # Hostname/IP that admins use to reach ClassGuard.
+      # Requests to this host serve the admin SPA; all other hostnames
+      # (DNS-sinkhled blocked domains) serve the block page.
+      CLASSGUARD_HOST: ${CLASSGUARD_HOST:-172.16.1.250}
     ports:
       - "80:80"
     networks:

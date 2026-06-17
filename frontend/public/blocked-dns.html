@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Site Blocked</title>
+  <style>
+    :root { --primary: #2563eb; --primary-light: #dbeafe; --primary-text: #1e40af; }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      background: #f1f5f9;
+      color: #1e293b;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 20px;
+      box-shadow: 0 4px 32px rgba(0,0,0,.10);
+      max-width: 500px;
+      width: 100%;
+      padding: 48px 40px 40px;
+      text-align: center;
+    }
+
+    /* Logo / icon area */
+    .logo-wrap {
+      margin: 0 auto 24px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #school-logo {
+      max-height: 72px;
+      max-width: 220px;
+      object-fit: contain;
+      display: none;
+    }
+    .shield {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      background: var(--primary-light);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+    }
+
+    #school-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: #64748b;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      margin-bottom: 16px;
+      min-height: 0;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--primary-light);
+      color: var(--primary-text);
+      border-radius: 9999px;
+      padding: 5px 14px;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: .04em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
+    }
+    .badge::before { content: '🛡️'; font-size: 14px; }
+
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      color: #0f172a;
+      line-height: 1.25;
+      margin-bottom: 16px;
+    }
+
+    .domain-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #f8fafc;
+      border: 1.5px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-family: 'SFMono-Regular', Consolas, monospace;
+      font-size: 14px;
+      color: #334155;
+      word-break: break-all;
+      margin-bottom: 20px;
+    }
+    .domain-pill::before { content: '🔒'; font-size: 14px; flex-shrink: 0; }
+
+    #message {
+      font-size: 15px;
+      color: #475569;
+      line-height: 1.65;
+      margin-bottom: 16px;
+    }
+
+    #contact {
+      font-size: 13px;
+      color: #64748b;
+      line-height: 1.5;
+      display: none;
+    }
+    #contact a { color: var(--primary); text-decoration: none; }
+    #contact a:hover { text-decoration: underline; }
+
+    .divider {
+      border: none;
+      border-top: 1px solid #f1f5f9;
+      margin: 28px 0 20px;
+    }
+
+    .footer {
+      font-size: 12px;
+      color: #94a3b8;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+    }
+    .footer strong { color: #64748b; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo-wrap">
+      <img id="school-logo" alt="School logo">
+      <div class="shield" id="shield-icon">🛡️</div>
+    </div>
+
+    <div id="school-name"></div>
+
+    <div class="badge">Access Blocked</div>
+
+    <h1>This website has been blocked</h1>
+
+    <div class="domain-pill" id="domain"></div>
+
+    <p id="message">This website is not permitted on your school's network.</p>
+
+    <p id="contact"></p>
+
+    <hr class="divider">
+
+    <div class="footer">
+      Protected by <strong>ClassGuard</strong>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      // Show blocked domain immediately from current URL
+      document.getElementById('domain').appendChild(
+        document.createTextNode(window.location.hostname)
+      );
+
+      function applyBranding(b) {
+        if (!b) return;
+
+        if (b.primary_color) {
+          // Derive a light tint for badges/backgrounds
+          document.documentElement.style.setProperty('--primary', b.primary_color);
+          document.documentElement.style.setProperty('--primary-light', b.primary_color + '22');
+          document.documentElement.style.setProperty('--primary-text', b.primary_color);
+        }
+
+        if (b.school_name) {
+          document.getElementById('school-name').textContent = b.school_name;
+        }
+
+        if (b.logo) {
+          var img = document.getElementById('school-logo');
+          img.src = b.logo;
+          img.style.display = 'block';
+          document.getElementById('shield-icon').style.display = 'none';
+        }
+
+        if (b.message) {
+          document.getElementById('message').textContent = b.message;
+        }
+
+        if (b.contact_email) {
+          var el = document.getElementById('contact');
+          el.innerHTML = 'If you believe this is an error, contact your IT administrator at ' +
+            '<a href="mailto:' + b.contact_email + '">' + b.contact_email + '</a>.';
+          el.style.display = 'block';
+        }
+      }
+
+      // Fetch branding from the ClassGuard API (proxied by nginx, same effective origin)
+      fetch('/api/v1/branding')
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(applyBranding)
+        .catch(function () {}); // Fail silently — default content already visible
+    })();
+  </script>
+</body>
+</html>

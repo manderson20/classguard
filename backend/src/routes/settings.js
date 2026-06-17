@@ -24,6 +24,9 @@ const ALLOWED_KEYS = new Set([
   'ai_provider', 'ai_api_key', 'ai_model', 'ai_base_url',
   // YouTube Data API
   'youtube_api_key',
+  // Block page branding
+  'blockpage_school_name', 'blockpage_logo', 'blockpage_message',
+  'blockpage_contact_email', 'blockpage_primary_color',
   // Zabbix
   'zabbix_metrics_token',
   // Roster sync

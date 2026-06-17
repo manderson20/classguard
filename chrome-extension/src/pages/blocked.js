@@ -1,10 +1,10 @@
 // Populates the blocked page based on the ?reason= URL parameter.
-// Also loads the current policy from storage to show allowed domains in lesson mode.
+// Loads school branding from chrome.storage.local (synced by the service worker).
+// In lesson mode also shows which domains are allowed.
 
 const params = new URLSearchParams(window.location.search);
 const reason = params.get('reason') || 'policy';
 
-// Attempt to extract the original URL from the referrer (best-effort)
 const blockedDomain = (() => {
   try {
     const ref = document.referrer;
@@ -40,7 +40,8 @@ const CONFIGS = {
 
 const cfg = CONFIGS[reason] || CONFIGS.policy;
 
-document.getElementById('icon').textContent  = cfg.emoji;
+// Set base content immediately (no flash of empty page)
+document.getElementById('icon').textContent = cfg.emoji;
 document.getElementById('icon').classList.add(cfg.cls);
 document.getElementById('badge').textContent = cfg.badge;
 document.getElementById('badge').classList.add(cfg.cls);
@@ -53,19 +54,56 @@ if (blockedDomain) {
   el.style.display = 'inline-block';
 }
 
-// In lesson mode, show which sites are allowed
-if (reason === 'lesson') {
-  chrome.storage.local.get('cg_policy', ({ cg_policy: policy }) => {
-    const domains = policy?.resolvedAllowDomains || [];
-    if (domains.length === 0) return;
+// Apply school branding and policy-specific overrides from storage
+chrome.storage.local.get(['cg_branding', 'cg_policy'], ({ cg_branding: branding, cg_policy: policy }) => {
+  // Primary color theming
+  if (branding?.primary_color) {
+    document.documentElement.style.setProperty('--primary',      branding.primary_color);
+    document.documentElement.style.setProperty('--primary-light', branding.primary_color + '22');
+    document.documentElement.style.setProperty('--primary-text',  branding.primary_color);
+  }
 
-    const container = document.getElementById('allowed-list');
-    const list      = document.getElementById('allowed-items');
-    domains.forEach((d) => {
-      const li = document.createElement('li');
-      li.textContent = d;
-      list.appendChild(li);
-    });
-    container.style.display = 'block';
-  });
-}
+  // School logo — replaces the emoji icon
+  if (branding?.logo) {
+    const img = document.getElementById('school-logo');
+    img.src = branding.logo;
+    img.style.display = 'block';
+    document.getElementById('icon').style.display = 'none';
+  }
+
+  // School name
+  if (branding?.school_name) {
+    document.getElementById('school-name').textContent = branding.school_name;
+    document.getElementById('footer').textContent = `ClassGuard — ${branding.school_name}`;
+  }
+
+  // Message: per-policy override > district branding message > hardcoded default
+  if (reason === 'policy') {
+    const customMsg = policy?.block_page_message || branding?.message;
+    if (customMsg) {
+      document.getElementById('message').textContent = customMsg;
+    }
+  }
+
+  // Contact email
+  if (branding?.contact_email) {
+    const el = document.getElementById('contact');
+    el.innerHTML = `If you believe this is an error, contact your IT administrator at <a href="mailto:${branding.contact_email}">${branding.contact_email}</a>.`;
+    el.style.display = 'block';
+  }
+
+  // Lesson mode: show allowed domains
+  if (reason === 'lesson') {
+    const domains = policy?.resolvedAllowDomains || [];
+    if (domains.length > 0) {
+      const container = document.getElementById('allowed-list');
+      const list      = document.getElementById('allowed-items');
+      domains.forEach((d) => {
+        const li = document.createElement('li');
+        li.textContent = d;
+        list.appendChild(li);
+      });
+      container.style.display = 'block';
+    }
+  }
+});
