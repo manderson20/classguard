@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
 export default function PoliciesPage() {
-  const qc = useQueryClient();
-  const [deleting, setDeleting] = useState(null);
+  const qc       = useQueryClient();
+  const navigate = useNavigate();
+  const [deleting,     setDeleting]     = useState(null);
+  const [createError,  setCreateError]  = useState('');
 
   const { data: policies = [], isLoading } = useQuery({
     queryKey: ['policies'],
@@ -29,17 +31,34 @@ export default function PoliciesPage() {
       mode: 'standard',
       is_default: false,
     }),
-    onSuccess: data => qc.invalidateQueries({ queryKey: ['policies'] }),
+    onSuccess: data => {
+      qc.invalidateQueries({ queryKey: ['policies'] });
+      navigate(`/admin/policies/${data.id}`);
+    },
+    onError: e => setCreateError(e.message || 'Failed to create policy'),
   });
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Policies</h1>
-        <button className="btn-primary" onClick={() => createDefault.mutate()}>
-          + New Policy
-        </button>
+        <div className="flex items-center gap-3">
+          <Link to="/admin/policy-simulator"
+            className="text-sm text-primary-600 hover:underline font-medium">
+            ⚡ Filter Simulator
+          </Link>
+          <button className="btn-primary" onClick={() => { setCreateError(''); createDefault.mutate(); }}
+            disabled={createDefault.isPending}>
+            {createDefault.isPending ? 'Creating…' : '+ New Policy'}
+          </button>
+        </div>
       </div>
+
+      {createError && (
+        <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+          {createError}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="text-slate-400 text-sm">Loading…</div>

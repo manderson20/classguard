@@ -25,6 +25,7 @@ import {
   mdiHomeOutline,
   mdiFlagOutline,
   mdiLogoutVariant,
+  mdiFilterOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -57,8 +58,9 @@ const ADMIN_SECTIONS = [
   {
     label: 'Policies & Safety',
     items: [
-      { to: '/admin/policies',    icon: mdiFileDocumentOutline, label: 'Policies'      },
-      { to: '/admin/groups',      icon: mdiAccountGroupOutline, label: 'Groups'        },
+      { to: '/admin/policies',          icon: mdiFileDocumentOutline, label: 'Policies'         },
+      { to: '/admin/policy-simulator', icon: mdiFilterOutline,        label: 'Filter Simulator' },
+      { to: '/admin/groups',           icon: mdiAccountGroupOutline,  label: 'Groups'           },
       { to: '/admin/blocklists',  icon: mdiShieldOutline,       label: 'Blocklists'    },
       { to: '/admin/categories',  icon: mdiTagOutline,          label: 'Categories'    },
       { to: '/admin/screenshots', icon: mdiCameraOutline,       label: 'Screenshots'   },

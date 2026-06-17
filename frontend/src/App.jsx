@@ -19,8 +19,9 @@ import PenaltyBox   from './pages/PenaltyBox';
 import AdminDashboard  from './pages/admin/AdminDashboard';
 import UsersPage       from './pages/admin/UsersPage';
 import UserDetail      from './pages/admin/UserDetail';
-import PoliciesPage    from './pages/admin/PoliciesPage';
-import PolicyEditor    from './pages/admin/PolicyEditor';
+import PoliciesPage      from './pages/admin/PoliciesPage';
+import PolicyEditor      from './pages/admin/PolicyEditor';
+import PolicySimulator   from './pages/admin/PolicySimulator';
 import GroupsPage      from './pages/admin/GroupsPage';
 import DnsLogs         from './pages/admin/DnsLogs';
 import DnsStats        from './pages/admin/DnsStats';
@@ -88,6 +89,7 @@ export default function App() {
           <Route path="/admin/users/:userId"          element={<UserDetail />} />
           <Route path="/admin/policies"               element={<PoliciesPage />} />
           <Route path="/admin/policies/:policyId"     element={<PolicyEditor />} />
+          <Route path="/admin/policy-simulator"       element={<PolicySimulator />} />
           <Route path="/admin/groups"                 element={<GroupsPage />} />
           <Route path="/admin/dns/logs"               element={<DnsLogs />} />
           <Route path="/admin/dns/stats"              element={<DnsStats />} />
