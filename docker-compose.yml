@@ -87,12 +87,15 @@ services:
       migrate:
         condition: service_completed_successfully
     env_file: .env
+    hostname: classguard-api
     environment:
       DATABASE_URL:          postgresql://classguard:${DB_PASSWORD}@postgres:5432/classguard
       REDIS_URL:             redis://redis:6379
       KEA_CONTROL_AGENT_URL: http://kea:8000
       BACKEND_URL:           http://api:3001
       SCREENSHOT_DIR:        /app/screenshots
+      NODE_ID:               ${NODE_ID:-classguard-1}
+      NODE_ROLE:             ${NODE_ROLE:-primary}
     volumes:
       - app-logs:/app/logs
       - blocklists:/app/blocklists
