@@ -38,22 +38,12 @@
       align-items: center;
       justify-content: center;
     }
-    #school-logo {
+    .logo-wrap img {
       max-height: 72px;
       max-width: 220px;
       object-fit: contain;
-      display: none;
     }
-    .shield {
-      width: 72px;
-      height: 72px;
-      border-radius: 50%;
-      background: var(--primary-light);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 36px;
-    }
+    #school-logo { display: none; }
 
     #school-name {
       font-size: 13px;
@@ -142,7 +132,7 @@
   <div class="card">
     <div class="logo-wrap">
       <img id="school-logo" alt="School logo">
-      <div class="shield" id="shield-icon">🛡️</div>
+      <img id="classguard-logo" src="/classguard-logo.png" alt="ClassGuard">
     </div>
 
     <div id="school-name"></div>
@@ -189,7 +179,7 @@
           var img = document.getElementById('school-logo');
           img.src = b.logo;
           img.style.display = 'block';
-          document.getElementById('shield-icon').style.display = 'none';
+          document.getElementById('classguard-logo').style.display = 'none';
         }
 
         if (b.message) {

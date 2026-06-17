@@ -37,12 +37,13 @@
       justify-content: center;
       margin-bottom: 24px;
     }
-    #school-logo {
+    .logo-wrap img {
       max-height: 72px;
       max-width: 220px;
       object-fit: contain;
-      display: none;
     }
+    #school-logo      { display: none; }
+    #classguard-logo  { display: none; }
     .icon {
       width: 72px;
       height: 72px;
@@ -54,7 +55,6 @@
     }
     .icon.lesson   { background: #eff6ff; }
     .icon.penalty  { background: #fef3c7; }
-    .icon.policy   { background: var(--primary-light, #fee2e2); }
 
     #school-name {
       font-size: 12px;
@@ -143,7 +143,8 @@
   <div class="card">
     <div class="logo-wrap">
       <img id="school-logo" alt="School logo">
-      <div class="icon" id="icon"></div>
+      <img id="classguard-logo" src="icons/logo.png" alt="ClassGuard">
+      <div class="icon" id="icon" style="display:none"></div>
     </div>
 
     <div id="school-name"></div>

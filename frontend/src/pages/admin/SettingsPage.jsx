@@ -272,12 +272,13 @@ function BlockPageBrandingSection({ appSettings, appLoading, saved, setSaved }) 
           <div className="rounded-2xl border border-slate-200 overflow-hidden shadow-sm" style={{ background: '#f1f5f9' }}>
             <div className="p-5 flex flex-col items-center text-center" style={{ fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif' }}>
 
-              {/* Logo or shield */}
+              {/* Logo — school logo if set, ClassGuard logo as fallback */}
               <div className="mb-3 flex items-center justify-center" style={{ minHeight: 56 }}>
-                {logoPreview
-                  ? <img src={logoPreview} alt="" style={{ maxHeight: 56, maxWidth: 140, objectFit: 'contain' }} />
-                  : <div style={{ width: 52, height: 52, borderRadius: '50%', background: colorLight, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 26 }}>🛡️</div>
-                }
+                <img
+                  src={logoPreview || '/classguard-logo.png'}
+                  alt=""
+                  style={{ maxHeight: 56, maxWidth: 140, objectFit: 'contain' }}
+                />
               </div>
 
               {branding.blockpage_school_name && (

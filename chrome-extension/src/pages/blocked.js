@@ -41,12 +41,20 @@ const CONFIGS = {
 const cfg = CONFIGS[reason] || CONFIGS.policy;
 
 // Set base content immediately (no flash of empty page)
-document.getElementById('icon').textContent = cfg.emoji;
-document.getElementById('icon').classList.add(cfg.cls);
 document.getElementById('badge').textContent = cfg.badge;
 document.getElementById('badge').classList.add(cfg.cls);
 document.getElementById('heading').textContent = cfg.heading;
 document.getElementById('message').textContent  = cfg.message;
+
+// Lesson/penalty: show the contextual emoji icon. Policy: show logo (default ClassGuard).
+if (reason === 'lesson' || reason === 'penalty') {
+  document.getElementById('icon').textContent = cfg.emoji;
+  document.getElementById('icon').classList.add(cfg.cls);
+  document.getElementById('icon').style.display = 'flex';
+  document.getElementById('classguard-logo').style.display = 'none';
+} else {
+  document.getElementById('classguard-logo').style.display = 'block';
+}
 
 if (blockedDomain) {
   const el = document.getElementById('domain');
@@ -63,12 +71,12 @@ chrome.storage.local.get(['cg_branding', 'cg_policy'], ({ cg_branding: branding,
     document.documentElement.style.setProperty('--primary-text',  branding.primary_color);
   }
 
-  // School logo — replaces the emoji icon
-  if (branding?.logo) {
+  // School logo — replaces the ClassGuard logo for policy blocks
+  if (branding?.logo && reason !== 'lesson' && reason !== 'penalty') {
     const img = document.getElementById('school-logo');
     img.src = branding.logo;
     img.style.display = 'block';
-    document.getElementById('icon').style.display = 'none';
+    document.getElementById('classguard-logo').style.display = 'none';
   }
 
   // School name
