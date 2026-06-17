@@ -103,6 +103,19 @@ async function resolveQuery(name, typeNum, sourceIp) {
     return { action: 'allowed', answers };
   }
 
+  // --- 6.5. Override code check -------------------------------------------
+  // Admin-generated temporary codes bypass blocklist/category blocks.
+  // Does NOT bypass penalty_box or lesson modes (those are checked above).
+  // CIPA-floor categories cannot receive codes (enforced at code generation).
+  if (mode === 'standard') {
+    const hasOverride = await policyCache.getOverrideForIp(sourceIp, domain).catch(() => false);
+    if (hasOverride) {
+      const answers = await forwardToUpstream(domain, typeNum);
+      logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+      return { action: 'allowed', answers };
+    }
+  }
+
   // --- 7. Blocklist check (standard mode) ---------------------------------
   const blocked = await blocklist.isBlocked(domain);
   if (blocked) {

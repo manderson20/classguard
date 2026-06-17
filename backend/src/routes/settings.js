@@ -27,6 +27,8 @@ const ALLOWED_KEYS = new Set([
   // Block page branding
   'blockpage_school_name', 'blockpage_logo', 'blockpage_message',
   'blockpage_contact_email', 'blockpage_primary_color',
+  // Unblock requests & override codes
+  'unblock_requests_who', 'override_codes_enabled',
   // Zabbix
   'zabbix_metrics_token',
   // Roster sync

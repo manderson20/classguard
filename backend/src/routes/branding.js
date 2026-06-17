@@ -8,6 +8,8 @@ const BRANDING_KEYS = [
   'blockpage_message',
   'blockpage_contact_email',
   'blockpage_primary_color',
+  'unblock_requests_who',
+  'override_codes_enabled',
 ];
 
 // GET /api/v1/branding — public, no auth required
@@ -21,11 +23,13 @@ router.get('/', async (req, res) => {
     const data = Object.fromEntries(rows.map(r => [r.key, r.value]));
     res.set('Cache-Control', 'public, max-age=300');
     res.json({
-      school_name:   data.blockpage_school_name   || null,
-      logo:          data.blockpage_logo           || null,
-      message:       data.blockpage_message        || null,
-      contact_email: data.blockpage_contact_email  || null,
-      primary_color: data.blockpage_primary_color  || '#2563eb',
+      school_name:            data.blockpage_school_name   || null,
+      logo:                   data.blockpage_logo           || null,
+      message:                data.blockpage_message        || null,
+      contact_email:          data.blockpage_contact_email  || null,
+      primary_color:          data.blockpage_primary_color  || '#2563eb',
+      unblock_requests_who:   data.unblock_requests_who     || 'all',
+      override_codes_enabled: data.override_codes_enabled   !== 'false',
     });
   } catch (err) {
     console.error('[branding] GET error:', err);

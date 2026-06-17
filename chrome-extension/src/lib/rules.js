@@ -55,7 +55,6 @@ function allowRule(id, domains) {
 
 export async function enforcePolicy(policy) {
   if (!policy) {
-    // Signed out or unknown — remove all rules
     const existing = await chrome.declarativeNetRequest.getDynamicRules();
     if (existing.length > 0) {
       await chrome.declarativeNetRequest.updateDynamicRules({
@@ -66,7 +65,15 @@ export async function enforcePolicy(policy) {
     return;
   }
 
-  const newRules = buildRules(policy);
+  // Read active (non-expired) override domains and clean up stale ones
+  const { cg_overrides = [] } = await chrome.storage.local.get('cg_overrides');
+  const now = Date.now();
+  const activeOverrides = cg_overrides.filter(o => new Date(o.expires_at).getTime() > now);
+  if (activeOverrides.length !== cg_overrides.length) {
+    await chrome.storage.local.set({ cg_overrides: activeOverrides });
+  }
+
+  const newRules = buildRules(policy, activeOverrides.map(o => o.domain));
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
 
   await chrome.declarativeNetRequest.updateDynamicRules({
@@ -75,7 +82,7 @@ export async function enforcePolicy(policy) {
   });
 }
 
-function buildRules(policy) {
+function buildRules(policy, overrideDomains = []) {
   const rules = [];
   const { mode = 'standard', resolvedAllowDomains = [], resolvedDenyDomains = [] } = policy;
 
@@ -118,6 +125,16 @@ function buildRules(policy) {
     if (resolvedAllowDomains.length > 0) {
       rules.push(allowRule(2000, resolvedAllowDomains));
     }
+  }
+
+  // Override codes — highest priority allow rules, bypass all blocks except CIPA
+  if (overrideDomains.length > 0) {
+    rules.push({
+      id:       5000,
+      priority: 20,
+      action:   { type: 'allow' },
+      condition: { requestDomains: overrideDomains, resourceTypes: ALL_RESOURCE_TYPES },
+    });
   }
 
   // YouTube Restricted Mode — injects YouTube-Restrict header on all youtube.com requests.

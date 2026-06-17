@@ -10,7 +10,7 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
       background: #f1f5f9;
       color: #1e293b;
       min-height: 100vh;
@@ -31,28 +31,22 @@
       text-align: center;
     }
 
-    /* Logo / icon area */
     .logo-wrap {
       margin: 0 auto 24px;
       display: flex;
       align-items: center;
       justify-content: center;
     }
-    .logo-wrap img {
-      max-height: 72px;
-      max-width: 220px;
-      object-fit: contain;
-    }
+    .logo-wrap img { max-height: 72px; max-width: 220px; object-fit: contain; }
     #school-logo { display: none; }
 
     #school-name {
-      font-size: 13px;
-      font-weight: 600;
+      font-size: 12px;
+      font-weight: 700;
       color: #64748b;
-      letter-spacing: .04em;
+      letter-spacing: .05em;
       text-transform: uppercase;
-      margin-bottom: 16px;
-      min-height: 0;
+      margin-bottom: 12px;
     }
 
     .badge {
@@ -72,11 +66,10 @@
     .badge::before { content: '🛡️'; font-size: 14px; }
 
     h1 {
-      font-size: 24px;
+      font-size: 22px;
       font-weight: 800;
       color: #0f172a;
-      line-height: 1.25;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
 
     .domain-pill {
@@ -95,36 +88,113 @@
     }
     .domain-pill::before { content: '🔒'; font-size: 14px; flex-shrink: 0; }
 
-    #message {
-      font-size: 15px;
-      color: #475569;
-      line-height: 1.65;
-      margin-bottom: 16px;
-    }
+    #message { font-size: 15px; color: #475569; line-height: 1.65; margin-bottom: 12px; }
 
-    #contact {
-      font-size: 13px;
-      color: #64748b;
-      line-height: 1.5;
-      display: none;
-    }
+    #contact { font-size: 13px; color: #64748b; line-height: 1.5; display: none; }
     #contact a { color: var(--primary); text-decoration: none; }
     #contact a:hover { text-decoration: underline; }
 
-    .divider {
-      border: none;
+    /* Unblock request */
+    .unblock-wrap {
+      display: none;
+      margin-top: 20px;
       border-top: 1px solid #f1f5f9;
-      margin: 28px 0 20px;
+      padding-top: 16px;
     }
-
-    .footer {
-      font-size: 12px;
-      color: #94a3b8;
-      display: flex;
+    #unblock-btn {
+      display: inline-flex;
       align-items: center;
-      justify-content: center;
       gap: 6px;
+      padding: 9px 22px;
+      background: none;
+      border: 1.5px solid var(--primary, #2563eb);
+      color: var(--primary, #2563eb);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .12s;
     }
+    #unblock-btn:hover { background: var(--primary-light, #dbeafe); }
+    #unblock-btn:disabled { opacity: 0.5; cursor: default; }
+
+    .unblock-form {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-top: 10px;
+      text-align: left;
+    }
+    .unblock-form label {
+      display: block; font-size: 12px; font-weight: 500;
+      color: #475569; margin-bottom: 3px; margin-top: 10px;
+    }
+    .unblock-form label:first-of-type { margin-top: 0; }
+    .unblock-form input, .unblock-form textarea {
+      width: 100%; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 6px 10px; font-size: 13px; font-family: inherit;
+      outline: none; resize: vertical; background: #fff;
+    }
+    .unblock-form input:focus, .unblock-form textarea:focus { border-color: var(--primary, #2563eb); }
+    #submit-req {
+      margin-top: 10px; padding: 7px 18px;
+      background: var(--primary, #2563eb); color: #fff;
+      border: none; border-radius: 7px; font-size: 13px;
+      font-weight: 600; cursor: pointer;
+    }
+    #submit-req:disabled { opacity: 0.5; }
+    #req-result {
+      display: none; margin-top: 8px; font-size: 12px;
+      border-radius: 6px; padding: 6px 10px;
+    }
+    #req-result.ok  { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    #req-result.err { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+    /* Override code — secondary/subtle link */
+    .override-wrap {
+      display: none;
+      margin-top: 12px;
+    }
+    .override-link {
+      background: none; border: none; padding: 0;
+      color: #94a3b8; font-size: 12px; cursor: pointer;
+      text-decoration: underline; text-underline-offset: 2px;
+    }
+    .override-link:hover { color: #64748b; }
+    .override-form {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 12px 16px;
+      margin-top: 8px;
+      text-align: left;
+    }
+    .override-form label { display: block; font-size: 12px; font-weight: 500; color: #475569; margin-bottom: 4px; }
+    .override-form input {
+      width: 100%; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 6px 10px; font-size: 13px; font-family: monospace;
+      text-transform: uppercase; letter-spacing: .1em; outline: none; background: #fff;
+    }
+    .override-form input:focus { border-color: var(--primary, #2563eb); }
+    #submit-override {
+      margin-top: 10px; padding: 6px 16px;
+      background: var(--primary, #2563eb); color: #fff;
+      border: none; border-radius: 7px; font-size: 12px;
+      font-weight: 600; cursor: pointer;
+    }
+    #submit-override:disabled { opacity: 0.5; }
+    #override-result {
+      display: none; margin-top: 6px; font-size: 12px;
+      border-radius: 6px; padding: 6px 10px;
+    }
+    #override-result.ok  { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    #override-result.err { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+    hr { border: none; border-top: 1px solid #f1f5f9; margin: 24px 0 16px; }
+    .footer { font-size: 12px; color: #94a3b8; display: flex; align-items: center; justify-content: center; gap: 5px; }
     .footer strong { color: #64748b; }
   </style>
 </head>
@@ -136,69 +206,153 @@
     </div>
 
     <div id="school-name"></div>
-
     <div class="badge">Access Blocked</div>
-
     <h1>This website has been blocked</h1>
-
     <div class="domain-pill" id="domain"></div>
-
     <p id="message">This website is not permitted on your school's network.</p>
-
     <p id="contact"></p>
 
-    <hr class="divider">
-
-    <div class="footer">
-      Protected by <strong>ClassGuard</strong>
+    <!-- Request to unblock — shown when setting is enabled -->
+    <div class="unblock-wrap" id="unblock-wrap">
+      <button id="unblock-btn" onclick="toggleForm()">Request to unblock this website</button>
+      <div class="unblock-form" id="unblock-form">
+        <label for="req-name">Your name</label>
+        <input type="text" id="req-name" placeholder="Full name">
+        <label for="req-email">Email address <span style="color:#ef4444">*</span></label>
+        <input type="email" id="req-email" placeholder="you@school.org">
+        <label for="req-reason">Why do you need access? <span style="font-weight:400;color:#94a3b8">(optional)</span></label>
+        <textarea id="req-reason" rows="2" placeholder="Briefly describe why you need this site…"></textarea>
+        <button id="submit-req" onclick="submitRequest()">Send Request</button>
+        <div id="req-result"></div>
+      </div>
     </div>
+
+    <!-- Override code — subtle secondary link for admin-issued codes -->
+    <div class="override-wrap" id="override-wrap">
+      <button class="override-link" onclick="toggleOverride()">Have an override code from IT?</button>
+      <div class="override-form" id="override-form">
+        <label for="override-code">Code from IT administrator</label>
+        <input type="text" id="override-code" maxlength="10" placeholder="e.g. A3X7BQMN">
+        <button id="submit-override" onclick="submitOverride()">Apply Code</button>
+        <div id="override-result"></div>
+      </div>
+    </div>
+
+    <hr>
+    <div class="footer">Protected by <strong>ClassGuard</strong></div>
   </div>
 
   <script>
     (function () {
-      // Show blocked domain immediately from current URL
-      document.getElementById('domain').appendChild(
-        document.createTextNode(window.location.hostname)
-      );
+      var blockedDomain = window.location.hostname;
+      document.getElementById('domain').appendChild(document.createTextNode(blockedDomain));
+
+      window.toggleForm = function () {
+        var f = document.getElementById('unblock-form');
+        f.style.display = f.style.display === 'block' ? 'none' : 'block';
+        if (f.style.display === 'block') document.getElementById('req-email').focus();
+      };
+
+      window.toggleOverride = function () {
+        var f = document.getElementById('override-form');
+        f.style.display = f.style.display === 'block' ? 'none' : 'block';
+        if (f.style.display === 'block') document.getElementById('override-code').focus();
+      };
+
+      function setResult(id, msg, ok) {
+        var el = document.getElementById(id);
+        el.textContent = msg;
+        el.className = ok ? 'ok' : 'err';
+        el.style.display = 'block';
+      }
+
+      window.submitRequest = function () {
+        var name   = document.getElementById('req-name').value.trim();
+        var email  = document.getElementById('req-email').value.trim();
+        var reason = document.getElementById('req-reason').value.trim();
+        if (!email) { setResult('req-result', 'Email address is required.', false); return; }
+        var btn = document.getElementById('submit-req');
+        btn.disabled = true; btn.textContent = 'Sending…';
+        fetch('/api/v1/unblock-requests', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ domain: blockedDomain, requester_email: email, requester_name: name, reason: reason }),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d.error) {
+              btn.disabled = false; btn.textContent = 'Send Request';
+              setResult('req-result', d.error, false);
+            } else {
+              setResult('req-result', 'Request submitted — IT will review it shortly.', true);
+              btn.disabled = true;
+              document.getElementById('unblock-btn').disabled = true;
+            }
+          })
+          .catch(function () {
+            btn.disabled = false; btn.textContent = 'Send Request';
+            setResult('req-result', 'Request failed. Please try again.', false);
+          });
+      };
+
+      window.submitOverride = function () {
+        var code = (document.getElementById('override-code').value || '').trim().toUpperCase();
+        if (!code) return;
+        var btn = document.getElementById('submit-override');
+        btn.disabled = true; btn.textContent = 'Verifying…';
+        fetch('/api/v1/override-codes/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code: code, domain: blockedDomain }),
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            btn.disabled = false; btn.textContent = 'Apply Code';
+            if (!d.valid) {
+              setResult('override-result', d.error || 'Invalid or expired code.', false);
+            } else {
+              setResult('override-result', 'Code accepted! Reloading…', true);
+              setTimeout(function () { window.location.reload(); }, 1500);
+            }
+          })
+          .catch(function () {
+            btn.disabled = false; btn.textContent = 'Apply Code';
+            setResult('override-result', 'Verification failed. Please try again.', false);
+          });
+      };
 
       function applyBranding(b) {
         if (!b) return;
-
         if (b.primary_color) {
-          // Derive a light tint for badges/backgrounds
-          document.documentElement.style.setProperty('--primary', b.primary_color);
+          document.documentElement.style.setProperty('--primary',       b.primary_color);
           document.documentElement.style.setProperty('--primary-light', b.primary_color + '22');
-          document.documentElement.style.setProperty('--primary-text', b.primary_color);
+          document.documentElement.style.setProperty('--primary-text',  b.primary_color);
         }
-
-        if (b.school_name) {
-          document.getElementById('school-name').textContent = b.school_name;
-        }
-
+        if (b.school_name) document.getElementById('school-name').textContent = b.school_name;
         if (b.logo) {
-          var img = document.getElementById('school-logo');
-          img.src = b.logo;
-          img.style.display = 'block';
+          document.getElementById('school-logo').src = b.logo;
+          document.getElementById('school-logo').style.display = 'block';
           document.getElementById('classguard-logo').style.display = 'none';
         }
-
-        if (b.message) {
-          document.getElementById('message').textContent = b.message;
-        }
-
+        if (b.message) document.getElementById('message').textContent = b.message;
         if (b.contact_email) {
           var el = document.getElementById('contact');
-          el.innerHTML = 'If you believe this is an error, contact your IT administrator at ' +
+          el.innerHTML = 'If you believe this is an error, contact IT at ' +
             '<a href="mailto:' + b.contact_email + '">' + b.contact_email + '</a>.';
           el.style.display = 'block';
         }
+        if (b.unblock_requests_who && b.unblock_requests_who !== 'off') {
+          document.getElementById('unblock-wrap').style.display = 'block';
+        }
+        if (b.override_codes_enabled !== false) {
+          document.getElementById('override-wrap').style.display = 'block';
+        }
       }
 
-      // Fetch branding from the ClassGuard API (proxied by nginx, same effective origin)
       fetch('/api/v1/branding')
         .then(function (r) { return r.ok ? r.json() : null; })
         .then(applyBranding)
-        .catch(function () {}); // Fail silently — default content already visible
+        .catch(function () {});
     })();
   </script>
 </body>

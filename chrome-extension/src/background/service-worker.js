@@ -348,6 +348,57 @@ async function handleMessage(msg, sender) {
       }
     }
 
+    // Student requests a blocked domain be unblocked
+    case 'CG_REQUEST_UNBLOCK': {
+      const { domain, reason } = msg;
+      const jwt = await getStoredJWT();
+      const serverUrl = await getServerUrl();
+      if (!serverUrl) return { error: 'Server not configured' };
+      try {
+        const res = await fetch(`${serverUrl}/api/v1/unblock-requests`, {
+          method:  'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+          },
+          body: JSON.stringify({ domain, reason }),
+        });
+        return await res.json();
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+
+    // Student enters an override code from the block page
+    case 'CG_VERIFY_OVERRIDE': {
+      const { code, domain } = msg;
+      const jwt = await getStoredJWT();
+      const serverUrl = await getServerUrl();
+      if (!serverUrl) return { valid: false, error: 'Server not configured' };
+      try {
+        const res = await fetch(`${serverUrl}/api/v1/override-codes/verify`, {
+          method:  'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(jwt ? { Authorization: `Bearer ${jwt}` } : {}),
+          },
+          body: JSON.stringify({ code, domain }),
+        });
+        const data = await res.json();
+        if (data.valid && data.expires_at) {
+          // Store override so next enforcePolicy call includes an allow rule
+          const { cg_overrides = [] } = await chrome.storage.local.get('cg_overrides');
+          cg_overrides.push({ domain, expires_at: data.expires_at });
+          await chrome.storage.local.set({ cg_overrides });
+          // Re-enforce policy immediately with new override rule included
+          await syncPolicy();
+        }
+        return data;
+      } catch (e) {
+        return { valid: false, error: e.message };
+      }
+    }
+
     default:
       return { error: 'Unknown message type' };
   }

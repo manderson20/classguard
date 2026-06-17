@@ -42,8 +42,8 @@
       max-width: 220px;
       object-fit: contain;
     }
-    #school-logo      { display: none; }
-    #classguard-logo  { display: none; }
+    #school-logo     { display: none; }
+    #classguard-logo { display: none; }
     .icon {
       width: 72px;
       height: 72px;
@@ -53,8 +53,8 @@
       justify-content: center;
       font-size: 36px;
     }
-    .icon.lesson   { background: #eff6ff; }
-    .icon.penalty  { background: #fef3c7; }
+    .icon.lesson  { background: #eff6ff; }
+    .icon.penalty { background: #fef3c7; }
 
     #school-name {
       font-size: 12px;
@@ -78,11 +78,7 @@
     .badge.penalty { background: #fef3c7; color: #92400e; }
     .badge.policy  { background: var(--primary-light, #fee2e2); color: var(--primary-text, #991b1b); }
 
-    h1 {
-      font-size: 22px;
-      font-weight: 700;
-      margin-bottom: 12px;
-    }
+    h1 { font-size: 22px; font-weight: 700; margin-bottom: 12px; }
 
     p {
       color: #64748b;
@@ -111,32 +107,71 @@
       margin: 16px 0;
       text-align: left;
     }
-    .allowed-list h3 {
-      font-size: 13px;
-      font-weight: 600;
-      color: #166534;
-      margin-bottom: 6px;
-    }
-    .allowed-list ul {
-      list-style: none;
-      font-size: 13px;
-      color: #15803d;
-    }
+    .allowed-list h3 { font-size: 13px; font-weight: 600; color: #166534; margin-bottom: 6px; }
+    .allowed-list ul { list-style: none; font-size: 13px; color: #15803d; }
     .allowed-list li::before { content: '✓ '; }
 
-    #contact {
-      display: none;
-      font-size: 13px;
-      color: #64748b;
-    }
+    #contact { display: none; font-size: 13px; color: #64748b; }
     #contact a { color: var(--primary, #2563eb); text-decoration: none; }
     #contact a:hover { text-decoration: underline; }
 
-    .footer {
-      margin-top: 28px;
-      font-size: 12px;
-      color: #94a3b8;
+    /* Unblock request */
+    .unblock-wrap {
+      display: none;
+      margin-top: 20px;
+      border-top: 1px solid #f1f5f9;
+      padding-top: 16px;
     }
+    #unblock-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 9px 22px;
+      background: none;
+      border: 1.5px solid var(--primary, #2563eb);
+      color: var(--primary, #2563eb);
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background .12s;
+    }
+    #unblock-btn:hover { background: var(--primary-light, #dbeafe); }
+    #unblock-btn:disabled { opacity: 0.5; cursor: default; }
+    .unblock-form {
+      display: none;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-top: 10px;
+      text-align: left;
+    }
+    .unblock-form label {
+      display: block; font-size: 12px; font-weight: 500;
+      color: #475569; margin-bottom: 4px;
+    }
+    .unblock-form textarea {
+      width: 100%; border: 1px solid #cbd5e1; border-radius: 6px;
+      padding: 6px 10px; font-size: 13px; font-family: inherit;
+      outline: none; resize: vertical; background: #fff; box-sizing: border-box;
+    }
+    .unblock-form textarea:focus { border-color: var(--primary, #2563eb); }
+    #submit-req {
+      margin-top: 10px; padding: 7px 18px;
+      background: var(--primary, #2563eb); color: #fff;
+      border: none; border-radius: 7px; font-size: 13px;
+      font-weight: 600; cursor: pointer;
+    }
+    #submit-req:disabled { opacity: 0.5; }
+    #req-result {
+      display: none; margin-top: 8px; font-size: 12px;
+      border-radius: 6px; padding: 6px 10px;
+    }
+    #req-result.ok  { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+    #req-result.err { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+    .footer { margin-top: 28px; font-size: 12px; color: #94a3b8; }
   </style>
 </head>
 <body>
@@ -161,6 +196,19 @@
     </div>
 
     <p id="contact"></p>
+
+    <!-- Request to unblock — shown based on OU/settings -->
+    <div class="unblock-wrap" id="unblock-wrap">
+      <button id="unblock-btn" onclick="toggleForm()">
+        Request to unblock this website
+      </button>
+      <div class="unblock-form" id="unblock-form">
+        <label for="req-reason">Why do you need access? <span style="font-weight:400;color:#94a3b8">(optional)</span></label>
+        <textarea id="req-reason" rows="2" placeholder="Briefly describe why you need this site…"></textarea>
+        <button id="submit-req" onclick="submitRequest()">Send Request</button>
+        <div id="req-result"></div>
+      </div>
+    </div>
 
     <p class="footer" id="footer">ClassGuard — managed by your school</p>
   </div>

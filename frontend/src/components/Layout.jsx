@@ -26,10 +26,13 @@ import {
   mdiFlagOutline,
   mdiLogoutVariant,
   mdiFilterOutline,
+  mdiEmailOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
 import { useSocket } from '../contexts/SocketContext';
+import { useQuery } from '@tanstack/react-query';
+import api from '../lib/api';
 
 const VERSION = '0.0.2';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
@@ -63,8 +66,9 @@ const ADMIN_SECTIONS = [
       { to: '/admin/groups',           icon: mdiAccountGroupOutline,  label: 'Groups'           },
       { to: '/admin/blocklists',  icon: mdiShieldOutline,       label: 'Blocklists'    },
       { to: '/admin/categories',  icon: mdiTagOutline,          label: 'Categories'    },
-      { to: '/admin/screenshots', icon: mdiCameraOutline,       label: 'Screenshots'   },
-      { to: '/admin/ai',          icon: mdiRobotOutline,        label: 'AI Classifier' },
+      { to: '/admin/screenshots',       icon: mdiCameraOutline,  label: 'Screenshots'       },
+      { to: '/admin/ai',                icon: mdiRobotOutline,   label: 'AI Classifier'     },
+      { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true },
     ],
   },
   {
@@ -94,7 +98,7 @@ const ADMIN_SECTIONS = [
 // ---------------------------------------------------------------------------
 // NavItem
 // ---------------------------------------------------------------------------
-function NavItem({ to, icon, label, end = false }) {
+function NavItem({ to, icon, label, end = false, badgeCount }) {
   return (
     <NavLink
       to={to}
@@ -108,7 +112,12 @@ function NavItem({ to, icon, label, end = false }) {
       }
     >
       <Icon path={icon} />
-      <span>{label}</span>
+      <span className="flex-1">{label}</span>
+      {badgeCount > 0 && (
+        <span className="ml-auto bg-amber-500 text-white text-[10px] font-bold rounded-full min-w-[18px] h-[18px] flex items-center justify-center px-1 leading-none">
+          {badgeCount > 99 ? '99+' : badgeCount}
+        </span>
+      )}
     </NavLink>
   );
 }
@@ -121,6 +130,14 @@ export default function Layout() {
   const { connected }    = useSocket();
   const navigate         = useNavigate();
   const isAdmin          = (ROLES[user?.role] ?? 0) >= ROLES.admin;
+
+  const { data: pendingData } = useQuery({
+    queryKey: ['unblock-pending-count'],
+    queryFn:  () => api.get('/unblock-requests/pending-count'),
+    enabled:  isAdmin,
+    refetchInterval: 60_000,
+  });
+  const pendingCount = pendingData?.count || 0;
 
   const handleLogout = async () => {
     await logout();
@@ -185,7 +202,11 @@ export default function Layout() {
                 {section.label}
               </p>
               <div className="space-y-0.5">
-                {section.items.map(item => <NavItem key={item.to} {...item} />)}
+                {section.items.map(item => (
+                  <NavItem key={item.to} {...item}
+                    badgeCount={item.badge ? pendingCount : 0}
+                  />
+                ))}
               </div>
             </section>
           ))}

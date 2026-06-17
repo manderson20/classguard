@@ -194,9 +194,21 @@ async function invalidateSubnetPolicies() {
   await redis.del(SUBNET_POLICIES_KEY);
 }
 
+// ---------------------------------------------------------------------------
+// Override code check — set by the backend when a valid override code is used.
+// Key: classguard:override:{ip}:{domain}, TTL = remaining code validity.
+// ---------------------------------------------------------------------------
+async function getOverrideForIp(ip, domain) {
+  try {
+    const val = await redis.get(`classguard:override:${ip}:${domain}`);
+    return val !== null;
+  } catch { return false; }
+}
+
 module.exports = {
   getDevice, setDevice, getPolicy, invalidatePolicy,
   getGlobalAllowlist, invalidateGlobalAllowlist,
   getForwardZones,
   getSubnetPolicy, invalidateSubnetPolicies,
+  getOverrideForIp,
 };

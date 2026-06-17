@@ -124,10 +124,12 @@ function BlockPageBrandingSection({ appSettings, appLoading, saved, setSaved }) 
   useEffect(() => {
     if (appSettings && Object.keys(appSettings).length) {
       setBranding({
-        blockpage_school_name:   appSettings.blockpage_school_name   || '',
-        blockpage_message:       appSettings.blockpage_message       || '',
-        blockpage_contact_email: appSettings.blockpage_contact_email || '',
-        blockpage_primary_color: appSettings.blockpage_primary_color || '#2563eb',
+        blockpage_school_name:     appSettings.blockpage_school_name   || '',
+        blockpage_message:         appSettings.blockpage_message       || '',
+        blockpage_contact_email:   appSettings.blockpage_contact_email || '',
+        blockpage_primary_color:   appSettings.blockpage_primary_color || '#2563eb',
+        blockpage_unblock_who:     appSettings.unblock_requests_who    || 'all',
+        blockpage_override_enabled: appSettings.override_codes_enabled !== 'false',
       });
       setLogoPreview(appSettings.blockpage_logo || null);
     }
@@ -135,7 +137,12 @@ function BlockPageBrandingSection({ appSettings, appLoading, saved, setSaved }) 
 
   const save = useMutation({
     mutationFn: () => api.put('/settings', {
-      ...branding,
+      blockpage_school_name:   branding.blockpage_school_name,
+      blockpage_message:       branding.blockpage_message,
+      blockpage_contact_email: branding.blockpage_contact_email,
+      blockpage_primary_color: branding.blockpage_primary_color,
+      unblock_requests_who:    branding.blockpage_unblock_who || 'all',
+      override_codes_enabled:  String(branding.blockpage_override_enabled !== false),
       ...(logoPreview !== appSettings?.blockpage_logo ? { blockpage_logo: logoPreview || '' } : {}),
     }),
     onSuccess: () => {
@@ -252,6 +259,29 @@ function BlockPageBrandingSection({ appSettings, appLoading, saved, setSaved }) 
                       onChange={e => setBranding(b => ({ ...b, blockpage_primary_color: e.target.value }))} />
                     <div className="w-7 h-7 rounded-full border-2 border-dashed border-slate-300 flex items-center justify-center text-slate-400 text-xs">+</div>
                   </div>
+                </div>
+              </div>
+
+              {/* Unblock request / override code toggles */}
+              <div className="pt-2 border-t border-slate-100 space-y-3">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Unblock Requests</label>
+                  <select className="input text-sm bg-white"
+                    value={branding.blockpage_unblock_who || 'all'}
+                    onChange={e => setBranding(b => ({ ...b, blockpage_unblock_who: e.target.value }))}>
+                    <option value="all">All users (staff + students)</option>
+                    <option value="staff">Staff only</option>
+                    <option value="off">Disabled</option>
+                  </select>
+                  <p className="text-xs text-slate-400 mt-1">Who can submit "Request Access" from the block page</p>
+                </div>
+                <div className="flex items-center gap-3">
+                  <input type="checkbox" id="override-toggle-chk" className="w-4 h-4 rounded"
+                    checked={branding.blockpage_override_enabled !== false}
+                    onChange={e => setBranding(b => ({ ...b, blockpage_override_enabled: e.target.checked }))} />
+                  <label htmlFor="override-toggle-chk" className="text-sm font-medium text-slate-700 cursor-pointer">
+                    Show "Enter override code" on block page
+                  </label>
                 </div>
               </div>
 
