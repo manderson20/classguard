@@ -5,9 +5,11 @@ const crypto   = require('crypto');
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
-const config = require('../config');
+const config     = require('../config');
+const keepalived = require('../services/keepalived');
 
-const auth = [authenticate, requireMinRole('admin')];
+const auth      = [authenticate, requireMinRole('admin')];
+const superauth = [authenticate, requireMinRole('superadmin')];
 
 // ---------------------------------------------------------------------------
 // Self-registration — upserts this node on startup using node_id as the key
@@ -234,6 +236,100 @@ router.get('/summary', ...auth, async (req, res) => {
        FROM nodes GROUP BY ha_role`
     );
     res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/ha/db-replication
+// Surfaces PostgreSQL streaming replication status. ClassGuard does not set up
+// or manage replication itself (that's pg_auto_failover/Patroni's job at the
+// infra level) — this just reports what's there so admins can see the SPOF
+// risk and replica health at a glance.
+// ---------------------------------------------------------------------------
+router.get('/db-replication', ...auth, async (req, res) => {
+  try {
+    const { rows: [{ in_recovery }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery');
+
+    if (in_recovery) {
+      const { rows: [standby] } = await pool.query(
+        `SELECT pg_last_wal_receive_lsn()        AS receive_lsn,
+                pg_last_wal_replay_lsn()          AS replay_lsn,
+                pg_last_xact_replay_timestamp()   AS last_replay_at,
+                EXTRACT(EPOCH FROM (NOW() - pg_last_xact_replay_timestamp())) AS replay_lag_seconds`
+      );
+      return res.json({ role: 'standby', standby, replicas: [] });
+    }
+
+    const { rows: replicas } = await pool.query(
+      `SELECT application_name, client_addr, state, sync_state,
+              pg_wal_lsn_diff(pg_current_wal_lsn(), sent_lsn)   AS sent_lag_bytes,
+              pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn) AS replay_lag_bytes,
+              write_lag, flush_lag, replay_lag
+       FROM pg_stat_replication
+       ORDER BY application_name`
+    );
+    res.json({ role: 'primary', replicas });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// VRRP / Virtual IP config — the single floating address the whole cluster
+// answers on (web UI, and FreeRADIUS too on nodes that run it). Shared with
+// the RADIUS page's HA & Config tab since it's the same underlying VIP.
+// ---------------------------------------------------------------------------
+
+// GET /api/v1/ha/vrrp
+router.get('/vrrp', ...auth, async (req, res) => {
+  try {
+    const cfg = await keepalived.getHaConfig();
+    res.json(cfg);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/v1/ha/vrrp
+router.put('/vrrp', ...superauth, async (req, res) => {
+  const { vip_address, vip_prefix_len, vip_interface, vrrp_instance_name,
+          vrrp_virtual_router_id, vrrp_auth_password, vrrp_advert_int,
+          priority_primary, priority_secondary, track_freeradius,
+          track_classguard_api } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE radius_ha_config SET
+         vip_address            = COALESCE($1::inet, vip_address),
+         vip_prefix_len          = COALESCE($2, vip_prefix_len),
+         vip_interface           = COALESCE($3, vip_interface),
+         vrrp_instance_name      = COALESCE($4, vrrp_instance_name),
+         vrrp_virtual_router_id  = COALESCE($5, vrrp_virtual_router_id),
+         vrrp_auth_password      = COALESCE($6, vrrp_auth_password),
+         vrrp_advert_int         = COALESCE($7, vrrp_advert_int),
+         priority_primary        = COALESCE($8, priority_primary),
+         priority_secondary      = COALESCE($9, priority_secondary),
+         track_freeradius        = COALESCE($10, track_freeradius),
+         track_classguard_api    = COALESCE($11, track_classguard_api),
+         updated_at              = NOW()
+       RETURNING *`,
+      [vip_address, vip_prefix_len, vip_interface, vrrp_instance_name,
+       vrrp_virtual_router_id, vrrp_auth_password, vrrp_advert_int,
+       priority_primary, priority_secondary, track_freeradius ?? null,
+       track_classguard_api ?? null]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/ha/vrrp/bundle — keepalived.conf (primary + secondary) + notify.sh
+router.get('/vrrp/bundle', ...superauth, async (req, res) => {
+  try {
+    const bundle = await keepalived.buildVrrpOnlyBundle();
+    res.json(bundle);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

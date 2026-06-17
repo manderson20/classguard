@@ -647,7 +647,11 @@ function HaConfigTab() {
     <div className="flex flex-col gap-6">
       {/* VRRP config */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-        <h3 className="font-semibold text-slate-900 mb-4">VRRP / Keepalived — Virtual IP Configuration</h3>
+        <h3 className="font-semibold text-slate-900 mb-1">VRRP / Keepalived — Virtual IP Configuration</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          This VIP is shared with the ClassGuard web UI — it can also be configured from{' '}
+          <a href="/admin/ha" className="text-primary-600 underline">HA Cluster</a>, including failover health checks.
+        </p>
         <div className="grid md:grid-cols-3 gap-4">
           <Field label="Virtual IP Address (VIP)" hint="shared between nodes">
             <input className={INPUT} value={cfg.vip_address||''} onChange={e=>set('vip_address',e.target.value)} placeholder="172.16.1.249"/>

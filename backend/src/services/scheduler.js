@@ -5,6 +5,7 @@ const config = require('../config');
 const { syncAll } = require('./blocklistSync');
 const { syncNetworkClientsToIpam } = require('./ipamSync');
 const { syncAll: syncCategories, classifyRecentDomains } = require('./categoryImport');
+const acmeTls = require('./acmeTls');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -177,6 +178,11 @@ function startScheduler() {
   // Keyword classifier — daily 4am, processes uncategorized domains from DNS logs
   cron.schedule('0 4 * * *', () => {
     classifyRecentDomains(1000).catch(err => console.error('[scheduler] keyword classifier error:', err.message));
+  });
+
+  // TLS certificate renewal check — daily 5am, renews within 30 days of expiry
+  cron.schedule('0 5 * * *', () => {
+    acmeTls.renewIfNeeded().catch(err => console.error('[scheduler] TLS renewal error:', err.message));
   });
 }
 

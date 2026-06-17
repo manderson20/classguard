@@ -75,6 +75,7 @@ app.use('/api/v1/ai',            require('./routes/ai'));
 app.use('/api/v1/network',       require('./routes/network'));
 app.use('/api/v1/roster',        require('./routes/roster'));
 app.use('/api/v1/radius',        require('./routes/radius'));
+app.use('/api/v1/tls',           require('./routes/tls'));
 app.use('/api/v1/analytics',     require('./routes/analytics'));
 app.use('/metrics',              require('./routes/metrics'));
 

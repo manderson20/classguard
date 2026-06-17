@@ -9,6 +9,7 @@ volumes:
   app-logs:
   blocklists:
   screenshots:
+  tls-certs:
 
 services:
 
@@ -96,10 +97,12 @@ services:
       SCREENSHOT_DIR:        /app/screenshots
       NODE_ID:               ${NODE_ID:-classguard-1}
       NODE_ROLE:             ${NODE_ROLE:-primary}
+      TLS_CERT_DIR:          /app/certs
     volumes:
       - app-logs:/app/logs
       - blocklists:/app/blocklists
       - screenshots:/app/screenshots
+      - tls-certs:/app/certs
     networks:
       - classguard-net
     healthcheck:
@@ -192,5 +195,8 @@ services:
       CLASSGUARD_HOST: ${CLASSGUARD_HOST:-172.16.1.250}
     ports:
       - "80:80"
+      - "443:443"
+    volumes:
+      - tls-certs:/etc/nginx/certs
     networks:
       - classguard-net
