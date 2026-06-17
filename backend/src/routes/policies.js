@@ -35,6 +35,77 @@ async function bustPolicyCache(policyId) {
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/policies/ou-list
+// Returns distinct OUs from synced users + OUs that already have assignments
+// (must come before /:id)
+// ---------------------------------------------------------------------------
+router.get('/ou-list', async (req, res) => {
+  const [fromUsers, fromAssignments] = await Promise.all([
+    query(`SELECT DISTINCT google_ou AS path FROM users
+           WHERE google_ou IS NOT NULL AND google_ou <> ''
+           ORDER BY google_ou`),
+    query(`SELECT DISTINCT target_ou AS path FROM policy_assignments
+           WHERE target_type = 'ou' AND target_ou IS NOT NULL
+           ORDER BY target_ou`),
+  ]);
+  const paths = [...new Set([
+    ...fromUsers.rows.map(r => r.path),
+    ...fromAssignments.rows.map(r => r.path),
+  ])].sort();
+  res.json(paths);
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/policies/subnet-assignments
+// Full resolved policy per subnet — consumed by the DNS engine
+// (must come before /:id)
+// ---------------------------------------------------------------------------
+router.get('/subnet-assignments', async (req, res) => {
+  const { resolvePolicy } = require('../services/policyResolver');
+  const { rows } = await query(
+    `SELECT DISTINCT pa.target_subnet::text AS subnet, pa.policy_id
+     FROM policy_assignments pa
+     WHERE pa.target_type = 'subnet' AND pa.target_subnet IS NOT NULL
+     ORDER BY pa.target_subnet`
+  );
+  const results = [];
+  for (const row of rows) {
+    const resolved = await resolvePolicy(null).catch(() => null);
+    // Resolve policy directly by ID for subnet (bypass student-chain)
+    const { rows: [pol] } = await query('SELECT * FROM policies WHERE id = $1', [row.policy_id]);
+    if (!pol) continue;
+    // Build a minimal resolved structure matching policyResolver output
+    const [domainRows, catRows, blRows, defaultBlockRows] = await Promise.all([
+      query('SELECT domain, rule_type FROM policy_domain_rules WHERE policy_id = $1', [row.policy_id]),
+      query(`SELECT wc.slug, pcr.action FROM policy_category_rules pcr
+             JOIN website_categories wc ON wc.id = pcr.category_id
+             WHERE pcr.policy_id = $1`, [row.policy_id]),
+      query('SELECT source_id FROM policy_blocklists WHERE policy_id = $1', [row.policy_id]),
+      query('SELECT slug FROM website_categories WHERE is_blocked_default = true'),
+    ]);
+    const allowRules  = domainRows.rows.filter(r => r.rule_type === 'allow').map(r => r.domain);
+    const denyRules   = domainRows.rows.filter(r => r.rule_type === 'deny').map(r => r.domain);
+    const polBlocked  = catRows.rows.filter(r => r.action === 'block').map(r => r.slug);
+    const polAllowed  = catRows.rows.filter(r => r.action === 'allow').map(r => r.slug);
+    const defBlocked  = defaultBlockRows.rows.map(r => r.slug);
+    const blockedCats = [...new Set([...defBlocked, ...polBlocked])].filter(s => !polAllowed.includes(s));
+    results.push({
+      subnet: row.subnet,
+      policy: {
+        ...pol,
+        mode:                pol.mode || 'standard',
+        resolvedAllowDomains: allowRules,
+        resolvedDenyDomains:  denyRules,
+        activeBloclistIds:    blRows.rows.map(r => r.source_id),
+        blockedCategories:    blockedCats,
+        allowedCategories:    polAllowed,
+      },
+    });
+  }
+  res.json(results);
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/policies
 // ---------------------------------------------------------------------------
 router.get('/', async (req, res) => {
@@ -77,9 +148,12 @@ router.get('/:id', async (req, res) => {
     ),
     query(
       `SELECT pa.*,
+              pa.target_subnet::text AS target_subnet_str,
               CASE pa.target_type
                 WHEN 'student' THEN u.full_name
                 WHEN 'group'   THEN g.name
+                WHEN 'ou'      THEN pa.target_ou
+                WHEN 'subnet'  THEN pa.target_subnet::text
                 ELSE pa.target_ou
               END AS target_name
        FROM policy_assignments pa
@@ -131,7 +205,7 @@ router.post('/', async (req, res) => {
 // PATCH /api/v1/policies/:id  — update settings
 // ---------------------------------------------------------------------------
 router.patch('/:id', async (req, res) => {
-  const allowed = ['name','description','mode','safe_search','youtube_restricted','block_page_message'];
+  const allowed = ['name','description','mode','safe_search','youtube_restricted','block_page_message','youtube_categories'];
   const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
 
   let policy;
@@ -321,6 +395,44 @@ router.delete('/:id/blocklists/:sourceId', async (req, res) => {
     [req.params.id, req.params.sourceId]
   );
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// Assignments
+// ---------------------------------------------------------------------------
+
+router.post('/:id/assignments', async (req, res) => {
+  const { target_type, target_id, target_ou, target_subnet, priority = 0 } = req.body;
+  const validTypes = ['student', 'group', 'ou', 'subnet'];
+  if (!validTypes.includes(target_type)) {
+    return res.status(400).json({ error: `target_type must be one of: ${validTypes.join(', ')}` });
+  }
+  if (target_type === 'student' && !target_id) return res.status(400).json({ error: 'target_id required for student' });
+  if (target_type === 'group'   && !target_id) return res.status(400).json({ error: 'target_id required for group' });
+  if (target_type === 'ou'      && !target_ou) return res.status(400).json({ error: 'target_ou required for OU assignment' });
+  if (target_type === 'subnet'  && !target_subnet) return res.status(400).json({ error: 'target_subnet (CIDR) required' });
+
+  const cleanOu     = target_ou?.trim() || null;
+  const cleanSubnet = target_subnet?.trim() || null;
+
+  const { rows: [assignment] } = await query(
+    `INSERT INTO policy_assignments
+       (policy_id, target_type, target_id, target_ou, target_subnet, priority, assigned_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
+    [req.params.id, target_type, target_id || null, cleanOu, cleanSubnet, priority, req.user?.id || null]
+  );
+  await bustPolicyCache(req.params.id);
+  res.status(201).json(assignment);
+});
+
+router.delete('/:id/assignments/:assignmentId', async (req, res) => {
+  const { rows: [assignment] } = await query(
+    'DELETE FROM policy_assignments WHERE id = $1 AND policy_id = $2 RETURNING *',
+    [req.params.assignmentId, req.params.id]
+  );
+  if (!assignment) return res.status(404).json({ error: 'Assignment not found' });
+  await bustPolicyCache(req.params.id);
+  res.json({ deleted: assignment });
 });
 
 // ---------------------------------------------------------------------------

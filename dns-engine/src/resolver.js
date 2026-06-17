@@ -55,7 +55,15 @@ async function resolveQuery(name, typeNum, sourceIp) {
   }
 
   // --- 3. Policy load -----------------------------------------------------
-  const policy = await policyCache.getPolicy(studentId);
+  // If no device registration (iPad, BYOD, guest), check subnet policy first.
+  // Subnet policies are set in ClassGuard for specific VLANs/subnets.
+  let policy;
+  if (studentId) {
+    policy = await policyCache.getPolicy(studentId);
+  } else {
+    const subnetPolicy = await policyCache.getSubnetPolicy(sourceIp).catch(() => null);
+    policy = subnetPolicy || await policyCache.getPolicy(null);
+  }
   const mode   = policy?.mode || 'standard';
 
   const allowList = [

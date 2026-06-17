@@ -29,7 +29,7 @@ const RISK_COLOR = {
   low:    'bg-slate-50 text-slate-500',
 };
 
-const TABS = ['Settings', 'Allow / Block', 'Categories', 'Blocklists', 'Assignments'];
+const TABS = ['Settings', 'Allow / Block', 'Categories', 'Blocklists', 'YouTube', 'Assignments'];
 
 function Field({ label, children, hint, col2 }) {
   return (
@@ -462,56 +462,489 @@ function BlocklistsTab({ policy, policyId }) {
 // ---------------------------------------------------------------------------
 // Assignments tab
 // ---------------------------------------------------------------------------
-function AssignmentsTab({ policy }) {
-  const assignments = policy.assignments || [];
+// ---------------------------------------------------------------------------
+// YouTube tab
+// ---------------------------------------------------------------------------
+const YT_CATEGORIES = [
+  { id: 'film_animation',      label: 'Film & Animation',      emoji: '🎬', edu: false },
+  { id: 'music',               label: 'Music',                  emoji: '🎵', edu: false },
+  { id: 'sports',              label: 'Sports',                 emoji: '⚽', edu: false },
+  { id: 'gaming',              label: 'Gaming',                 emoji: '🎮', edu: false },
+  { id: 'entertainment',       label: 'Entertainment',          emoji: '🎭', edu: false },
+  { id: 'comedy',              label: 'Comedy',                 emoji: '😂', edu: false },
+  { id: 'people_blogs',        label: 'People & Blogs',         emoji: '👤', edu: false },
+  { id: 'autos_vehicles',      label: 'Autos & Vehicles',       emoji: '🚗', edu: false },
+  { id: 'pets_animals',        label: 'Pets & Animals',         emoji: '🐾', edu: false },
+  { id: 'travel_events',       label: 'Travel & Events',        emoji: '✈️', edu: false },
+  { id: 'howto_style',         label: 'How-to & Style',         emoji: '✂️', edu: false },
+  { id: 'news_politics',       label: 'News & Politics',        emoji: '📰', edu: false },
+  { id: 'education',           label: 'Education',              emoji: '📚', edu: true  },
+  { id: 'science_technology',  label: 'Science & Technology',   emoji: '🔬', edu: true  },
+  { id: 'nonprofits_activism', label: 'Nonprofits & Activism',  emoji: '🤝', edu: true  },
+];
 
-  const TYPE_LABEL = { student: 'Student', group: 'Group', ou: 'OU' };
-  const TYPE_COLOR = {
-    student: 'bg-blue-100 text-blue-700',
-    group:   'bg-purple-100 text-purple-700',
-    ou:      'bg-amber-100 text-amber-700',
-  };
+function YouTubeTab({ policy, policyId }) {
+  const qc = useQueryClient();
+  const raw   = policy.youtube_categories || {};
+  const ytMode = raw.mode || 'restricted';          // 'restricted' | 'allowlist' | 'blocklist' | 'off'
+  const blocked = raw.blocked || [];
+  const allowed = raw.allowed || [];
+
+  const [mode,    setMode]    = useState(ytMode);
+  const [blocked_, setBlocked] = useState(new Set(blocked));
+  const [allowed_, setAllowed] = useState(new Set(allowed));
+  const [saved,   setSaved]   = useState(false);
+
+  const save = useMutation({
+    mutationFn: () => api.patch(`/policies/${policyId}`, {
+      youtube_categories: {
+        mode,
+        blocked: [...blocked_],
+        allowed: [...allowed_],
+      },
+    }),
+    onSuccess: () => {
+      setSaved(true);
+      qc.invalidateQueries(['policy', policyId]);
+      setTimeout(() => setSaved(false), 2500);
+    },
+  });
+
+  const toggleSet = (setter, id) => setter(prev => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  const isBlocklist  = mode === 'blocklist';
+  const isAllowlist  = mode === 'allowlist';
 
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-slate-500">
-        Assignments are managed from the Users, Groups, or Roster Sync pages.
-        The policy closest to the student wins (student &gt; group &gt; OU &gt; district default).
-      </p>
-      {assignments.length === 0 ? (
-        <div className="text-center py-8 text-slate-400 text-sm">
-          No assignments yet — assign this policy from the Users or Groups page.
+    <div className="space-y-6">
+      {/* Mode */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5">
+        <h3 className="text-sm font-semibold text-slate-700 mb-3">YouTube Filtering Mode</h3>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {[
+            { id: 'off',       label: 'Off',             desc: 'No YouTube category restrictions' },
+            { id: 'restricted', label: 'Restricted Mode', desc: 'Enforce YouTube Restricted Mode (hides mature content)' },
+            { id: 'blocklist', label: 'Block Categories', desc: 'Block specific categories, allow everything else' },
+            { id: 'allowlist', label: 'Allow Only',       desc: 'Only allow selected categories, block all others' },
+          ].map(opt => (
+            <button key={opt.id} onClick={() => setMode(opt.id)}
+              className={`text-left p-3 rounded-lg border-2 transition-all ${
+                mode === opt.id
+                  ? 'border-primary-500 bg-primary-50'
+                  : 'border-slate-200 hover:border-slate-300'
+              }`}>
+              <div className="font-medium text-sm text-slate-800">{opt.label}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{opt.desc}</div>
+            </button>
+          ))}
         </div>
-      ) : (
-        <div className="overflow-x-auto rounded-xl border border-slate-200">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-              <tr>
-                {['Type','Target','Assigned'].map(h => (
-                  <th key={h} className="px-4 py-2 text-left">{h}</th>
+      </div>
+
+      {/* Category grid — show when blocklist or allowlist mode */}
+      {(isBlocklist || isAllowlist) && (
+        <div className="bg-white rounded-xl border border-slate-200 p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-slate-700">
+              {isBlocklist ? 'Blocked Categories' : 'Allowed Categories'}
+            </h3>
+            <span className="text-xs text-slate-400">
+              {isBlocklist
+                ? `${blocked_.size} blocked`
+                : `${allowed_.size} allowed`}
+            </span>
+          </div>
+          <p className="text-xs text-slate-500 mb-4">
+            {isBlocklist
+              ? 'Toggle ON to block a category. Everything else is allowed.'
+              : 'Toggle ON to allow a category. Everything else is blocked.'}
+          </p>
+
+          {/* Educational note */}
+          {isAllowlist && (
+            <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-700">
+              📚 <strong>Tip:</strong> Education and Science &amp; Technology are marked as educational — consider keeping them allowed.
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {YT_CATEGORIES.map(cat => {
+              const active = isBlocklist ? blocked_.has(cat.id) : allowed_.has(cat.id);
+              const setter = isBlocklist
+                ? () => toggleSet(setBlocked, cat.id)
+                : () => toggleSet(setAllowed, cat.id);
+              return (
+                <button key={cat.id} onClick={setter}
+                  className={`flex items-center gap-2 p-3 rounded-lg border-2 text-left transition-all ${
+                    active
+                      ? isBlocklist
+                        ? 'border-red-400 bg-red-50'
+                        : 'border-green-400 bg-green-50'
+                      : 'border-slate-200 hover:border-slate-300 bg-white'
+                  }`}>
+                  <span className="text-lg flex-shrink-0">{cat.emoji}</span>
+                  <div className="min-w-0">
+                    <div className={`text-xs font-medium leading-tight ${
+                      active ? (isBlocklist ? 'text-red-700' : 'text-green-700') : 'text-slate-700'
+                    }`}>
+                      {cat.label}
+                    </div>
+                    {cat.edu && (
+                      <div className="text-xs text-blue-500">Educational</div>
+                    )}
+                  </div>
+                  <div className="ml-auto flex-shrink-0">
+                    <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+                      active
+                        ? isBlocklist ? 'border-red-500 bg-red-500' : 'border-green-500 bg-green-500'
+                        : 'border-slate-300'
+                    }`}>
+                      {active && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 8"><path d="M1 4l3 3 5-6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Preview summary */}
+      {mode !== 'off' && (
+        <div className="bg-slate-50 rounded-xl border border-slate-200 p-4 text-xs text-slate-600">
+          <strong>Enforcement note:</strong> YouTube category filtering is enforced by the ClassGuard
+          browser extension on managed Chromebooks. Devices without the extension will only receive
+          DNS-level safe search enforcement via YouTube Restricted Mode (if enabled above).
+        </div>
+      )}
+
+      {save.error && <p className="text-red-600 text-sm">{save.error.message}</p>}
+      <div className="flex items-center gap-3">
+        <button className={BTN_P} onClick={() => save.mutate()} disabled={save.isPending}>
+          {save.isPending ? 'Saving…' : 'Save YouTube Settings'}
+        </button>
+        {saved && <span className="text-green-600 text-sm font-medium">✓ Saved</span>}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Assignments tab — full interactive CRUD
+// ---------------------------------------------------------------------------
+const ASSIGN_TYPE_LABEL = {
+  student: 'Student',
+  group:   'Group',
+  ou:      'OU / Org Unit',
+  subnet:  'DNS Subnet',
+};
+const ASSIGN_TYPE_COLOR = {
+  student: 'bg-blue-100 text-blue-700 border border-blue-200',
+  group:   'bg-purple-100 text-purple-700 border border-purple-200',
+  ou:      'bg-amber-100 text-amber-700 border border-amber-200',
+  subnet:  'bg-teal-100 text-teal-700 border border-teal-200',
+};
+
+function AssignmentsTab({ policy, policyId }) {
+  const qc          = useQueryClient();
+  const assignments = policy.assignments || [];
+
+  const [addType,    setAddType]    = useState('ou');
+  const [ouPath,     setOuPath]     = useState('');
+  const [subnet,     setSubnet]     = useState('');
+  const [studentId,  setStudentId]  = useState('');
+  const [groupId,    setGroupId]    = useState('');
+  const [addError,   setAddError]   = useState('');
+
+  const { data: ouList = [] } = useQuery({
+    queryKey: ['ou-list'],
+    queryFn:  () => api.get('/policies/ou-list'),
+  });
+
+  const { data: users = [] } = useQuery({
+    queryKey: ['users-list'],
+    queryFn:  () => api.get('/users?limit=500'),
+    select:   d => (d.users || d || []).filter(u => u.role === 'student'),
+  });
+
+  const { data: groups = [] } = useQuery({
+    queryKey: ['groups-list'],
+    queryFn:  () => api.get('/groups'),
+    select:   d => d.groups || d || [],
+  });
+
+  const addAssignment = useMutation({
+    mutationFn: body => api.post(`/policies/${policyId}/assignments`, body),
+    onSuccess: () => {
+      setOuPath(''); setSubnet(''); setStudentId(''); setGroupId(''); setAddError('');
+      qc.invalidateQueries(['policy', policyId]);
+    },
+    onError: e => setAddError(e.message || 'Failed to add assignment'),
+  });
+
+  const removeAssignment = useMutation({
+    mutationFn: id => api.delete(`/policies/${policyId}/assignments/${id}`),
+    onSuccess:  () => qc.invalidateQueries(['policy', policyId]),
+  });
+
+  const handleAdd = () => {
+    setAddError('');
+    if (addType === 'ou') {
+      if (!ouPath.trim()) { setAddError('Enter an OU path'); return; }
+      addAssignment.mutate({ target_type: 'ou', target_ou: ouPath.trim() });
+    } else if (addType === 'subnet') {
+      if (!subnet.trim()) { setAddError('Enter a CIDR (e.g. 192.168.100.0/24)'); return; }
+      if (!/^[\d.]+\/\d+$/.test(subnet.trim())) { setAddError('Invalid CIDR format — use x.x.x.x/nn'); return; }
+      addAssignment.mutate({ target_type: 'subnet', target_subnet: subnet.trim() });
+    } else if (addType === 'student') {
+      if (!studentId) { setAddError('Select a student'); return; }
+      addAssignment.mutate({ target_type: 'student', target_id: studentId });
+    } else if (addType === 'group') {
+      if (!groupId) { setAddError('Select a group'); return; }
+      addAssignment.mutate({ target_type: 'group', target_id: groupId });
+    }
+  };
+
+  // Build OU tree for display (prefix-sorted = hierarchical order)
+  const ouTree = [...ouList].sort();
+
+  return (
+    <div className="space-y-6">
+      {/* Inheritance note */}
+      <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl text-sm text-blue-700 space-y-1">
+        <p className="font-medium">Policy precedence (most specific wins):</p>
+        <p className="text-xs">Student assignment &gt; Group membership &gt; OU (most-specific path first) &gt; District default</p>
+        <p className="text-xs mt-1">
+          <strong>DNS Subnet</strong> — applied to any device on that subnet that hasn't registered the ClassGuard extension
+          (iPads, BYOD, guest networks). Subnet policy is bypassed once a device is identified as a student.
+        </p>
+      </div>
+
+      {/* Add new assignment panel */}
+      <div className="bg-white rounded-xl border border-slate-200 p-5 space-y-4">
+        <h3 className="text-sm font-semibold text-slate-700">Add Assignment</h3>
+
+        {/* Type selector */}
+        <div className="flex gap-2 flex-wrap">
+          {Object.entries(ASSIGN_TYPE_LABEL).map(([type, label]) => (
+            <button key={type} onClick={() => { setAddType(type); setAddError(''); }}
+              className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+                addType === type
+                  ? 'border-primary-500 bg-primary-50 text-primary-700'
+                  : 'border-slate-200 text-slate-600 hover:border-slate-300'
+              }`}>
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {/* OU input */}
+        {addType === 'ou' && (
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+              OU Path
+            </label>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <input className={INPUT} placeholder="/Students/9th Grade"
+                  list="ou-datalist"
+                  value={ouPath} onChange={e => setOuPath(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAdd()} />
+                <datalist id="ou-datalist">
+                  {ouTree.map(p => <option key={p} value={p} />)}
+                </datalist>
+              </div>
+              <button className={BTN_P + ' whitespace-nowrap'} onClick={handleAdd}
+                disabled={addAssignment.isPending}>
+                + Assign
+              </button>
+            </div>
+            {ouTree.length > 0 ? (
+              <div className="border border-slate-200 rounded-lg overflow-hidden">
+                <div className="px-3 py-1.5 bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Known OUs {ouTree.length > 0 && `(${ouTree.length})`}
+                </div>
+                <div className="max-h-48 overflow-y-auto divide-y divide-slate-100">
+                  {ouTree.map(p => {
+                    const depth   = (p.match(/\//g) || []).length - 1;
+                    const already = assignments.some(a => a.target_ou === p && a.target_type === 'ou');
+                    return (
+                      <button key={p} disabled={already}
+                        onClick={() => { setOuPath(p); }}
+                        className={`w-full text-left px-3 py-2 text-xs transition-colors flex items-center gap-1 ${
+                          already ? 'text-slate-300 cursor-default' : 'hover:bg-primary-50 text-slate-700'
+                        }`}>
+                        <span className="text-slate-300 select-none" style={{ marginLeft: depth * 12 }}>
+                          {depth > 0 ? '└ ' : ''}
+                        </span>
+                        <span className="font-mono">{p.split('/').pop()}</span>
+                        <span className="text-slate-400 ml-1 font-normal">{p}</span>
+                        {already && <span className="ml-auto text-xs text-slate-300">assigned</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400">
+                No OUs synced yet — enter a path manually, e.g. <code className="bg-slate-100 px-1 rounded">/Students</code> or <code className="bg-slate-100 px-1 rounded">/Students/Grade 9</code>
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Subnet input */}
+        {addType === 'subnet' && (
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+              Subnet CIDR
+            </label>
+            <div className="flex gap-2">
+              <input className={INPUT} placeholder="192.168.100.0/24"
+                value={subnet} onChange={e => setSubnet(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAdd()} />
+              <button className={BTN_P + ' whitespace-nowrap'} onClick={handleAdd}
+                disabled={addAssignment.isPending}>
+                + Assign
+              </button>
+            </div>
+            <p className="text-xs text-slate-400">
+              This policy will apply to any DNS query from an IP in this subnet that has no registered student device.
+              Useful for iPad carts, BYOD VLANs, and guest WiFi.
+            </p>
+            <div className="grid grid-cols-2 gap-2 mt-2">
+              {[
+                ['192.168.100.0/24', 'Student VLAN'],
+                ['10.0.50.0/24',     'iPad Cart'],
+                ['172.16.200.0/24',  'BYOD WiFi'],
+                ['192.168.200.0/24', 'Guest Network'],
+              ].map(([cidr, label]) => (
+                <button key={cidr} onClick={() => setSubnet(cidr)}
+                  className="text-left px-3 py-2 rounded-lg border border-slate-200 hover:border-primary-400 hover:bg-primary-50 text-xs transition-colors">
+                  <div className="font-mono text-slate-700">{cidr}</div>
+                  <div className="text-slate-400">{label}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Student picker */}
+        {addType === 'student' && (
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+              Student
+            </label>
+            <div className="flex gap-2">
+              <select className={SELECT} value={studentId} onChange={e => setStudentId(e.target.value)}>
+                <option value="">— Select student —</option>
+                {users.map(u => (
+                  <option key={u.id} value={u.id}>
+                    {u.full_name || u.email}
+                    {u.google_ou ? ` (${u.google_ou.split('/').filter(Boolean).pop()})` : ''}
+                  </option>
                 ))}
+              </select>
+              <button className={BTN_P + ' whitespace-nowrap'} onClick={handleAdd}
+                disabled={addAssignment.isPending}>
+                + Assign
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Group picker */}
+        {addType === 'group' && (
+          <div className="space-y-2">
+            <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">
+              Group
+            </label>
+            <div className="flex gap-2">
+              <select className={SELECT} value={groupId} onChange={e => setGroupId(e.target.value)}>
+                <option value="">— Select group —</option>
+                {groups.map(g => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
+              <button className={BTN_P + ' whitespace-nowrap'} onClick={handleAdd}
+                disabled={addAssignment.isPending}>
+                + Assign
+              </button>
+            </div>
+          </div>
+        )}
+
+        {addError && <p className="text-red-600 text-sm">{addError}</p>}
+      </div>
+
+      {/* Current assignments */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-700">Current Assignments</h3>
+          <span className="text-xs text-slate-400">{assignments.length} total</span>
+        </div>
+        {assignments.length === 0 ? (
+          <div className="text-center py-10 text-slate-400 text-sm">
+            No assignments yet. Use the panel above to assign this policy.
+          </div>
+        ) : (
+          <table className="w-full text-sm">
+            <thead className="text-xs font-semibold text-slate-500 uppercase bg-slate-50">
+              <tr>
+                <th className="px-4 py-2 text-left">Type</th>
+                <th className="px-4 py-2 text-left">Target</th>
+                <th className="px-4 py-2 text-left">Assigned</th>
+                <th className="px-4 py-2"></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {assignments.map(a => (
                 <tr key={a.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-2">
-                    <span className={`text-xs px-2 py-0.5 rounded font-medium ${TYPE_COLOR[a.target_type] || 'bg-slate-100 text-slate-600'}`}>
-                      {TYPE_LABEL[a.target_type] || a.target_type}
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded font-semibold ${ASSIGN_TYPE_COLOR[a.target_type] || 'bg-slate-100 text-slate-600'}`}>
+                      {ASSIGN_TYPE_LABEL[a.target_type] || a.target_type}
                     </span>
                   </td>
-                  <td className="px-4 py-2 font-medium text-slate-800">
-                    {a.target_name || a.target_ou || a.target_id}
+                  <td className="px-4 py-3">
+                    {a.target_type === 'ou' ? (
+                      <div>
+                        <div className="font-mono text-xs text-slate-700">{a.target_ou}</div>
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          Applies to this OU and all sub-OUs below it
+                        </div>
+                      </div>
+                    ) : a.target_type === 'subnet' ? (
+                      <div>
+                        <div className="font-mono text-xs text-slate-700">{a.target_subnet_str || a.target_name}</div>
+                        <div className="text-xs text-slate-400 mt-0.5">
+                          DNS filtering for unregistered devices on this subnet
+                        </div>
+                      </div>
+                    ) : (
+                      <span className="font-medium text-slate-800">
+                        {a.target_name || a.target_ou || a.target_id}
+                      </span>
+                    )}
                   </td>
-                  <td className="px-4 py-2 text-xs text-slate-400">
+                  <td className="px-4 py-3 text-xs text-slate-400">
                     {a.assigned_at ? new Date(a.assigned_at).toLocaleDateString() : '—'}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    <button onClick={() => removeAssignment.mutate(a.id)}
+                      disabled={removeAssignment.isPending}
+                      className="text-xs text-red-500 hover:underline disabled:opacity-40">
+                      Remove
+                    </button>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
@@ -579,6 +1012,11 @@ export default function PolicyEditor() {
                 {policy.categoryRules.length}
               </span>
             )}
+            {t === 'YouTube' && policy.youtube_categories?.mode && policy.youtube_categories.mode !== 'off' && policy.youtube_categories.mode !== 'restricted' && (
+              <span className="ml-1.5 text-xs bg-red-100 text-red-600 px-1.5 py-0.5 rounded-full">
+                {policy.youtube_categories.mode}
+              </span>
+            )}
             {t === 'Assignments' && policy.assignments?.length > 0 && (
               <span className="ml-1.5 text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">
                 {policy.assignments.length}
@@ -595,7 +1033,8 @@ export default function PolicyEditor() {
           {tab === 1 && <DomainRulesTab  policy={policy} policyId={policyId} />}
           {tab === 2 && <CategoriesTab   policy={policy} policyId={policyId} />}
           {tab === 3 && <BlocklistsTab   policy={policy} policyId={policyId} />}
-          {tab === 4 && <AssignmentsTab  policy={policy} />}
+          {tab === 4 && <YouTubeTab      policy={policy} policyId={policyId} />}
+          {tab === 5 && <AssignmentsTab  policy={policy} policyId={policyId} />}
         </div>
       </div>
     </div>

@@ -2,11 +2,13 @@ const redis  = require('./redis');
 const axios  = require('axios');
 const config = require('./config');
 
-const POLICY_TTL       = 60;   // seconds
-const DEVICE_TTL       = 300;
-const ALLOWLIST_TTL    = 300;  // global allowlist refreshes every 5 minutes
-const ALLOWLIST_KEY    = 'classguard:global-allowlist';
-const DEFAULT_POLICY = { mode: 'standard', resolvedAllowDomains: [], resolvedDenyDomains: [], activeBloclistIds: [] };
+const POLICY_TTL         = 60;   // seconds
+const DEVICE_TTL         = 300;
+const ALLOWLIST_TTL      = 300;
+const SUBNET_POLICY_TTL  = 60;
+const ALLOWLIST_KEY      = 'classguard:global-allowlist';
+const SUBNET_POLICIES_KEY = 'classguard:dns:subnet-policies';
+const DEFAULT_POLICY = { mode: 'standard', resolvedAllowDomains: [], resolvedDenyDomains: [], activeBloclistIds: [], blockedCategories: [], allowedCategories: [] };
 
 function policyKey(studentId) { return `student:policy:${studentId}`; }
 function deviceKey(ip)        { return `device:${ip}`; }
@@ -126,8 +128,75 @@ async function getForwardZones() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Subnet-based policy lookup for devices without a registered student
+// (iPads, BYOD, guest networks — DNS filtering without the extension)
+// ---------------------------------------------------------------------------
+
+function ipToInt(ip) {
+  const parts = ip.split('.');
+  if (parts.length !== 4) return null;
+  return parts.reduce((acc, b) => ((acc * 256) >>> 0) + parseInt(b, 10), 0) >>> 0;
+}
+
+function ipInSubnet(ip, cidr) {
+  try {
+    const [network, bits] = cidr.split('/');
+    const prefixLen = bits !== undefined ? parseInt(bits, 10) : 32;
+    const mask      = prefixLen === 0 ? 0 : ((~0 << (32 - prefixLen)) >>> 0);
+    const ipInt     = ipToInt(ip);
+    const netInt    = ipToInt(network);
+    if (ipInt === null || netInt === null) return false;
+    return (ipInt & mask) === (netInt & mask);
+  } catch {
+    return false;
+  }
+}
+
+async function getSubnetPolicy(ip) {
+  let assignments;
+  const raw = await redis.get(SUBNET_POLICIES_KEY).catch(() => null);
+  if (raw) {
+    try { assignments = JSON.parse(raw); } catch {}
+  }
+
+  if (!assignments) {
+    try {
+      const { data } = await axios.get(
+        `${config.backend.url}/api/v1/policies/subnet-assignments`,
+        {
+          headers: { 'x-internal-secret': config.backend.internalSecret },
+          timeout: 2000,
+        }
+      );
+      assignments = Array.isArray(data) ? data : [];
+      await redis.set(SUBNET_POLICIES_KEY, JSON.stringify(assignments), 'EX', SUBNET_POLICY_TTL);
+    } catch {
+      return null;
+    }
+  }
+
+  // Most-specific (longest prefix) subnet wins
+  let match = null;
+  let matchBits = -1;
+  for (const entry of assignments) {
+    if (!entry.subnet || !entry.policy) continue;
+    const bits = parseInt(entry.subnet.split('/')[1] ?? '32', 10);
+    if (bits > matchBits && ipInSubnet(ip, entry.subnet)) {
+      match     = entry.policy;
+      matchBits = bits;
+    }
+  }
+  return match || null;
+}
+
+async function invalidateSubnetPolicies() {
+  await redis.del(SUBNET_POLICIES_KEY);
+}
+
 module.exports = {
   getDevice, setDevice, getPolicy, invalidatePolicy,
   getGlobalAllowlist, invalidateGlobalAllowlist,
   getForwardZones,
+  getSubnetPolicy, invalidateSubnetPolicies,
 };
