@@ -189,6 +189,33 @@ function parseUrlFile(filePath) {
 }
 
 // ---------------------------------------------------------------------------
+// Parse a plain domain/URL list (Hagezi, URLhaus, OpenPhish, hosts-file format)
+// Handles: bare domains, full URLs, "0.0.0.0 domain" hosts-file entries
+// ---------------------------------------------------------------------------
+function parsePlainList(filePath) {
+  const text = fs.readFileSync(filePath, 'utf8');
+  const seen = new Set();
+  const result = [];
+  for (const line of text.split('\n')) {
+    let l = line.trim().toLowerCase();
+    if (!l || l.startsWith('#') || l.startsWith('!') || l.startsWith(';')) continue;
+    // Hosts-file format: "0.0.0.0 domain.com" or "127.0.0.1 domain.com"
+    if (/^(0\.0\.0\.0|127\.0\.0\.1)\s+/.test(l)) {
+      l = l.split(/\s+/)[1] || '';
+    }
+    // Strip protocol
+    l = l.replace(/^https?:\/\//, '');
+    // Extract hostname (drop path, port, query)
+    const host = l.split('/')[0].split(':')[0].split('?')[0].trim();
+    if (host && host.includes('.') && host.length <= 253 && !host.includes(' ') && !seen.has(host)) {
+      seen.add(host);
+      result.push(host);
+    }
+  }
+  return result;
+}
+
+// ---------------------------------------------------------------------------
 // Bulk upsert domains into Postgres domain_categories
 // Returns { inserted, skipped }
 // ---------------------------------------------------------------------------
@@ -259,7 +286,47 @@ async function rebuildRedisCache() {
 }
 
 // ---------------------------------------------------------------------------
-// Import a single source (ut1 or shallalist)
+// Import a plain domain/URL list source (Hagezi, URLhaus, OpenPhish, etc.)
+// ---------------------------------------------------------------------------
+async function importPlainList(sourceSlug) {
+  const { rows: [src] } = await query(
+    'SELECT * FROM category_sources WHERE slug = $1 AND is_active = true',
+    [sourceSlug]
+  );
+  if (!src) throw new Error(`Source "${sourceSlug}" not found or inactive`);
+  if (!src.default_category_slug) throw new Error(`Source "${sourceSlug}" has no default_category_slug`);
+
+  const tmpFile = path.join(os.tmpdir(), `classguard-${sourceSlug}-${Date.now()}.txt`);
+
+  await setSourceStatus(sourceSlug, { phase: 'downloading', started_at: new Date().toISOString() });
+  console.log(`[category-import] downloading ${src.name} from ${src.url}`);
+  await downloadToFile(src.url, tmpFile);
+
+  const fileSizeMb = (fs.statSync(tmpFile).size / 1024 / 1024).toFixed(1);
+  await setSourceStatus(sourceSlug, { phase: 'parsing', file_size_mb: fileSizeMb });
+  console.log(`[category-import] parsing ${sourceSlug} (${fileSizeMb} MB)`);
+
+  const domains = parsePlainList(tmpFile);
+  fs.unlinkSync(tmpFile);
+
+  const pairs = domains.map(domain => ({ domain, slug: src.default_category_slug }));
+
+  await setSourceStatus(sourceSlug, { phase: 'importing', pairs: pairs.length });
+  console.log(`[category-import] ${pairs.length} domains parsed from ${sourceSlug}, upserting...`);
+  const inserted = await upsertDomains(pairs, sourceSlug);
+
+  await query(
+    `UPDATE category_sources SET last_synced_at = NOW(), domain_count = $1 WHERE slug = $2`,
+    [inserted, sourceSlug]
+  );
+
+  await setSourceStatus(sourceSlug, { phase: 'done', domains: inserted });
+  console.log(`[category-import] ${sourceSlug} done — ${inserted} domains imported`);
+  return inserted;
+}
+
+// ---------------------------------------------------------------------------
+// Import a single source — dispatches by format (tarball or plain_list)
 // ---------------------------------------------------------------------------
 async function importSource(sourceSlug) {
   const { rows: [src] } = await query(
@@ -267,6 +334,8 @@ async function importSource(sourceSlug) {
     [sourceSlug]
   );
   if (!src) throw new Error(`Source "${sourceSlug}" not found or inactive`);
+
+  if (src.format === 'plain_list') return importPlainList(sourceSlug);
 
   const tmpDir  = path.join(os.tmpdir(), `classguard-${sourceSlug}-${Date.now()}`);
   const tarFile = path.join(os.tmpdir(), `classguard-${sourceSlug}.tar.gz`);

@@ -34,7 +34,7 @@ async function invalidatePoliciesForClass(classId) {
 // ---------------------------------------------------------------------------
 
 async function resolvePolicy(studentId) {
-  if (!studentId) return defaultPassthrough();
+  if (!studentId) return await defaultPassthrough();
 
   // --- Cache hit ---
   const cached = await redis.get(policyKey(studentId));
@@ -162,8 +162,15 @@ async function resolvePolicy(studentId) {
     activeBloclistIds = blRows.map(r => r.source_id);
   }
 
-  // --- Category rules for this policy ---
-  let blockedCategories = [];
+  // --- Category rules: default blocks + per-policy overrides ---
+  // Categories with is_blocked_default=true are always blocked for all students;
+  // a policy can add extra category blocks or lift a default block with an 'allow' rule.
+  const { rows: defaultBlockRows } = await query(
+    `SELECT slug FROM website_categories WHERE is_blocked_default = true`
+  );
+  const defaultBlockedSlugs = defaultBlockRows.map(r => r.slug);
+
+  let policyBlockedCategories = [];
   let allowedCategories = [];
   if (policy) {
     const { rows: catRows } = await query(
@@ -173,9 +180,14 @@ async function resolvePolicy(studentId) {
        WHERE pcr.policy_id = $1`,
       [policy.id]
     );
-    blockedCategories = catRows.filter(r => r.action === 'block').map(r => r.slug);
-    allowedCategories = catRows.filter(r => r.action === 'allow').map(r => r.slug);
+    policyBlockedCategories = catRows.filter(r => r.action === 'block').map(r => r.slug);
+    allowedCategories       = catRows.filter(r => r.action === 'allow').map(r => r.slug);
   }
+
+  // Merge and subtract explicit allows (policy can lift a default block if needed)
+  const blockedCategories = [
+    ...new Set([...defaultBlockedSlugs, ...policyBlockedCategories]),
+  ].filter(s => !allowedCategories.includes(s));
 
   const result = {
     ...(policy || {}),
@@ -193,13 +205,28 @@ async function resolvePolicy(studentId) {
   return result;
 }
 
-function defaultPassthrough() {
-  return {
-    mode:                'standard',
+// Cached so unidentified-device DNS lookups don't hit Postgres on every query
+const DEFAULT_PASSTHROUGH_KEY = 'classguard:policy:default-passthrough';
+const DEFAULT_PASSTHROUGH_TTL = 300; // 5 minutes
+
+async function defaultPassthrough() {
+  const cached = await redis.get(DEFAULT_PASSTHROUGH_KEY).catch(() => null);
+  if (cached) { try { return JSON.parse(cached); } catch {} }
+
+  const { rows } = await query(
+    `SELECT slug FROM website_categories WHERE is_blocked_default = true`
+  );
+  const result = {
+    mode:                 'standard',
     resolvedAllowDomains: [],
     resolvedDenyDomains:  [],
     activeBloclistIds:    [],
+    blockedCategories:    rows.map(r => r.slug),
+    allowedCategories:    [],
   };
+  await redis.set(DEFAULT_PASSTHROUGH_KEY, JSON.stringify(result), 'EX', DEFAULT_PASSTHROUGH_TTL)
+    .catch(() => {});
+  return result;
 }
 
 module.exports = { resolvePolicy, invalidatePolicy, invalidatePoliciesForClass };

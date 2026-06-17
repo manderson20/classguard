@@ -544,7 +544,7 @@ function SourcesTab() {
           <div className="overflow-x-auto rounded-lg border border-slate-200">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-                <tr>{['Source','Last Synced','Domains Imported','Status',''].map(h =>
+                <tr>{['Source','Origin','Last Synced','Domains Imported','Status',''].map(h =>
                   <th key={h} className="px-3 py-2 text-left">{h}</th>)}
                 </tr>
               </thead>
@@ -552,10 +552,14 @@ function SourcesTab() {
                 {sourcesData?.sources.map(s => {
                   const live = syncStatus.sources?.[s.slug];
                   return (
-                    <tr key={s.id} className="hover:bg-slate-50">
+                    <tr key={s.id} className={`hover:bg-slate-50 ${!s.is_active ? 'opacity-50' : ''}`}>
                       <td className="px-3 py-2">
                         <div className="font-semibold text-slate-800">{s.name}</div>
-                        <div className="text-xs text-slate-400 font-mono truncate max-w-[260px]">{s.url}</div>
+                        <div className="text-xs text-slate-400 font-mono truncate max-w-[220px]">{s.url}</div>
+                        {!s.is_active && <span className="text-xs text-amber-600 font-medium">Disabled</span>}
+                      </td>
+                      <td className="px-3 py-2 text-xs text-slate-500 whitespace-nowrap">
+                        {s.origin || '—'}
                       </td>
                       <td className="px-3 py-2 text-xs text-slate-500">
                         {s.last_synced_at ? new Date(s.last_synced_at).toLocaleString() : <span className="text-slate-300">Never</span>}
@@ -588,10 +592,11 @@ function SourcesTab() {
           <div className="bg-white border border-slate-200 rounded-xl p-4">
             <h3 className="font-semibold text-slate-700 mb-2 text-sm">How categorization works</h3>
             <ol className="text-sm text-slate-500 space-y-1.5 list-decimal list-inside">
-              <li><strong className="text-slate-700">UT1 + Shallalist</strong> — ~5–8M pre-categorized domains, updated weekly</li>
-              <li><strong className="text-slate-700">Keyword classifier</strong> — pattern matches domain names (e.g. "casino-poker.com" → gambling), runs daily on new domains seen in DNS logs</li>
+              <li><strong className="text-slate-700">UT1 Blacklists (France)</strong> — 5.6M+ pre-categorized domains across 25 categories, updated weekly</li>
+              <li><strong className="text-slate-700">Hagezi Blocklists (Germany)</strong> — supplemental adult + comprehensive threat intelligence list</li>
+              <li><strong className="text-slate-700">URLhaus / OpenPhish</strong> — live malware and phishing domains updated daily (abuse.ch / USA)</li>
+              <li><strong className="text-slate-700">Keyword classifier</strong> — pattern matches new domain names seen in DNS logs daily (e.g. "casino-poker.com" → gambling)</li>
               <li><strong className="text-slate-700">Manual overrides</strong> — admin-set in Domain Lookup tab, take priority over all other sources</li>
-              <li><strong className="text-slate-700">AI classifier</strong> — optional future enhancement for ambiguous domains</li>
             </ol>
           </div>
         </>
