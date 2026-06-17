@@ -25,12 +25,26 @@ async function setStatus(patch) {
   await redis.set(STATUS_KEY, JSON.stringify(next), 'EX', 3600); // auto-expire after 1h
 }
 
+// Update a per-source nested status correctly (avoids flat-key spread bug)
+async function setSourceStatus(slug, patch) {
+  const raw = await redis.get(STATUS_KEY).catch(() => null);
+  const current = raw ? JSON.parse(raw) : {};
+  const sources = current.sources || {};
+  const next = {
+    ...current,
+    sources: { ...sources, [slug]: { ...(sources[slug] || {}), ...patch } },
+    updated_at: new Date().toISOString(),
+  };
+  await redis.set(STATUS_KEY, JSON.stringify(next), 'EX', 3600);
+}
+
 async function getStatus() {
   const raw = await redis.get(STATUS_KEY).catch(() => null);
   return raw ? JSON.parse(raw) : { running: false };
 }
 
 // UT1 category folder name → our slug
+// UT1 uses many French folder names (drogue, alcool, armes, agressif, etc.)
 const UT1_MAP = {
   'adult': 'adult', 'mixed_adult': 'adult', 'sexual_education': 'adult',
   'child': 'adult',
@@ -38,12 +52,13 @@ const UT1_MAP = {
   'armes': 'weapons', 'weapons': 'weapons',
   'gambling': 'gambling',
   'drugs': 'drugs_alcohol', 'alcohol': 'drugs_alcohol',
+  'drogue': 'drugs_alcohol', 'alcool': 'drugs_alcohol',  // French UT1 names
   'hate': 'hate_speech', 'sect': 'hate_speech',
   'phishing': 'phishing',
   'malware': 'malware', 'hacking': 'malware', 'ddos': 'malware', 'warez': 'torrent',
   'vpn': 'proxy_vpn', 'proxy': 'proxy_vpn', 'anonymizer': 'proxy_vpn',
-  'redirector': 'proxy_vpn', 'strict_redirector': 'proxy_vpn',
-  'P2P': 'torrent', 'filehosting': 'torrent', 'download': 'torrent', 'upload': 'torrent',
+  'redirector': 'proxy_vpn', 'strict_redirector': 'proxy_vpn', 'strong_redirector': 'proxy_vpn',
+  'P2P': 'torrent', 'p2p': 'torrent', 'filehosting': 'torrent', 'download': 'torrent', 'upload': 'torrent',
   'dating': 'dating',
   'social_networks': 'social_media',
   'games': 'gaming', 'onlinegames': 'gaming',
@@ -52,12 +67,12 @@ const UT1_MAP = {
   'forums': 'forums', 'blog': 'forums',
   'shopping': 'shopping',
   'news': 'news', 'press': 'news',
-  'sport': 'sports',
-  'health': 'health', 'homeopathie': 'health',
-  'bank': 'finance', 'finance': 'finance', 'crypto-currency': 'finance',
+  'sport': 'sports', 'sports': 'sports',
+  'health': 'health', 'homeopathie': 'health', 'sante': 'health',
+  'bank': 'finance', 'finance': 'finance', 'crypto-currency': 'finance', 'bitcoin': 'finance',
   'education': 'education', 'science': 'education',
   'searchengines': 'search',
-  'publicite': 'ads_tracking', 'marketingware': 'ads_tracking',
+  'publicite': 'ads_tracking', 'marketingware': 'ads_tracking', 'tricheur': 'other',
 };
 
 // Shallalist BL/<folder> → our slug
@@ -124,7 +139,8 @@ async function extractTarGz(srcFile, destDir) {
 }
 
 // ---------------------------------------------------------------------------
-// Walk a directory, find all files named 'domains', yield {filePath, catSlug}
+// Walk a directory, yield {filePath, slug, fileType} for each mapped category.
+// Prefers 'domains' file; falls back to 'urls' file when no domains file exists.
 // ---------------------------------------------------------------------------
 function* walkDomainFiles(baseDir, categoryMap) {
   const entries = fs.readdirSync(baseDir, { withFileTypes: true });
@@ -133,18 +149,43 @@ function* walkDomainFiles(baseDir, categoryMap) {
     const slug = categoryMap[entry.name];
     if (!slug) continue;
     const domainsFile = path.join(baseDir, entry.name, 'domains');
-    if (fs.existsSync(domainsFile)) yield { filePath: domainsFile, slug };
+    if (fs.existsSync(domainsFile)) {
+      yield { filePath: domainsFile, slug, fileType: 'domains' };
+    } else {
+      const urlsFile = path.join(baseDir, entry.name, 'urls');
+      if (fs.existsSync(urlsFile)) yield { filePath: urlsFile, slug, fileType: 'urls' };
+    }
   }
 }
 
 // ---------------------------------------------------------------------------
-// Parse a domains file into an array of clean domain strings
+// Parse a 'domains' file — one bare domain per line
 // ---------------------------------------------------------------------------
 function parseDomainFile(filePath) {
   const text = fs.readFileSync(filePath, 'utf8');
   return text.split('\n')
     .map(l => l.trim().toLowerCase())
     .filter(l => l && !l.startsWith('#') && l.includes('.') && l.length <= 253);
+}
+
+// ---------------------------------------------------------------------------
+// Parse a 'urls' file — extract unique hostnames (strip path after first /)
+// ---------------------------------------------------------------------------
+function parseUrlFile(filePath) {
+  const text = fs.readFileSync(filePath, 'utf8');
+  const seen = new Set();
+  const result = [];
+  for (const line of text.split('\n')) {
+    let l = line.trim().toLowerCase();
+    if (!l || l.startsWith('#')) continue;
+    l = l.replace(/^https?:\/\//, '');
+    const host = l.split('/')[0];
+    if (host && host.includes('.') && host.length <= 253 && !host.includes(' ') && !seen.has(host)) {
+      seen.add(host);
+      result.push(host);
+    }
+  }
+  return result;
 }
 
 // ---------------------------------------------------------------------------
@@ -230,12 +271,12 @@ async function importSource(sourceSlug) {
   const tmpDir  = path.join(os.tmpdir(), `classguard-${sourceSlug}-${Date.now()}`);
   const tarFile = path.join(os.tmpdir(), `classguard-${sourceSlug}.tar.gz`);
 
-  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'downloading', started_at: new Date().toISOString() } });
+  await setSourceStatus(sourceSlug, { phase: 'downloading', started_at: new Date().toISOString() });
   console.log(`[category-import] downloading ${src.name} from ${src.url}`);
   await downloadToFile(src.url, tarFile);
 
   const fileSizeMb = (fs.statSync(tarFile).size / 1024 / 1024).toFixed(1);
-  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'extracting', file_size_mb: fileSizeMb } });
+  await setSourceStatus(sourceSlug, { phase: 'extracting', file_size_mb: fileSizeMb });
   console.log(`[category-import] extracting ${sourceSlug} (${fileSizeMb} MB)`);
   await extractTarGz(tarFile, tmpDir);
   fs.unlinkSync(tarFile);
@@ -247,17 +288,17 @@ async function importSource(sourceSlug) {
     ? baseDir
     : path.join(tmpDir, fs.readdirSync(tmpDir)[0] || '');
 
-  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'parsing', file_size_mb: fileSizeMb } });
+  await setSourceStatus(sourceSlug, { phase: 'parsing', file_size_mb: fileSizeMb });
   console.log(`[category-import] parsing domain files from ${actualBase}`);
   const pairs = [];
-  for (const { filePath, slug } of walkDomainFiles(actualBase, categoryMap)) {
-    const domains = parseDomainFile(filePath);
+  for (const { filePath, slug, fileType } of walkDomainFiles(actualBase, categoryMap)) {
+    const domains = fileType === 'urls' ? parseUrlFile(filePath) : parseDomainFile(filePath);
     for (const domain of domains) {
       pairs.push({ domain, slug });
     }
   }
 
-  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'importing', pairs: pairs.length } });
+  await setSourceStatus(sourceSlug, { phase: 'importing', pairs: pairs.length });
   console.log(`[category-import] ${pairs.length} domain-category pairs parsed, upserting...`);
   const inserted = await upsertDomains(pairs, sourceSlug);
 
@@ -267,7 +308,7 @@ async function importSource(sourceSlug) {
   );
   fs.rmSync(tmpDir, { recursive: true, force: true });
 
-  await setStatus({ [`sources.${sourceSlug}`]: { phase: 'done', domains: inserted } });
+  await setSourceStatus(sourceSlug, { phase: 'done', domains: inserted });
   console.log(`[category-import] ${sourceSlug} done — ${inserted} domains imported`);
   return inserted;
 }
@@ -291,12 +332,13 @@ async function syncAll() {
 
   const results = {};
   for (const { slug } of sources) {
+    await setStatus({ phase: `syncing_${slug}` });
     try {
       results[slug] = await importSource(slug);
     } catch (e) {
       console.error(`[category-import] ${slug} failed:`, e.message);
       results[slug] = { error: e.message };
-      await setStatus({ [`sources.${slug}`]: { phase: 'error', error: e.message } });
+      await setSourceStatus(slug, { phase: 'error', error: e.message });
     }
   }
 
