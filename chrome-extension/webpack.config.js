@@ -56,6 +56,7 @@ const webConfig = {
     popup:            './src/pages/popup.js',
     blocked:          './src/pages/blocked.js',
     'content-script': './src/content/content-script.js',
+    'youtube-filter': './src/content/youtube-filter.js',
   },
   output: {
     path:     path.resolve(__dirname, 'dist'),

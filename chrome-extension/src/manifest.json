@@ -32,6 +32,12 @@
       "js": ["content-script.bundle.js"],
       "run_at": "document_start",
       "all_frames": false
+    },
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["youtube-filter.bundle.js"],
+      "run_at": "document_idle",
+      "all_frames": false
     }
   ],
 

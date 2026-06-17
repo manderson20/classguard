@@ -114,7 +114,8 @@ export default function SettingsPage() {
   const [google, setGoogle] = useState({
     google_client_id: '', google_client_secret: '', google_redirect_uri: '', google_workspace_domain: '',
   });
-  const [zabbixToken, setZabbixToken] = useState('');
+  const [zabbixToken,  setZabbixToken]  = useState('');
+  const [youtubeApiKey, setYoutubeApiKey] = useState('');
   const [saved, setSaved] = useState('');
 
   useEffect(() => {
@@ -126,6 +127,7 @@ export default function SettingsPage() {
         google_workspace_domain: appSettings.google_workspace_domain || '',
       }));
       setZabbixToken(appSettings.zabbix_metrics_token || '');
+      setYoutubeApiKey(appSettings.youtube_api_key    || '');
     }
   }, [appSettings]);
 
@@ -221,6 +223,50 @@ export default function SettingsPage() {
                 {saveGoogle.isPending ? 'Saving…' : 'Save Google Settings'}
               </button>
               {saved === 'google' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+            </div>
+          </>
+        )}
+      </Section>
+
+      {/* YouTube Data API */}
+      <Section title="YouTube Data API">
+        <p className="text-xs text-slate-500 mb-4">
+          Required for per-category and per-video YouTube filtering in policy rules.
+          The API key is stored server-side and never sent to student devices.
+          Video category lookups are cached 24 hours in Redis — 10,000 free quota units/day
+          covers a large school with heavy YouTube use.
+        </p>
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 mb-4">
+          <strong>Setup:</strong>{' '}
+          <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer"
+            className="underline">Google Cloud Console</a>
+          {' '}→ APIs &amp; Services → Library → search <em>YouTube Data API v3</em> → Enable →
+          Credentials → Create API Key. Restrict the key to YouTube Data API v3 only.
+        </div>
+        {appLoading ? <div className="text-slate-400 text-sm">Loading…</div> : (
+          <>
+            <Field label="YouTube Data API Key" hint="Restricted to YouTube Data API v3 — never exposed to students">
+              <input
+                type="password"
+                className="input text-sm font-mono"
+                value={youtubeApiKey}
+                onChange={e => setYoutubeApiKey(e.target.value)}
+                placeholder="AIzaSy…"
+              />
+            </Field>
+            <div className="flex items-center gap-3 pt-4">
+              <button
+                className="btn-primary"
+                onClick={() => {
+                  api.put('/settings', { youtube_api_key: youtubeApiKey }).then(() => {
+                    setSaved('youtube');
+                    setTimeout(() => setSaved(''), 2500);
+                  });
+                }}
+              >
+                Save API Key
+              </button>
+              {saved === 'youtube' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
             </div>
           </>
         )}

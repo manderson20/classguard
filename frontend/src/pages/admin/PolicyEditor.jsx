@@ -628,6 +628,177 @@ function YouTubeTab({ policy, policyId }) {
         </button>
         {saved && <span className="text-green-600 text-sm font-medium">✓ Saved</span>}
       </div>
+
+      {/* Individual video rules */}
+      <VideoRulesPanel policy={policy} policyId={policyId} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Individual YouTube video allow/block rules
+// ---------------------------------------------------------------------------
+function VideoRulesPanel({ policy, policyId }) {
+  const qc = useQueryClient();
+  const [input,      setInput]      = useState('');
+  const [addAction,  setAddAction]  = useState('block');
+  const [lookupData, setLookupData] = useState(null);
+  const [looking,    setLooking]    = useState(false);
+  const [lookupErr,  setLookupErr]  = useState('');
+
+  const rules = policy.youtubeVideoRules || [];
+
+  function extractVideoId(raw) {
+    const s = raw.trim();
+    // Full URL: youtube.com/watch?v=ID  or  youtu.be/ID
+    try {
+      const url = new URL(s.startsWith('http') ? s : `https://${s}`);
+      if (url.hostname.includes('youtube.com')) return url.searchParams.get('v') || null;
+      if (url.hostname === 'youtu.be') return url.pathname.slice(1).split('?')[0] || null;
+    } catch {}
+    // Bare video ID (11 chars, alphanumeric + _ -)
+    if (/^[A-Za-z0-9_-]{11}$/.test(s)) return s;
+    return null;
+  }
+
+  const handleLookup = async () => {
+    const vid = extractVideoId(input);
+    if (!vid) { setLookupErr('Paste a YouTube URL or 11-character video ID'); return; }
+    setLookupErr(''); setLooking(true); setLookupData(null);
+    try {
+      const data = await api.get(`/youtube/video-info?id=${vid}`);
+      const video = Array.isArray(data) ? data[0] : data;
+      if (!video || video.error) { setLookupErr(video?.error || 'Video not found'); return; }
+      setLookupData(video);
+    } catch (e) {
+      setLookupErr(e.message || 'Lookup failed — check YouTube API key in Settings');
+    } finally {
+      setLooking(false);
+    }
+  };
+
+  const addRule = useMutation({
+    mutationFn: video => api.post(`/policies/${policyId}/youtube-videos`, {
+      video_id:      video.id,
+      action:        addAction,
+      title:         video.title,
+      channel_title: video.channelTitle,
+      thumbnail_url: video.thumbnailUrl,
+      category_id:   video.categoryId,
+      category_name: video.categoryName,
+    }),
+    onSuccess: () => {
+      setInput(''); setLookupData(null); setLookupErr('');
+      qc.invalidateQueries(['policy', policyId]);
+    },
+    onError: e => setLookupErr(e.message),
+  });
+
+  const removeRule = useMutation({
+    mutationFn: videoId => api.delete(`/policies/${policyId}/youtube-videos/${videoId}`),
+    onSuccess:  () => qc.invalidateQueries(['policy', policyId]),
+  });
+
+  return (
+    <div className="space-y-4 pt-2">
+      <div className="border-t border-slate-200 pt-6">
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">Individual Video Rules</h3>
+        <p className="text-xs text-slate-500 mb-4">
+          Explicitly allow or block specific videos by URL or ID. These rules take priority over category settings.
+          Video title and category are fetched from YouTube's API and cached for 24 hours.
+        </p>
+
+        {/* Search / lookup */}
+        <div className="flex gap-2 mb-3">
+          <select className={SELECT + ' w-24'} value={addAction} onChange={e => setAddAction(e.target.value)}>
+            <option value="block">Block</option>
+            <option value="allow">Allow</option>
+          </select>
+          <input className={INPUT} placeholder="Paste YouTube URL or video ID"
+            value={input} onChange={e => { setInput(e.target.value); setLookupData(null); setLookupErr(''); }}
+            onKeyDown={e => e.key === 'Enter' && handleLookup()} />
+          <button className={BTN_S + ' whitespace-nowrap'} onClick={handleLookup}
+            disabled={looking || !input.trim()}>
+            {looking ? 'Looking up…' : 'Look Up'}
+          </button>
+        </div>
+
+        {lookupErr && <p className="text-red-600 text-sm mb-3">{lookupErr}</p>}
+
+        {/* Video preview card */}
+        {lookupData && (
+          <div className="flex items-center gap-3 p-3 border border-slate-200 rounded-xl bg-slate-50 mb-3">
+            {lookupData.thumbnailUrl && (
+              <img src={lookupData.thumbnailUrl} alt="" className="w-20 h-14 object-cover rounded flex-shrink-0" />
+            )}
+            <div className="flex-1 min-w-0">
+              <div className="font-medium text-sm text-slate-800 truncate">{lookupData.title}</div>
+              <div className="text-xs text-slate-500 mt-0.5">{lookupData.channelTitle}</div>
+              {lookupData.categoryName && (
+                <span className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded mt-1 inline-block">
+                  {lookupData.categoryName}
+                </span>
+              )}
+            </div>
+            <button className={addAction === 'block' ? BTN_D : BTN_P}
+              onClick={() => addRule.mutate(lookupData)}
+              disabled={addRule.isPending}>
+              {addAction === 'block' ? '🚫 Block' : '✅ Allow'} this video
+            </button>
+          </div>
+        )}
+
+        {/* Current rules */}
+        {rules.length > 0 ? (
+          <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+                <tr>
+                  <th className="px-3 py-2 text-left w-8"></th>
+                  <th className="px-3 py-2 text-left">Video</th>
+                  <th className="px-3 py-2 text-left">Category</th>
+                  <th className="px-3 py-2 text-left">Rule</th>
+                  <th className="px-3 py-2"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {rules.map(r => (
+                  <tr key={r.video_id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2">
+                      {r.thumbnail_url
+                        ? <img src={r.thumbnail_url} alt="" className="w-12 h-9 object-cover rounded" />
+                        : <div className="w-12 h-9 bg-slate-200 rounded flex items-center justify-center text-slate-400 text-xs">YT</div>
+                      }
+                    </td>
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-slate-800 text-xs truncate max-w-xs">
+                        {r.title || r.video_id}
+                      </div>
+                      <div className="text-xs text-slate-400">{r.channel_title}</div>
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{r.category_name || '—'}</td>
+                    <td className="px-3 py-2">
+                      <span className={`text-xs px-2 py-0.5 rounded font-semibold ${
+                        r.action === 'block' ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'
+                      }`}>
+                        {r.action}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-right">
+                      <button onClick={() => removeRule.mutate(r.video_id)}
+                        className="text-xs text-red-500 hover:underline">Remove</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="text-center py-6 text-slate-400 text-sm border border-dashed border-slate-200 rounded-xl">
+            No individual video rules yet. Look up a video above to add one.
+          </div>
+        )}
+      </div>
     </div>
   );
 }

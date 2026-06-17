@@ -305,6 +305,22 @@ async function handleMessage(msg, sender) {
       return { keywords: data[KEYWORDS_CACHE_KEY] || [] };
     }
 
+    // YouTube filter content script requesting video category
+    // Proxied through service worker so the JWT stays in the background context
+    case 'CG_YT_GET_CATEGORY': {
+      const { videoId } = msg;
+      if (!videoId) return { categoryId: null };
+      const jwt = await getStoredJWT();
+      if (!jwt) return { categoryId: null };
+      try {
+        const data = await apiFetch(`/youtube/video-info?id=${encodeURIComponent(videoId)}`, { jwt });
+        const video = Array.isArray(data) ? data[0] : data;
+        return { categoryId: video?.categoryId ?? null };
+      } catch {
+        return { categoryId: null };
+      }
+    }
+
     default:
       return { error: 'Unknown message type' };
   }

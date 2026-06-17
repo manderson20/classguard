@@ -13,7 +13,20 @@ router.get('/me/effective-policy', authenticate, async (req, res) => {
     return res.status(400).json({ error: 'Effective policy only applies to students' });
   }
   const policy = await resolvePolicy(req.user.userId);
-  res.json(policy);
+
+  // Append YouTube video rules — not cached in policyResolver to keep cache small
+  let youtubeAllowVideos = [];
+  let youtubeBlockVideos = [];
+  if (policy?.id) {
+    const { rows } = await query(
+      'SELECT video_id, action FROM youtube_video_rules WHERE policy_id = $1',
+      [policy.id]
+    ).catch(() => ({ rows: [] }));
+    youtubeAllowVideos = rows.filter(r => r.action === 'allow').map(r => r.video_id);
+    youtubeBlockVideos = rows.filter(r => r.action === 'block').map(r => r.video_id);
+  }
+
+  res.json({ ...policy, youtubeAllowVideos, youtubeBlockVideos });
 });
 
 // GET /api/v1/users

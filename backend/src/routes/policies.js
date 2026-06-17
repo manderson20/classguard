@@ -129,7 +129,7 @@ router.get('/:id', async (req, res) => {
   const { rows: [policy] } = await query('SELECT * FROM policies WHERE id = $1', [req.params.id]);
   if (!policy) return res.status(404).json({ error: 'Policy not found' });
 
-  const [domainRules, blocklists, categoryRules, assignments] = await Promise.all([
+  const [domainRules, blocklists, categoryRules, assignments, youtubeVideoRules] = await Promise.all([
     query('SELECT * FROM policy_domain_rules WHERE policy_id = $1 ORDER BY rule_type, domain', [req.params.id]),
     query(
       `SELECT pbl.source_id, bs.name, bs.url, bs.domain_count
@@ -163,14 +163,19 @@ router.get('/:id', async (req, res) => {
        ORDER BY pa.target_type, target_name`,
       [req.params.id]
     ),
+    query(
+      `SELECT * FROM youtube_video_rules WHERE policy_id = $1 ORDER BY added_at DESC`,
+      [req.params.id]
+    ),
   ]);
 
   res.json({
     ...policy,
-    domainRules:   domainRules.rows,
-    blocklists:    blocklists.rows,
-    categoryRules: categoryRules.rows,
-    assignments:   assignments.rows,
+    domainRules:      domainRules.rows,
+    blocklists:       blocklists.rows,
+    categoryRules:    categoryRules.rows,
+    assignments:      assignments.rows,
+    youtubeVideoRules: youtubeVideoRules.rows,
   });
 });
 
@@ -395,6 +400,44 @@ router.delete('/:id/blocklists/:sourceId', async (req, res) => {
     [req.params.id, req.params.sourceId]
   );
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// YouTube video rules
+// ---------------------------------------------------------------------------
+
+// POST /api/v1/policies/:id/youtube-videos
+router.post('/:id/youtube-videos', async (req, res) => {
+  const { video_id, action, title, channel_title, thumbnail_url, category_id, category_name } = req.body;
+  if (!video_id) return res.status(400).json({ error: 'video_id required' });
+  if (!['allow', 'block'].includes(action)) return res.status(400).json({ error: 'action must be allow or block' });
+
+  const clean = video_id.trim();
+  const { rows: [rule] } = await query(
+    `INSERT INTO youtube_video_rules
+       (policy_id, video_id, action, title, channel_title, thumbnail_url, category_id, category_name, added_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+     ON CONFLICT (policy_id, video_id) DO UPDATE
+       SET action=EXCLUDED.action, title=EXCLUDED.title, channel_title=EXCLUDED.channel_title,
+           thumbnail_url=EXCLUDED.thumbnail_url, category_id=EXCLUDED.category_id,
+           category_name=EXCLUDED.category_name
+     RETURNING *`,
+    [req.params.id, clean, action, title||null, channel_title||null, thumbnail_url||null,
+     category_id||null, category_name||null, req.user?.id||null]
+  );
+  await bustPolicyCache(req.params.id);
+  res.status(201).json(rule);
+});
+
+// DELETE /api/v1/policies/:id/youtube-videos/:videoId
+router.delete('/:id/youtube-videos/:videoId', async (req, res) => {
+  const { rows: [rule] } = await query(
+    'DELETE FROM youtube_video_rules WHERE policy_id=$1 AND video_id=$2 RETURNING *',
+    [req.params.id, req.params.videoId]
+  );
+  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  await bustPolicyCache(req.params.id);
+  res.json({ deleted: rule });
 });
 
 // ---------------------------------------------------------------------------

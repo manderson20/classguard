@@ -18,8 +18,9 @@ const ALL_RESOURCE_TYPES = [
 const PAGE_TYPES    = ['main_frame'];
 const SUB_TYPES     = ALL_RESOURCE_TYPES.filter(t => t !== 'main_frame');
 
-const BLOCK_ALL_MAIN = 1;
-const BLOCK_ALL_SUB  = 2;
+const BLOCK_ALL_MAIN   = 1;
+const BLOCK_ALL_SUB    = 2;
+const YT_RESTRICT_RULE = 3000;   // YouTube-Restrict header injection
 
 // Build a redirect rule for main_frame to the blocked page
 function redirectRule(id, condition, reason) {
@@ -117,6 +118,30 @@ function buildRules(policy) {
     if (resolvedAllowDomains.length > 0) {
       rules.push(allowRule(2000, resolvedAllowDomains));
     }
+  }
+
+  // YouTube Restricted Mode — injects YouTube-Restrict header on all youtube.com requests.
+  // Works at the network layer for all resource types, including iframes and embeds.
+  // The youtube_categories content script handles per-category and per-video blocking on top.
+  const ytRestricted = policy?.youtube_restricted || 'off';
+  if (ytRestricted !== 'off') {
+    const value = ytRestricted === 'strict' ? 'Strict' : 'Moderate';
+    rules.push({
+      id:       YT_RESTRICT_RULE,
+      priority: 1,
+      action: {
+        type: 'modifyHeaders',
+        requestHeaders: [{
+          header:    'YouTube-Restrict',
+          operation: 'set',
+          value,
+        }],
+      },
+      condition: {
+        urlFilter:     'youtube.com',
+        resourceTypes: ALL_RESOURCE_TYPES,
+      },
+    });
   }
 
   return rules;

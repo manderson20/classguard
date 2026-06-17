@@ -34,7 +34,7 @@ const CONFIGS = {
     cls:     'policy',
     badge:   'Blocked by Policy',
     heading: 'This Site Is Blocked',
-    message: 'This website is blocked by your school's internet safety policy.',
+    message: "This website is blocked by your school's internet safety policy.",
   },
 };
 

@@ -22,6 +22,8 @@ const ALLOWED_KEYS = new Set([
   'ldap_url', 'ldap_bind_dn', 'ldap_bind_password', 'ldap_base_dn', 'ldap_user_filter',
   // AI classification
   'ai_provider', 'ai_api_key', 'ai_model', 'ai_base_url',
+  // YouTube Data API
+  'youtube_api_key',
   // Zabbix
   'zabbix_metrics_token',
   // Roster sync
