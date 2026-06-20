@@ -77,8 +77,13 @@ Thumbs.db
 .pm2/
 
 # ============================================================
-# Docker
+# Docker — dev-only override (node --watch, live source mounts). Never
+# tracked: Compose auto-applies this filename with zero opt-in, so if it
+# were committed, every fresh clone (including a real production server)
+# would silently run in dev mode instead of the built image. Keep your own
+# copy locally, untracked.
 # ============================================================
+docker-compose.override.yml
 docker-compose.override.yml.local
 
 # ============================================================
