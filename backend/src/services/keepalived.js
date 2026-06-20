@@ -118,21 +118,20 @@ ${trackScript}
 `;
 }
 
-function generateNotifyScript(apiUrl) {
+function generateNotifyScript() {
   return `#!/bin/bash
 # /etc/keepalived/notify.sh
-# Notifies ClassGuard API when this node's VRRP role changes.
+# Notifies ClassGuard API when this node's VRRP role changes. Always talks
+# to THIS node's own API on localhost — it knows its own node_id and has
+# the correct (replicated) credentials to relay on to the primary if this
+# node isn't the primary itself. See ha.js's /vrrp-local.
 STATE=$1
-API="${apiUrl || 'http://localhost:3001'}"
-TOKEN=$(grep '^INTERNAL_SECRET=' /opt/classguard/.env 2>/dev/null | cut -d= -f2-)
-NODE_ID=$(grep '^NODE_ID=' /opt/classguard/.env 2>/dev/null | cut -d= -f2-)
 
-curl -sf -X POST "$API/api/v1/ha/vrrp-notify" \\
+curl -sf -X POST "http://localhost:3001/api/v1/ha/vrrp-local" \\
   -H "Content-Type: application/json" \\
-  -H "X-Internal-Secret: $TOKEN" \\
-  -d "{\\"state\\":\\"$STATE\\",\\"node_id\\":\\"$NODE_ID\\"}" || true
+  -d "{\\"state\\":\\"$STATE\\"}" || true
 
-logger "ClassGuard VRRP state changed to $STATE on node $NODE_ID"
+logger "ClassGuard VRRP state changed to $STATE"
 `;
 }
 
@@ -424,7 +423,7 @@ async function buildConfigBundle() {
     'eap':              generateEapMod(),
     'keepalived-primary.conf':   generateKeepalived(cfg, true),
     'keepalived-secondary.conf': generateKeepalived(cfg, false),
-    'notify.sh':        generateNotifyScript(apiUrl),
+    'notify.sh':        generateNotifyScript(),
     'install-freeradius.sh':     generateInstallScript(apiUrl),
   };
 }
@@ -437,7 +436,7 @@ async function buildVrrpOnlyBundle() {
   return {
     'keepalived-primary.conf':   generateKeepalived(cfg, true),
     'keepalived-secondary.conf': generateKeepalived(cfg, false),
-    'notify.sh':                 generateNotifyScript(apiUrl),
+    'notify.sh':                 generateNotifyScript(),
   };
 }
 

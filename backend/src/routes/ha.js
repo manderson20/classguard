@@ -396,6 +396,45 @@ router.post('/vrrp-notify', authenticate, requireMinRole('superadmin'), async (r
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/v1/ha/vrrp-local — called by THIS node's own notify.sh, no
+// internal-secret needed (bound to 127.0.0.1 only, same as the health check
+// keepalived already uses). Exists because notify.sh has no way to read the
+// *primary's* INTERNAL_SECRET — every node generates its own independently
+// at install time, so a standby's notify.sh sending its own secret directly
+// to /vrrp-notify would just get rejected. This node's own API already has
+// the correct (replicated) secret on hand, same pattern as DNS log
+// forwarding — so do the relay here instead of in the shell script.
+// ---------------------------------------------------------------------------
+router.post('/vrrp-local', async (req, res) => {
+  const { state } = req.body;
+  if (!state) return res.status(400).json({ error: 'state is required' });
+
+  const nodeId = config.node.id;
+  try {
+    if (config.node.role === 'primary') {
+      await pool.query(`UPDATE nodes SET vrrp_state = $1, last_seen = NOW() WHERE node_id = $2`, [state, nodeId]);
+      return res.json({ updated: true });
+    }
+
+    const { rows: [primary] } = await pool.query(
+      `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+    );
+    const { rows: [secretRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
+    if (!primary?.api_url || !secretRow?.value) {
+      return res.status(503).json({ error: 'primary/secret not found in replicated data yet' });
+    }
+
+    await axios.post(`${primary.api_url}/api/v1/ha/vrrp-notify`, { state, node_id: nodeId }, {
+      headers: { 'x-internal-secret': secretRow.value },
+      timeout: 5000,
+    });
+    res.json({ forwarded: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/ha/summary
 // ---------------------------------------------------------------------------
 router.get('/summary', ...auth, async (req, res) => {
