@@ -57,14 +57,24 @@ async function resolveQuery(name, typeNum, sourceIp) {
   }
 
   // --- 3. Policy load -----------------------------------------------------
-  // If no device registration (iPad, BYOD, guest), check subnet policy first.
-  // Subnet policies are set in ClassGuard for specific VLANs/subnets.
+  // DNS-level filtering is now a single network-wide floor, enforced for
+  // EVERY query regardless of identity — the per-student/OU policy chain is
+  // extension-only (it can only add restrictions on top of the floor, never
+  // remove from it; the extension also has URL-path granularity DNS can't).
+  // The one identity-aware exception is mode: an active lesson session or
+  // penalty box is a deliberate, temporal full-network override and still
+  // needs to be enforced here, not just at the extension.
   let policy;
   if (studentId) {
-    policy = await policyCache.getPolicy(studentId).catch(() => null);
+    const ouPolicy = await policyCache.getPolicy(studentId, sourceIp).catch(() => null);
+    if (ouPolicy?.mode === 'lesson' || ouPolicy?.mode === 'penalty_box') {
+      policy = ouPolicy;
+    } else {
+      policy = await policyCache.getNetworkPolicy().catch(() => null);
+    }
   } else {
     const subnetPolicy = await policyCache.getSubnetPolicy(sourceIp).catch(() => null);
-    policy = subnetPolicy || await policyCache.getPolicy(null).catch(() => null);
+    policy = subnetPolicy || await policyCache.getNetworkPolicy().catch(() => null);
   }
   const mode   = policy?.mode || 'standard';
 

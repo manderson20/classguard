@@ -6,11 +6,13 @@ const POLICY_TTL         = 60;   // seconds
 const DEVICE_TTL         = 300;
 const ALLOWLIST_TTL      = 300;
 const SUBNET_POLICY_TTL  = 60;
+const NETWORK_POLICY_TTL = 60;
 const ALLOWLIST_KEY      = 'classguard:global-allowlist';
 const SUBNET_POLICIES_KEY = 'classguard:dns:subnet-policies';
+const NETWORK_POLICY_KEY  = 'classguard:dns:network-policy';
 const DEFAULT_POLICY = { mode: 'standard', resolvedAllowDomains: [], resolvedDenyDomains: [], activeBloclistIds: [], blockedCategories: [], allowedCategories: [] };
 
-function policyKey(studentId) { return `student:policy:${studentId}`; }
+function policyKey(studentId, location) { return `student:policy:${studentId}:${location}`; }
 function deviceKey(ip)        { return `device:${ip}`; }
 
 /**
@@ -49,14 +51,20 @@ async function setDevice(ip, studentId, deviceId = null) {
 }
 
 /**
- * Load the effective policy for a student.
+ * Load the effective policy for a student, location-aware: on-campus vs
+ * off-campus is classified from sourceIp against documented school subnets,
+ * so a student's OU/group/student-level assignment can differ by location
+ * (e.g. a more restrictive policy while physically at school).
  * Tries Redis cache first; falls back to the backend API.
  * Returns the default pass-through policy if the student is unknown.
  */
-async function getPolicy(studentId) {
+async function getPolicy(studentId, sourceIp) {
   if (!studentId) return DEFAULT_POLICY;
 
-  const raw = await redis.get(policyKey(studentId));
+  const location = await resolveLocation(sourceIp);
+  const key = policyKey(studentId, location);
+
+  const raw = await redis.get(key);
   if (raw) {
     try { return JSON.parse(raw); } catch {}
   }
@@ -66,11 +74,12 @@ async function getPolicy(studentId) {
     const { data } = await axios.get(
       `${config.backend.url}/api/v1/users/${studentId}/effective-policy`,
       {
+        params:  { location },
         headers: { 'x-internal-secret': config.backend.internalSecret },
         timeout: 2000,
       }
     );
-    await redis.set(policyKey(studentId), JSON.stringify(data), 'EX', POLICY_TTL);
+    await redis.set(key, JSON.stringify(data), 'EX', POLICY_TTL);
     return data;
   } catch {
     // Backend unreachable — default to standard (don't block everything)
@@ -79,10 +88,11 @@ async function getPolicy(studentId) {
 }
 
 /**
- * Invalidate a student's policy cache (called when policy changes).
+ * Invalidate a student's policy cache (called when policy changes) — clears
+ * both location variants since we don't know which one is currently cached.
  */
 async function invalidatePolicy(studentId) {
-  await redis.del(policyKey(studentId));
+  await redis.del(policyKey(studentId, 'on_campus'), policyKey(studentId, 'off_campus'), policyKey(studentId, 'any'));
 }
 
 /**
@@ -170,6 +180,40 @@ function ipInSubnet(ip, cidr) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// On-campus vs off-campus classification — used to pick the right
+// location-specific policy assignment for an identified student.
+// ---------------------------------------------------------------------------
+const ONCAMPUS_SUBNETS_KEY = 'classguard:dns:oncampus-subnets';
+const ONCAMPUS_SUBNETS_TTL = 300; // 5 minutes
+
+async function getOnCampusSubnets() {
+  const raw = await redis.get(ONCAMPUS_SUBNETS_KEY).catch(() => null);
+  if (raw) {
+    try { return JSON.parse(raw); } catch {}
+  }
+  try {
+    const { data } = await axios.get(
+      `${config.backend.url}/api/v1/policies/oncampus-subnets`,
+      {
+        headers: { 'x-internal-secret': config.backend.internalSecret },
+        timeout: 2000,
+      }
+    );
+    const subnets = Array.isArray(data) ? data : [];
+    await redis.set(ONCAMPUS_SUBNETS_KEY, JSON.stringify(subnets), 'EX', ONCAMPUS_SUBNETS_TTL);
+    return subnets;
+  } catch {
+    return [];
+  }
+}
+
+async function resolveLocation(ip) {
+  if (!ip) return 'any';
+  const subnets = await getOnCampusSubnets();
+  return subnets.some(cidr => ipInSubnet(ip, cidr)) ? 'on_campus' : 'off_campus';
+}
+
 async function getSubnetPolicy(ip) {
   let assignments;
   const raw = await redis.get(SUBNET_POLICIES_KEY).catch(() => null);
@@ -212,6 +256,31 @@ async function invalidateSubnetPolicies() {
 }
 
 // ---------------------------------------------------------------------------
+// Network-wide DNS floor — one policy enforced for EVERY query regardless of
+// identity. The per-student/OU chain (getPolicy above) is extension-only now;
+// DNS only ever applies this floor (plus lesson/penalty_box mode overrides).
+// ---------------------------------------------------------------------------
+async function getNetworkPolicy() {
+  const raw = await redis.get(NETWORK_POLICY_KEY).catch(() => null);
+  if (raw) {
+    try { return JSON.parse(raw); } catch {}
+  }
+  try {
+    const { data } = await axios.get(
+      `${config.backend.url}/api/v1/policies/network-policy`,
+      {
+        headers: { 'x-internal-secret': config.backend.internalSecret },
+        timeout: 2000,
+      }
+    );
+    await redis.set(NETWORK_POLICY_KEY, JSON.stringify(data), 'EX', NETWORK_POLICY_TTL);
+    return data;
+  } catch {
+    return DEFAULT_POLICY;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Override code check — set by the backend when a valid override code is used.
 // Key: classguard:override:{ip}:{domain}, TTL = remaining code validity.
 // ---------------------------------------------------------------------------
@@ -227,5 +296,7 @@ module.exports = {
   getGlobalAllowlist, invalidateGlobalAllowlist,
   getForwardZones,
   getSubnetPolicy, invalidateSubnetPolicies,
+  getNetworkPolicy,
   getOverrideForIp,
+  resolveLocation,
 };

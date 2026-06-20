@@ -18,6 +18,15 @@ google-service-account.json
 *.pem
 *.key
 *.p12
+
+# ============================================================
+# Real production infrastructure data — repo is public, never commit
+# ============================================================
+imageref/features/phpipam_MySQL_dump_2026-06-19.sql
+imageref/features/brookfieldr3.org zone.txt
+imageref/features/Phone System.xlsx
+imageref/features/DHCP/
+imageref/features/2025-2026 Phone Directory.docx
 *.pfx
 
 # ============================================================

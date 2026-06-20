@@ -7,12 +7,14 @@ const POLICY_TTL = 60; // seconds
 // Cache helpers
 // ---------------------------------------------------------------------------
 
-function policyKey(studentId) {
-  return `student:policy:${studentId}`;
+function policyKey(studentId, location) {
+  return `student:policy:${studentId}:${location}`;
 }
 
+const LOCATIONS = ['any', 'on_campus', 'off_campus'];
+
 async function invalidatePolicy(studentId) {
-  await redis.del(policyKey(studentId));
+  await redis.del(...LOCATIONS.map(l => policyKey(studentId, l)));
 }
 
 async function invalidatePoliciesForClass(classId) {
@@ -23,7 +25,7 @@ async function invalidatePoliciesForClass(classId) {
   if (rows.length === 0) return [];
   const pipeline = redis.pipeline();
   for (const { student_id } of rows) {
-    pipeline.del(policyKey(student_id));
+    for (const l of LOCATIONS) pipeline.del(policyKey(student_id, l));
   }
   await pipeline.exec();
   return rows.map(r => r.student_id);
@@ -31,13 +33,19 @@ async function invalidatePoliciesForClass(classId) {
 
 // ---------------------------------------------------------------------------
 // Core resolver — full precedence chain
+// location: 'on_campus' | 'off_campus' | 'any' (default) — determined by the
+// caller from the student's current source IP. A location-specific
+// assignment at a given precedence level (student/group/OU) wins over an
+// 'any' assignment at that same level; 'any' is the fallback when no
+// location-specific assignment exists for that target.
 // ---------------------------------------------------------------------------
 
-async function resolvePolicy(studentId) {
+async function resolvePolicy(studentId, location = 'any') {
+  if (!LOCATIONS.includes(location)) location = 'any';
   if (!studentId) return await defaultPassthrough();
 
   // --- Cache hit ---
-  const cached = await redis.get(policyKey(studentId));
+  const cached = await redis.get(policyKey(studentId, location));
   if (cached) {
     try { return JSON.parse(cached); } catch {}
   }
@@ -77,19 +85,22 @@ async function resolvePolicy(studentId) {
     if (pbRows[0]) mode = 'penalty_box';
   }
 
-  // 3. Student-level policy assignment
+  // 3. Student-level policy assignment — a location-specific assignment
+  // beats an 'any' assignment for the same student.
   const { rows: studentRows } = await query(
     `SELECT p.* FROM policies p
      JOIN policy_assignments pa ON pa.policy_id = p.id
      WHERE pa.target_type = 'student'
        AND pa.target_id   = $1
-     ORDER BY pa.priority DESC
+       AND pa.location IN ($2, 'any')
+     ORDER BY (pa.location = $2) DESC, pa.priority DESC
      LIMIT 1`,
-    [studentId]
+    [studentId, location]
   );
   if (studentRows[0]) policy = studentRows[0];
 
-  // 4. Group-level policy (highest-priority group wins)
+  // 4. Group-level policy (highest-priority group wins; location-specific
+  // beats 'any' within the same group)
   if (!policy) {
     const { rows: groupRows } = await query(
       `SELECT p.*, pa.priority FROM policies p
@@ -97,14 +108,16 @@ async function resolvePolicy(studentId) {
        JOIN group_members gm     ON gm.group_id   = pa.target_id
        WHERE pa.target_type = 'group'
          AND gm.user_id     = $1
-       ORDER BY pa.priority DESC
+         AND pa.location IN ($2, 'any')
+       ORDER BY (pa.location = $2) DESC, pa.priority DESC
        LIMIT 1`,
-      [studentId]
+      [studentId, location]
     );
     if (groupRows[0]) policy = groupRows[0];
   }
 
-  // 5. OU-level policy (most-specific OU prefix wins)
+  // 5. OU-level policy (most-specific OU prefix wins first; among
+  // assignments at that same OU, location-specific beats 'any')
   if (!policy) {
     const { rows: userRows } = await query(
       'SELECT google_ou FROM users WHERE id = $1',
@@ -117,9 +130,10 @@ async function resolvePolicy(studentId) {
          JOIN policy_assignments pa ON pa.policy_id = p.id
          WHERE pa.target_type = 'ou'
            AND $1 LIKE pa.target_ou || '%'
-         ORDER BY LENGTH(pa.target_ou) DESC
+           AND pa.location IN ($2, 'any')
+         ORDER BY LENGTH(pa.target_ou) DESC, (pa.location = $2) DESC
          LIMIT 1`,
-        [ou]
+        [ou, location]
       );
       if (ouRows[0]) policy = ouRows[0];
     }
@@ -139,7 +153,24 @@ async function resolvePolicy(studentId) {
     }
   }
 
-  // --- Build resolved domain lists from base policy ---
+  const result = await buildResolvedPolicy(policy, mode, resolvedAllowDomains, resolvedDenyDomains);
+
+  // Cache the resolved policy
+  await redis.set(policyKey(studentId, location), JSON.stringify(result), 'EX', POLICY_TTL);
+
+  return result;
+}
+
+// ---------------------------------------------------------------------------
+// Shared resolution builder — turns a base `policies` row into the full
+// resolved shape (domain rules, blocklists, category rules merged with the
+// district-wide always-blocked defaults). Used by both the per-student OU
+// chain above and the network-wide DNS floor below.
+// ---------------------------------------------------------------------------
+async function buildResolvedPolicy(policy, mode = null, baseAllowDomains = [], baseDenyDomains = []) {
+  let resolvedAllowDomains = [...baseAllowDomains];
+  let resolvedDenyDomains  = [...baseDenyDomains];
+
   if (policy) {
     const { rows: ruleRows } = await query(
       'SELECT domain, rule_type FROM policy_domain_rules WHERE policy_id = $1',
@@ -149,7 +180,10 @@ async function resolvePolicy(studentId) {
       ...resolvedAllowDomains,
       ...ruleRows.filter(r => r.rule_type === 'allow').map(r => r.domain),
     ];
-    resolvedDenyDomains = ruleRows.filter(r => r.rule_type === 'deny').map(r => r.domain);
+    resolvedDenyDomains = [
+      ...resolvedDenyDomains,
+      ...ruleRows.filter(r => r.rule_type === 'deny').map(r => r.domain),
+    ];
   }
 
   // --- Active blocklist IDs for this policy ---
@@ -189,20 +223,26 @@ async function resolvePolicy(studentId) {
     ...new Set([...defaultBlockedSlugs, ...policyBlockedCategories]),
   ].filter(s => !allowedCategories.includes(s));
 
-  const result = {
+  // URL-path rules — extension-only, DNS never sees a path so it ignores this.
+  let resolvedUrlRules = [];
+  if (policy) {
+    const { rows } = await query(
+      'SELECT pattern, rule_type FROM policy_url_rules WHERE policy_id = $1',
+      [policy.id]
+    );
+    resolvedUrlRules = rows;
+  }
+
+  return {
     ...(policy || {}),
     mode:                mode || policy?.mode || 'standard',
     resolvedAllowDomains,
     resolvedDenyDomains,
+    resolvedUrlRules,
     activeBloclistIds,
     blockedCategories,
     allowedCategories,
   };
-
-  // Cache the resolved policy
-  await redis.set(policyKey(studentId), JSON.stringify(result), 'EX', POLICY_TTL);
-
-  return result;
 }
 
 // Cached so unidentified-device DNS lookups don't hit Postgres on every query
@@ -213,20 +253,42 @@ async function defaultPassthrough() {
   const cached = await redis.get(DEFAULT_PASSTHROUGH_KEY).catch(() => null);
   if (cached) { try { return JSON.parse(cached); } catch {} }
 
-  const { rows } = await query(
-    `SELECT slug FROM website_categories WHERE is_blocked_default = true`
-  );
-  const result = {
-    mode:                 'standard',
-    resolvedAllowDomains: [],
-    resolvedDenyDomains:  [],
-    activeBloclistIds:    [],
-    blockedCategories:    rows.map(r => r.slug),
-    allowedCategories:    [],
-  };
+  const result = await buildResolvedPolicy(null);
   await redis.set(DEFAULT_PASSTHROUGH_KEY, JSON.stringify(result), 'EX', DEFAULT_PASSTHROUGH_TTL)
     .catch(() => {});
   return result;
 }
 
-module.exports = { resolvePolicy, invalidatePolicy, invalidatePoliciesForClass };
+// ---------------------------------------------------------------------------
+// Network-wide DNS floor — a single policy enforced for EVERY DNS query
+// regardless of identity (students, staff, unidentified devices alike).
+// Selected via the dns_network_policy_id setting; falls back to the bare
+// default-blocked-categories passthrough if none is configured. This is
+// deliberately NOT student/OU-aware — that finer per-OU layer is the
+// extension's job (it can only add restrictions on top, never remove
+// anything the floor blocks).
+// ---------------------------------------------------------------------------
+const NETWORK_POLICY_KEY = 'classguard:policy:network-floor';
+const NETWORK_POLICY_TTL = 60;
+
+async function resolveNetworkPolicy() {
+  const cached = await redis.get(NETWORK_POLICY_KEY).catch(() => null);
+  if (cached) { try { return JSON.parse(cached); } catch {} }
+
+  const { rows } = await query('SELECT * FROM policies WHERE is_network_policy = true LIMIT 1');
+  const policy = rows[0] || null;
+
+  const result = await buildResolvedPolicy(policy);
+  await redis.set(NETWORK_POLICY_KEY, JSON.stringify(result), 'EX', NETWORK_POLICY_TTL)
+    .catch(() => {});
+  return result;
+}
+
+async function invalidateNetworkPolicy() {
+  await redis.del(NETWORK_POLICY_KEY);
+}
+
+module.exports = {
+  resolvePolicy, invalidatePolicy, invalidatePoliciesForClass,
+  resolveNetworkPolicy, invalidateNetworkPolicy,
+};

@@ -1,8 +1,12 @@
 const { Router }     = require('express');
+const multer         = require('multer');
 const { query, withTransaction } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
-const { invalidatePolicy } = require('../services/policyResolver');
+const { invalidatePolicy, invalidateNetworkPolicy } = require('../services/policyResolver');
+const { parseCsv, classifyRows } = require('../services/goguardianImport');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const router = Router();
 router.use(authenticate, requireMinRole('admin'));
@@ -25,6 +29,11 @@ async function setDefaultPolicy(policyId) {
   await query('UPDATE policies SET is_default = true WHERE id = $1', [policyId]);
 }
 
+async function setNetworkPolicy(policyId) {
+  await query('UPDATE policies SET is_network_policy = false');
+  await query('UPDATE policies SET is_network_policy = true WHERE id = $1', [policyId]);
+}
+
 async function bustPolicyCache(policyId) {
   const { rows } = await query(
     `SELECT DISTINCT target_id FROM policy_assignments
@@ -32,6 +41,7 @@ async function bustPolicyCache(policyId) {
     [policyId]
   );
   await Promise.all(rows.map(r => invalidatePolicy(r.target_id)));
+  await invalidateNetworkPolicy();
 }
 
 // ---------------------------------------------------------------------------
@@ -56,6 +66,37 @@ router.get('/ou-list', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/policies/oncampus-subnets
+// Leaf IPAM subnets (no children) — used by the DNS engine to classify a
+// student's current source IP as on_campus vs off_campus for location-aware
+// policy assignments. Parent/organizational containers (10.0.0.0/8 etc.) are
+// excluded so a public/home IP that happens to fall in a broad RFC1918 range
+// never gets misclassified as on-campus.
+// ---------------------------------------------------------------------------
+router.get('/oncampus-subnets', async (req, res) => {
+  const { rows } = await query(
+    `SELECT s.subnet::text AS subnet
+     FROM ipam_subnets s
+     WHERE NOT EXISTS (SELECT 1 FROM ipam_subnets c WHERE c.parent_id = s.id)`
+  );
+  res.json(rows.map(r => r.subnet));
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/policies/network-policy
+// The single network-wide DNS floor policy (is_network_policy = true),
+// fully resolved — consumed by the DNS engine for EVERY query regardless of
+// identity. Falls back to the bare default-blocked-categories passthrough if
+// no policy has been designated as the network policy yet.
+// (must come before /:id)
+// ---------------------------------------------------------------------------
+router.get('/network-policy', async (req, res) => {
+  const { resolveNetworkPolicy } = require('../services/policyResolver');
+  const policy = await resolveNetworkPolicy();
+  res.json(policy);
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/policies/subnet-assignments
 // Full resolved policy per subnet — consumed by the DNS engine
 // (must come before /:id)
@@ -66,7 +107,7 @@ router.get('/subnet-assignments', async (req, res) => {
     `SELECT DISTINCT pa.target_subnet::text AS subnet, pa.policy_id
      FROM policy_assignments pa
      WHERE pa.target_type = 'subnet' AND pa.target_subnet IS NOT NULL
-     ORDER BY pa.target_subnet`
+     ORDER BY subnet`
   );
   const results = [];
   for (const row of rows) {
@@ -129,8 +170,9 @@ router.get('/:id', async (req, res) => {
   const { rows: [policy] } = await query('SELECT * FROM policies WHERE id = $1', [req.params.id]);
   if (!policy) return res.status(404).json({ error: 'Policy not found' });
 
-  const [domainRules, blocklists, categoryRules, assignments, youtubeVideoRules] = await Promise.all([
+  const [domainRules, urlRules, blocklists, categoryRules, assignments, youtubeVideoRules] = await Promise.all([
     query('SELECT * FROM policy_domain_rules WHERE policy_id = $1 ORDER BY rule_type, domain', [req.params.id]),
+    query('SELECT * FROM policy_url_rules WHERE policy_id = $1 ORDER BY rule_type, pattern', [req.params.id]),
     query(
       `SELECT pbl.source_id, bs.name, bs.url, bs.domain_count
        FROM policy_blocklists pbl
@@ -172,6 +214,7 @@ router.get('/:id', async (req, res) => {
   res.json({
     ...policy,
     domainRules:      domainRules.rows,
+    urlRules:         urlRules.rows,
     blocklists:       blocklists.rows,
     categoryRules:    categoryRules.rows,
     assignments:      assignments.rows,
@@ -240,6 +283,16 @@ router.patch('/:id', async (req, res) => {
         await query('UPDATE policies SET is_default = false WHERE id = $1', [req.params.id]);
         policy.is_default = false;
       }
+    }
+  }
+
+  if (typeof req.body.is_network_policy === 'boolean') {
+    if (req.body.is_network_policy) {
+      await setNetworkPolicy(req.params.id);
+      policy.is_network_policy = true;
+    } else {
+      await query('UPDATE policies SET is_network_policy = false WHERE id = $1', [req.params.id]);
+      policy.is_network_policy = false;
     }
   }
 
@@ -381,6 +434,98 @@ router.get('/:id/rules/export', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// URL-path rules — extension-only (DNS can't see a path, only a domain).
+// Stored ready-to-use as chrome.declarativeNetRequest urlFilter patterns.
+// ---------------------------------------------------------------------------
+
+router.get('/:id/url-rules', async (req, res) => {
+  const { rows } = await query(
+    'SELECT * FROM policy_url_rules WHERE policy_id = $1 ORDER BY rule_type, pattern',
+    [req.params.id]
+  );
+  res.json(rows);
+});
+
+router.post('/:id/url-rules', async (req, res) => {
+  const { pattern, rule_type } = req.body;
+  if (!pattern) return res.status(400).json({ error: 'pattern required' });
+  if (!['allow','deny'].includes(rule_type)) {
+    return res.status(400).json({ error: 'rule_type must be allow or deny' });
+  }
+  const clean = pattern.trim().toLowerCase();
+  const { rows: [rule] } = await query(
+    `INSERT INTO policy_url_rules (policy_id, pattern, rule_type, added_by)
+     VALUES ($1,$2,$3,$4)
+     ON CONFLICT (policy_id, pattern) DO UPDATE SET rule_type = EXCLUDED.rule_type
+     RETURNING *`,
+    [req.params.id, clean, rule_type, req.user?.id || null]
+  );
+  await bustPolicyCache(req.params.id);
+  res.status(201).json(rule);
+});
+
+router.delete('/:id/url-rules/:ruleId', async (req, res) => {
+  const { rows: [rule] } = await query(
+    'DELETE FROM policy_url_rules WHERE id = $1 AND policy_id = $2 RETURNING id',
+    [req.params.ruleId, req.params.id]
+  );
+  if (!rule) return res.status(404).json({ error: 'Rule not found' });
+  await bustPolicyCache(req.params.id);
+  res.json({ deleted: rule.id });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/policies/:id/import-goguardian
+// Upload a GoGuardian filter-policy CSV export ("action,url,blocks...").
+// Domain-only rows go to policy_domain_rules (DNS + extension); rows with a
+// URL path or an un-collapsible wildcard go to policy_url_rules (extension
+// only, since DNS never sees a path). preview=1 classifies without writing,
+// for the frontend's review-before-import step.
+// ---------------------------------------------------------------------------
+router.post('/:id/import-goguardian', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+  let rows;
+  try {
+    rows = parseCsv(req.file.buffer.toString('utf8'));
+  } catch (err) {
+    return res.status(400).json({ error: err.message });
+  }
+
+  const { domainRules, urlRules, skipped } = classifyRows(rows);
+
+  if (req.query.preview === '1') {
+    return res.json({
+      totalRows: rows.length,
+      domainRules, urlRules, skipped,
+    });
+  }
+
+  let domainImported = 0, urlImported = 0;
+  for (const { domain, rule_type } of domainRules) {
+    await query(
+      `INSERT INTO policy_domain_rules (policy_id, domain, rule_type, added_by)
+       VALUES ($1,$2,$3,$4)
+       ON CONFLICT (policy_id, domain) DO UPDATE SET rule_type = EXCLUDED.rule_type`,
+      [req.params.id, domain, rule_type, req.user?.id || null]
+    );
+    domainImported++;
+  }
+  for (const { pattern, rule_type } of urlRules) {
+    await query(
+      `INSERT INTO policy_url_rules (policy_id, pattern, rule_type, added_by, source)
+       VALUES ($1,$2,$3,$4,'goguardian_import')
+       ON CONFLICT (policy_id, pattern) DO UPDATE SET rule_type = EXCLUDED.rule_type`,
+      [req.params.id, pattern, rule_type, req.user?.id || null]
+    );
+    urlImported++;
+  }
+
+  await bustPolicyCache(req.params.id);
+  res.json({ domainImported, urlImported, skipped: skipped.length });
+});
+
+// ---------------------------------------------------------------------------
 // Blocklist attachment
 // ---------------------------------------------------------------------------
 
@@ -445,10 +590,13 @@ router.delete('/:id/youtube-videos/:videoId', async (req, res) => {
 // ---------------------------------------------------------------------------
 
 router.post('/:id/assignments', async (req, res) => {
-  const { target_type, target_id, target_ou, target_subnet, priority = 0 } = req.body;
+  const { target_type, target_id, target_ou, target_subnet, priority = 0, location = 'any' } = req.body;
   const validTypes = ['student', 'group', 'ou', 'subnet'];
   if (!validTypes.includes(target_type)) {
     return res.status(400).json({ error: `target_type must be one of: ${validTypes.join(', ')}` });
+  }
+  if (!['any', 'on_campus', 'off_campus'].includes(location)) {
+    return res.status(400).json({ error: 'location must be one of: any, on_campus, off_campus' });
   }
   if (target_type === 'student' && !target_id) return res.status(400).json({ error: 'target_id required for student' });
   if (target_type === 'group'   && !target_id) return res.status(400).json({ error: 'target_id required for group' });
@@ -458,11 +606,24 @@ router.post('/:id/assignments', async (req, res) => {
   const cleanOu     = target_ou?.trim() || null;
   const cleanSubnet = target_subnet?.trim() || null;
 
+  // student/group and ou targets each have their own per-location uniqueness
+  // constraint — assigning a new policy for a target+location that already
+  // has one replaces it (rather than erroring), since that's the obvious
+  // intent of e.g. changing an OU's on-campus policy.
+  let conflictClause = '';
+  if (target_type === 'student' || target_type === 'group') {
+    conflictClause = 'ON CONFLICT (target_type, target_id, location) DO UPDATE SET policy_id = EXCLUDED.policy_id, priority = EXCLUDED.priority, assigned_by = EXCLUDED.assigned_by, assigned_at = NOW()';
+  } else if (target_type === 'ou') {
+    conflictClause = 'ON CONFLICT (target_type, target_ou, location) DO UPDATE SET policy_id = EXCLUDED.policy_id, priority = EXCLUDED.priority, assigned_by = EXCLUDED.assigned_by, assigned_at = NOW()';
+  }
+
   const { rows: [assignment] } = await query(
     `INSERT INTO policy_assignments
-       (policy_id, target_type, target_id, target_ou, target_subnet, priority, assigned_by)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [req.params.id, target_type, target_id || null, cleanOu, cleanSubnet, priority, req.user?.id || null]
+       (policy_id, target_type, target_id, target_ou, target_subnet, priority, assigned_by, location)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     ${conflictClause}
+     RETURNING *`,
+    [req.params.id, target_type, target_id || null, cleanOu, cleanSubnet, priority, req.user?.id || null, location]
   );
   await bustPolicyCache(req.params.id);
   res.status(201).json(assignment);
