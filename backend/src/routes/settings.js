@@ -15,7 +15,7 @@ const ALLOWED_KEYS = new Set([
   // Integrations
   'zammad_url', 'zammad_token',
   'mosyle_access_token',
-  'snipeit_url', 'snipeit_token',
+  'snipeit_url', 'snipeit_token', 'snipeit_client_id', 'snipeit_client_secret',
   'phpipam_url', 'phpipam_app_id', 'phpipam_username', 'phpipam_password', 'phpipam_verify_ssl',
   'phpipam_auth_mode', 'phpipam_app_code',
   'last_mosyle_sync', 'last_snipeit_sync', 'last_zammad_sync',
@@ -37,6 +37,7 @@ const ALLOWED_KEYS = new Set([
   // RADIUS / Google Secure LDAP
   'ldap_google_enabled', 'ldap_client_cert_path', 'ldap_client_key_path',
   'ldap_base_dn', 'ldap_google_domain',
+  'radius_default_nas_secret',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object

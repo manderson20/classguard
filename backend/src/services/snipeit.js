@@ -3,12 +3,15 @@ const { pool } = require('../db');
 
 async function getConfig() {
   const { rows } = await pool.query(
-    `SELECT key, value FROM settings WHERE key IN ('snipeit_url','snipeit_token')`
+    `SELECT key, value FROM settings WHERE key IN
+       ('snipeit_url','snipeit_token','snipeit_client_id','snipeit_client_secret')`
   );
   const cfg = Object.fromEntries(rows.map(r => [r.key, r.value]));
   return {
-    url:   process.env.SNIPEIT_URL   || cfg.snipeit_url   || null,
-    token: process.env.SNIPEIT_TOKEN || cfg.snipeit_token || null,
+    url:          process.env.SNIPEIT_URL           || cfg.snipeit_url           || null,
+    token:        process.env.SNIPEIT_TOKEN         || cfg.snipeit_token         || null,
+    clientId:     process.env.SNIPEIT_CLIENT_ID      || cfg.snipeit_client_id     || null,
+    clientSecret: process.env.SNIPEIT_CLIENT_SECRET  || cfg.snipeit_client_secret || null,
   };
 }
 
@@ -24,10 +27,62 @@ function buildClient(url, token) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// OAuth2 client_credentials token exchange — for Snipe-IT instances where
+// the admin can only create an OAuth Client (client_id/secret) rather than
+// generate a Personal Access Token from the account menu. Laravel Passport
+// (what Snipe-IT's API runs on) supports this grant at the protocol level;
+// the resulting access_token is cached in-process and refreshed shortly
+// before it expires. Not persisted anywhere — a backend restart just means
+// the next request re-fetches one, which is cheap and avoids storing a
+// short-lived secret outside the settings table.
+// ---------------------------------------------------------------------------
+let cachedOAuthToken = null; // { accessToken, expiresAt }
+
+async function fetchOAuthToken(url, clientId, clientSecret) {
+  const res = await axios.post(`${url.replace(/\/$/, '')}/oauth/token`, {
+    grant_type:    'client_credentials',
+    client_id:     clientId,
+    client_secret: clientSecret,
+  }, {
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    timeout: 15_000,
+  });
+  const { access_token, expires_in } = res.data || {};
+  if (!access_token) throw new Error('Snipe-IT OAuth token response had no access_token');
+  return { accessToken: access_token, expiresAt: Date.now() + (expires_in ? expires_in * 1000 : 3600_000) };
+}
+
+async function getOAuthAccessToken(url, clientId, clientSecret) {
+  // Refresh 60s before expiry rather than reacting to a 401, so a sync that
+  // makes many requests doesn't get cut off mid-run by token expiry.
+  if (cachedOAuthToken && cachedOAuthToken.expiresAt > Date.now() + 60_000) {
+    return cachedOAuthToken.accessToken;
+  }
+  try {
+    cachedOAuthToken = await fetchOAuthToken(url, clientId, clientSecret);
+  } catch (err) {
+    const detail = err.response ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data)}` : err.message;
+    throw new Error(`Snipe-IT OAuth token exchange failed: ${detail}`);
+  }
+  return cachedOAuthToken.accessToken;
+}
+
 async function getClient() {
   const cfg = await getConfig();
-  if (!cfg.url || !cfg.token) {
-    throw new Error('Snipe-IT is not configured. Add SNIPEIT_URL and SNIPEIT_TOKEN in Settings → Integrations.');
+  if (!cfg.url) {
+    throw new Error('Snipe-IT is not configured. Add SNIPEIT_URL in Settings → Integrations.');
+  }
+
+  if (cfg.clientId && cfg.clientSecret) {
+    const accessToken = await getOAuthAccessToken(cfg.url, cfg.clientId, cfg.clientSecret);
+    return buildClient(cfg.url, accessToken);
+  }
+
+  if (!cfg.token) {
+    throw new Error(
+      'Snipe-IT is not configured. Add either a Personal Access Token, or an OAuth Client ID + Secret, in Settings → Integrations.'
+    );
   }
   // Snipe-IT Personal Access Tokens are long JWTs (Laravel Passport) —
   // typically 200+ characters with two dots. A short token is almost
@@ -37,7 +92,8 @@ async function getClient() {
     throw new Error(
       `Snipe-IT token looks too short/wrong-shaped to be a real Personal Access Token ` +
       `(those are long JWTs, 200+ characters). Generate one from your Snipe-IT account menu → ` +
-      `"Manage API Keys" → "Create New Token", and copy the entire value.`
+      `"Manage API Keys" → "Create New Token", and copy the entire value — or use the OAuth ` +
+      `Client ID + Secret fields instead if that's what your instance lets you create.`
     );
   }
   return buildClient(cfg.url, cfg.token);

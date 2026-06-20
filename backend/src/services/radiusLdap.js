@@ -148,4 +148,9 @@ async function testConnection() {
   });
 }
 
-module.exports = { authenticateUser, testConnection };
+function invalidateSettingsCache() {
+  settingsCache   = null;
+  settingsCacheAt = 0;
+}
+
+module.exports = { authenticateUser, testConnection, invalidateSettingsCache };

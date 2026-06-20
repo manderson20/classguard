@@ -148,42 +148,29 @@ async function deprovisionRemovedDevices(sourceName, seenDeviceIds) {
 // Mosyle — all managed iOS + macOS devices
 // ---------------------------------------------------------------------------
 async function syncMosyle() {
-  const cfg = await getSettings(['mosyle_access_token']);
-  if (!cfg.mosyle_access_token) return { synced: 0, removed: 0, source: 'mosyle', skipped: true };
+  const mosyle = require('./mosyle');
+  const cfg    = await mosyle.getConfig();
+  if (!cfg.token) return { synced: 0, removed: 0, source: 'mosyle', skipped: true };
 
-  let page = 1, seenIds = [];
+  const devices = await mosyle.listAllDevices();
+  const seenIds = [];
 
-  while (true) {
-    const res = await axios.post(
-      'https://managerapi.mosyle.com/v2/listdevices',
-      new URLSearchParams({
-        accessToken: cfg.mosyle_access_token,
-        os:          'ios,macos',
-        page:        String(page),
-      }),
-      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
-    );
-
-    const devices = res.data?.response?.devices || [];
-    if (!devices.length) break;
-
-    for (const d of devices) {
-      const mac = d.wifi_mac_address || d.mac_address;
-      const isIpad = /ipad|iphone/i.test(d.os_type || '');
-      const id = await upsertDeviceWithSource({
-        mac,
-        name:           d.device_name || d.serial_number,
-        type:           isIpad ? 'tablet' : 'laptop',
-        source:         'mosyle',
-        sourceDeviceId: d.serial_number || d.udid,
-        sourceExtra:    { serial: d.serial_number, os: d.os_type, model: d.model,
-                          assigned_user: d.assigned_user_email || null },
-      });
-      if (id) seenIds.push(id);
-    }
-
-    if (devices.length < 50) break;
-    page++;
+  for (const d of devices) {
+    const mac = d.wifi_mac_address || d.mac_address || d.bluetooth_mac;
+    const os  = (d.os_type || '').toLowerCase();
+    const type = /tvos|appletv/.test(os) ? 'tv'
+               : /ipad|iphone/.test(os)  ? 'tablet'
+               : 'laptop';
+    const id = await upsertDeviceWithSource({
+      mac,
+      name:           d.device_name || d.serial_number,
+      type,
+      source:         'mosyle',
+      sourceDeviceId: d.serial_number || d.udid,
+      sourceExtra:    { serial: d.serial_number, os: d.os_type, model: d.model,
+                        assigned_user: d.assigned_user_email || null },
+    });
+    if (id) seenIds.push(id);
   }
 
   const removed = await deprovisionRemovedDevices('mosyle', seenIds);
@@ -213,7 +200,7 @@ async function syncSnipeIt() {
       const customMac = Object.values(asset.custom_fields || {})
         .find(f => /mac/i.test(f.field || '') && f.value)?.value;
       const mac = asset.mac_address || customMac;
-      if (!normaliseMac(mac)) { offset++; continue; }
+      if (!normaliseMac(mac)) continue;
 
       const cat   = (asset.category?.name || '').toLowerCase();
       let   type  = 'other';
@@ -340,6 +327,80 @@ async function syncNetworkControllers() {
 }
 
 // ---------------------------------------------------------------------------
+// NAS auto-provisioning — APs/switches/gateways learned from a network
+// controller (currently UniFi) become radius_nas rows automatically, so they
+// don't need to be added by hand one at a time. All auto-discovered NAS
+// entries from a given vendor share ONE shared secret (radius_default_nas_secret),
+// matching how UniFi's RADIUS Profile feature actually works — one profile
+// with one secret gets applied to every AP/switch in the site, rather than a
+// secret per device. Existing rows never have their shared_secret touched by
+// a sync — only an admin edit (or first creation) sets it, so a manually
+// customised secret on a given NAS is never silently overwritten.
+// ---------------------------------------------------------------------------
+const crypto = require('crypto');
+
+async function getOrCreateDefaultNasSecret() {
+  const { rows } = await pool.query(`SELECT value FROM settings WHERE key = 'radius_default_nas_secret'`);
+  if (rows[0]?.value) return rows[0].value;
+
+  const secret = crypto.randomBytes(24).toString('base64url');
+  await pool.query(
+    `INSERT INTO settings (key, value, updated_at) VALUES ('radius_default_nas_secret', $1, NOW())
+     ON CONFLICT (key) DO NOTHING`,
+    [secret]
+  );
+  // Re-read in case of a concurrent insert race — always use whatever ended up stored.
+  const { rows: final } = await pool.query(`SELECT value FROM settings WHERE key = 'radius_default_nas_secret'`);
+  return final[0].value;
+}
+
+const NAS_TYPE_LABEL = { uap: 'Access Point', usw: 'Switch', uxg: 'Gateway', ugw: 'Gateway' };
+
+async function syncNasFromControllers() {
+  const { getAdapter } = require('./network');
+  const { rows: controllers } = await pool.query(
+    `SELECT * FROM network_controllers WHERE is_active = true`
+  );
+
+  let synced = 0;
+  const errors = [];
+
+  for (const controller of controllers) {
+    const adapter = getAdapter(controller.vendor);
+    if (!adapter.fetchDevices) continue; // vendor doesn't support infra-device discovery yet
+
+    let devices;
+    try {
+      devices = await adapter.fetchDevices(controller);
+    } catch (e) {
+      errors.push(`${controller.name}: ${e.message}`);
+      continue;
+    }
+
+    const secret = await getOrCreateDefaultNasSecret();
+
+    for (const d of devices) {
+      const shortname = (d.name || d.mac).toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 32);
+      const label      = NAS_TYPE_LABEL[d.type] || d.type;
+      await pool.query(
+        `INSERT INTO radius_nas (name, shortname, ip_address, shared_secret, vendor, description, is_active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (ip_address) DO UPDATE SET
+           name        = EXCLUDED.name,
+           description = EXCLUDED.description,
+           is_active   = EXCLUDED.is_active,
+           updated_at  = NOW()`,
+        [d.name, shortname, d.ip, secret, controller.vendor,
+         `Auto-discovered ${label}${d.model ? ` (${d.model})` : ''} from ${controller.name}`, d.isOnline]
+      );
+      synced++;
+    }
+  }
+
+  return { synced, errors, source: 'network_infrastructure' };
+}
+
+// ---------------------------------------------------------------------------
 // Master sync
 // ---------------------------------------------------------------------------
 async function syncAllSources(onProgress = () => {}) {
@@ -357,11 +418,14 @@ async function syncAllSources(onProgress = () => {}) {
   onProgress('Syncing network controllers…');
   results.push(await syncNetworkControllers().catch(e => ({ source: 'network_controller', error: e.message })));
 
+  onProgress('Syncing NAS infrastructure (APs/switches)…');
+  results.push(await syncNasFromControllers().catch(e => ({ source: 'network_infrastructure', error: e.message })));
+
   onProgress('Done');
   return results;
 }
 
 module.exports = {
   syncAllSources, syncMosyle, syncSnipeIt, syncGoogleAdmin, syncNetworkControllers,
-  normaliseMac,
+  syncNasFromControllers, normaliseMac,
 };

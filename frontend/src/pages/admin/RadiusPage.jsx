@@ -287,19 +287,22 @@ function DevicesTab() {
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
+  const [typeFilter, setTypeFilter]     = useState('');
   const [search, setSearch]             = useState('');
   const [selected, setSelected]         = useState(new Set());
   const [editModal, setEditModal]       = useState(null);
   const [addModal, setAddModal]         = useState(false);
   const [addForm, setAddForm]           = useState(EMPTY_DEVICE);
   const [syncing, setSyncing]           = useState(false);
+  const [filterBulkMsg, setFilterBulkMsg] = useState(null);
 
   const { data = { devices: [], counts: {}, total: 0 } } = useQuery({
-    queryKey: ['radius-devices', statusFilter, sourceFilter, search],
+    queryKey: ['radius-devices', statusFilter, sourceFilter, typeFilter, search],
     queryFn:  () => {
       const p = new URLSearchParams({ limit: 200 });
       if (statusFilter) p.set('status', statusFilter);
       if (sourceFilter) p.set('source', sourceFilter);
+      if (typeFilter)   p.set('device_type', typeFilter);
       if (search)       p.set('search', search);
       return api.get('/radius/devices?' + p);
     },
@@ -319,6 +322,18 @@ function DevicesTab() {
   const bulk = useMutation({
     mutationFn: status => api.post('/radius/devices/bulk', { ids: [...selected], status }),
     onSuccess: () => { qc.invalidateQueries({queryKey:['radius-devices']}); setSelected(new Set()); },
+  });
+
+  const hasActiveFilter = !!(statusFilter || sourceFilter || typeFilter || search);
+  const bulkByFilter = useMutation({
+    mutationFn: newStatus => api.post('/radius/devices/bulk-by-filter', {
+      status: statusFilter || undefined, source: sourceFilter || undefined,
+      device_type: typeFilter || undefined, search: search || undefined, newStatus,
+    }),
+    onSuccess: (res, newStatus) => {
+      qc.invalidateQueries({queryKey:['radius-devices']});
+      setFilterBulkMsg(`${res.updated} device(s) set to ${newStatus}`);
+    },
   });
 
   const syncDevices = async () => {
@@ -481,6 +496,10 @@ function DevicesTab() {
             <option value="">All sources</option>
             {['mosyle','snipeit','google_admin','network_controller','radius_seen','manual'].map(s=><option key={s} value={s}>{s.replace('_',' ')}</option>)}
           </select>
+          <select className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white" value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
+            <option value="">All categories</option>
+            {DEVICE_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+          </select>
           <button onClick={syncDevices} disabled={syncing} className="btn-secondary text-xs">
             {syncing?'Syncing…':'Sync from MDM'}
           </button>
@@ -488,13 +507,31 @@ function DevicesTab() {
         </div>
       </div>
 
-      {/* Bulk actions */}
+      {/* Bulk actions on selected rows (current page) */}
       {selected.size > 0 && (
         <div className="flex items-center gap-3 mb-3 bg-primary-50 border border-primary-200 rounded-lg px-4 py-2">
           <span className="text-sm font-medium text-primary-800">{selected.size} selected</span>
           <button onClick={()=>bulk.mutate('approved')} className="text-xs text-green-700 hover:underline font-semibold">Approve all</button>
           <button onClick={()=>bulk.mutate('blocked')}  className="text-xs text-red-700 hover:underline font-semibold">Block all</button>
           <button onClick={selNone} className="text-xs text-slate-500 hover:underline ml-auto">Clear selection</button>
+        </div>
+      )}
+
+      {/* Bulk action across every device matching the filters above, not just this page */}
+      {hasActiveFilter && (
+        <div className="flex items-center gap-3 mb-3 bg-amber-50 border border-amber-200 rounded-lg px-4 py-2">
+          <span className="text-sm font-medium text-amber-800">
+            Apply to ALL devices matching this filter ({data.total} total, not just the {data.devices.length} shown)
+          </span>
+          <button onClick={()=>{ if(confirm(`Set ALL ${data.total} matching devices to approved?`)) bulkByFilter.mutate('approved'); }}
+            disabled={bulkByFilter.isPending} className="text-xs text-green-700 hover:underline font-semibold">
+            Approve all matching
+          </button>
+          <button onClick={()=>{ if(confirm(`Set ALL ${data.total} matching devices to blocked?`)) bulkByFilter.mutate('blocked'); }}
+            disabled={bulkByFilter.isPending} className="text-xs text-red-700 hover:underline font-semibold">
+            Block all matching
+          </button>
+          {filterBulkMsg && <span className="text-xs text-amber-700 ml-auto">{filterBulkMsg}</span>}
         </div>
       )}
 
@@ -541,6 +578,171 @@ function DevicesTab() {
       {editModal && <EditModal dev={editModal}/>}
       {addModal  && <AddModal/>}
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Wi-Fi Policies Tab — controls which SSID a user/group can reach and which
+// VLAN they land in. A policy with no specific user/group is a "default"
+// that applies to anyone authenticating on the matching SSID — the typical
+// shape for a BYOD/personal-device SSID where any Google Workspace user
+// should be able to connect without being added to a group first.
+// ---------------------------------------------------------------------------
+const EMPTY_POLICY = { target: 'default', user_id: '', group_id: '', ssid: '', vlan: '', can_access: true, priority: 0, notes: '' };
+
+function PolicyModal({ initial, onSave, onCancel, isPending }) {
+  const [form, setForm] = useState(initial || EMPTY_POLICY);
+  const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  const [userSearch, setUserSearch] = useState('');
+
+  const { data: users = [] } = useQuery({
+    queryKey: ['radius-policy-user-search', userSearch],
+    queryFn:  () => api.get(`/users?search=${encodeURIComponent(userSearch)}`),
+    enabled:  form.target === 'user' && userSearch.length > 1,
+  });
+  const { data: groups = [] } = useQuery({
+    queryKey: ['groups'],
+    queryFn:  () => api.get('/groups'),
+    enabled:  form.target === 'group',
+  });
+
+  const canSave = (form.target !== 'default') ? true : !!form.ssid;
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Field label="Applies to">
+        <select className={SELECT} value={form.target} onChange={e=>f('target', e.target.value)}>
+          <option value="default">Anyone (default for this SSID)</option>
+          <option value="user">A specific user</option>
+          <option value="group">A specific group</option>
+        </select>
+      </Field>
+
+      {form.target === 'user' && (
+        <Field label="User" hint="search by name or email">
+          <input className={INPUT} value={userSearch} onChange={e=>setUserSearch(e.target.value)} placeholder="Start typing…"/>
+          {users.length > 0 && (
+            <select className={SELECT + ' mt-1'} value={form.user_id} onChange={e=>f('user_id', e.target.value)}>
+              <option value="">Select a user…</option>
+              {users.map(u=><option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
+            </select>
+          )}
+        </Field>
+      )}
+
+      {form.target === 'group' && (
+        <Field label="Group">
+          <select className={SELECT} value={form.group_id} onChange={e=>f('group_id', e.target.value)}>
+            <option value="">Select a group…</option>
+            {groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
+          {!groups.length && <p className="text-xs text-amber-600 mt-1">No groups exist yet.</p>}
+        </Field>
+      )}
+
+      {form.target === 'default' && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          This applies to <strong>any</strong> authenticated user on the SSID below — an SSID is required so it can't accidentally apply everywhere.
+        </p>
+      )}
+
+      <Field label="SSID" hint={form.target === 'default' ? 'required' : 'leave blank to apply to all SSIDs'}>
+        <input className={INPUT} value={form.ssid} onChange={e=>f('ssid', e.target.value)} placeholder="e.g. SchoolName-BYOD"/>
+      </Field>
+      <Field label="VLAN" hint="leave blank to use the NAS default VLAN">
+        <input className={INPUT} type="number" value={form.vlan} onChange={e=>f('vlan', e.target.value)} placeholder="e.g. 40"/>
+      </Field>
+      <Field label="Priority" hint="higher evaluated first when multiple policies could match">
+        <input className={INPUT} type="number" value={form.priority} onChange={e=>f('priority', e.target.value)}/>
+      </Field>
+      <Field label="Can access">
+        <select className={SELECT} value={form.can_access ? '1' : '0'} onChange={e=>f('can_access', e.target.value==='1')}>
+          <option value="1">Allow</option>
+          <option value="0">Deny</option>
+        </select>
+      </Field>
+      <Field label="Notes">
+        <input className={INPUT} value={form.notes} onChange={e=>f('notes', e.target.value)}/>
+      </Field>
+
+      <div className="flex justify-end gap-2 mt-2">
+        <button onClick={onCancel} className="btn-secondary text-sm">Cancel</button>
+        <button onClick={()=>onSave(form)} disabled={isPending || !canSave} className="btn-primary text-sm">
+          {isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function PoliciesTab() {
+  const qc = useQueryClient();
+  const [modal, setModal] = useState(null);
+
+  const { data: policies = [] } = useQuery({
+    queryKey: ['radius-policies'],
+    queryFn:  () => api.get('/radius/policies'),
+  });
+
+  const add = useMutation({
+    mutationFn: form => api.post('/radius/policies', {
+      user_id:  form.target === 'user'  ? form.user_id  || null : null,
+      group_id: form.target === 'group' ? form.group_id || null : null,
+      ssid: form.ssid || null, vlan: form.vlan || null,
+      can_access: form.can_access, priority: form.priority || 0, notes: form.notes || null,
+    }),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['radius-policies']}); setModal(null); },
+  });
+
+  const del = useMutation({
+    mutationFn: id => api.delete(`/radius/policies/${id}`),
+    onSuccess: () => qc.invalidateQueries({queryKey:['radius-policies']}),
+  });
+
+  const targetLabel = p => p.full_name ? `${p.full_name} (${p.email})` : p.group_name ? `Group: ${p.group_name}` : 'Anyone (default)';
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+        Controls which SSID a user/group can authenticate on (via username + Google credentials, EAP) and which VLAN they land in.
+        Doesn't apply to MAC-based device auth (Devices / NAC tab) — that's governed by device approval status instead.
+      </div>
+      <div className="flex justify-end">
+        <button onClick={()=>setModal('add')} className="btn-primary text-sm">+ Add Policy</button>
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>{['Applies to','SSID','VLAN','Access','Priority','Notes',''].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {policies.map(p=>(
+              <tr key={p.id} className="hover:bg-slate-50">
+                <td className="px-3 py-2 text-sm text-slate-800">{targetLabel(p)}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-600">{p.ssid || 'All SSIDs'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{p.vlan ?? '—'}</td>
+                <td className="px-3 py-2">
+                  <span className={`px-2 py-0.5 rounded text-xs ${p.can_access?'bg-green-100 text-green-700':'bg-red-100 text-red-700'}`}>
+                    {p.can_access ? 'Allow' : 'Deny'}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-500">{p.priority}</td>
+                <td className="px-3 py-2 text-xs text-slate-400">{p.notes || '—'}</td>
+                <td className="px-3 py-2">
+                  <button onClick={()=>del.mutate(p.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+                </td>
+              </tr>
+            ))}
+            {!policies.length && <tr><td colSpan={7} className="text-center text-slate-400 py-8">No policies yet — devices authenticate with default VLAN/access</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {modal==='add' && (
+        <Modal title="Add Wi-Fi Policy" onClose={()=>setModal(null)}>
+          <PolicyModal onSave={form=>add.mutate(form)} onCancel={()=>setModal(null)} isPending={add.isPending}/>
+        </Modal>
+      )}
+    </div>
   );
 }
 
@@ -592,6 +794,194 @@ function LogTab() {
         </table>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Google Secure LDAP setup wizard — guides an admin through the one-time
+// Google Admin Console steps, uploading the resulting cert/key (instead of
+// asking them to find a way to copy files into the server's filesystem,
+// which most admins can't do directly), deriving the LDAP base DN from their
+// Workspace domain, and testing the result — all without needing a public
+// domain or port-forwarding, since Secure LDAP is an outbound-only TLS
+// connection to ldap.google.com.
+// ---------------------------------------------------------------------------
+function domainToBaseDn(domain) {
+  return domain.trim().toLowerCase().split('.').filter(Boolean).map(p => `dc=${p}`).join(',');
+}
+
+function LdapWizard({ ldapTesting, ldapResult, testLdap }) {
+  const [step, setStep]       = useState(1);
+  const [domain, setDomain]   = useState('');
+  const [baseDn, setBaseDn]   = useState('');
+  const [baseDnEdited, setBaseDnEdited] = useState(false);
+  const [certFile, setCertFile] = useState(null);
+  const [keyFile, setKeyFile]   = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [uploaded, setUploaded] = useState(false);
+  const [enabling, setEnabling] = useState(false);
+  const [enabled, setEnabled]   = useState(false);
+
+  const onDomainChange = v => {
+    setDomain(v);
+    if (!baseDnEdited) setBaseDn(domainToBaseDn(v));
+  };
+
+  const upload = async () => {
+    setUploadError(null);
+    if (!certFile || !keyFile) { setUploadError('Both the certificate and key files are required.'); return; }
+    if (!baseDn) { setUploadError('Base DN is required.'); return; }
+
+    setUploading(true);
+    const form = new FormData();
+    form.append('cert', certFile);
+    form.append('key', keyFile);
+    form.append('base_dn', baseDn);
+    form.append('google_domain', domain);
+
+    try {
+      const token = localStorage.getItem('cg_token');
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/v1/radius/ldap/upload`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+      setUploaded(true);
+      setStep(3);
+    } catch (e) {
+      setUploadError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const enableLdap = async () => {
+    setEnabling(true);
+    try {
+      await api.put('/settings', { ldap_google_enabled: 'true' });
+      setEnabled(true);
+    } catch (e) {
+      setUploadError(e.message);
+    } finally {
+      setEnabling(false);
+    }
+  };
+
+  const StepDot = ({ n, label }) => (
+    <div className={`flex items-center gap-2 text-xs font-medium ${step===n?'text-primary-700':step>n?'text-green-600':'text-slate-400'}`}>
+      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] ${step===n?'bg-primary-100 border border-primary-400':step>n?'bg-green-100':'bg-slate-100'}`}>
+        {step>n ? '✓' : n}
+      </span>
+      {label}
+    </div>
+  );
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+      <h3 className="font-semibold text-slate-900 mb-1">Google Secure LDAP Setup</h3>
+      <p className="text-xs text-slate-500 mb-4">
+        Used for EAP-TTLS/PAP on a BYOD SSID — FreeRADIUS passes a user's Google password through ClassGuard,
+        which validates it against Google's LDAP endpoint. This connects <em>outbound only</em> to Google —
+        no public domain or port-forwarding needed.
+      </p>
+
+      <div className="flex items-center gap-5 mb-5 flex-wrap">
+        <StepDot n={1} label="Google Admin setup"/>
+        <StepDot n={2} label="Upload cert + key"/>
+        <StepDot n={3} label="Test connection"/>
+        <StepDot n={4} label="Enable"/>
+      </div>
+
+      {step === 1 && (
+        <div className="flex flex-col gap-3">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-900 space-y-1">
+            <div className="font-semibold mb-2">In Google Admin Console:</div>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>Go to Account → LDAP → Add LDAP Client</li>
+              <li>Name it e.g. "ClassGuard FreeRADIUS"</li>
+              <li>Under Access permissions, enable both <strong>Verify user credentials</strong> and <strong>Read user information</strong></li>
+              <li>On the client's Authentication tab, click <strong>Generate New Certificate</strong></li>
+              <li>Download the generated certificate and private key (PEM files)</li>
+            </ol>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={()=>setStep(2)} className="btn-primary text-sm">I've done this — Continue</button>
+          </div>
+        </div>
+      )}
+
+      {step === 2 && (
+        <div className="flex flex-col gap-3">
+          <Field label="Your Google Workspace domain">
+            <input className={INPUT} value={domain} onChange={e=>onDomainChange(e.target.value)} placeholder="school.org"/>
+          </Field>
+          <Field label="LDAP base DN" hint="auto-filled from domain — edit only if your Workspace setup differs">
+            <input className={INPUT} value={baseDn} onChange={e=>{setBaseDn(e.target.value); setBaseDnEdited(true);}} placeholder="dc=school,dc=org"/>
+          </Field>
+          <div className="grid md:grid-cols-2 gap-4">
+            <Field label="Certificate file" hint=".crt / .pem from Google">
+              <input type="file" accept=".crt,.pem,.cer" className={INPUT} onChange={e=>setCertFile(e.target.files?.[0]||null)}/>
+            </Field>
+            <Field label="Private key file" hint=".key / .pem from Google">
+              <input type="file" accept=".key,.pem" className={INPUT} onChange={e=>setKeyFile(e.target.files?.[0]||null)}/>
+            </Field>
+          </div>
+          {uploadError && <p className="text-red-500 text-xs">{uploadError}</p>}
+          <div className="flex justify-between mt-2">
+            <button onClick={()=>setStep(1)} className="btn-secondary text-sm">Back</button>
+            <button onClick={upload} disabled={uploading} className="btn-primary text-sm">
+              {uploading ? 'Uploading…' : 'Upload & Continue'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {step === 3 && (
+        <div className="flex flex-col gap-3">
+          {uploaded && <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">Certificate and key saved.</p>}
+          {ldapResult && (
+            <div className={`text-sm px-3 py-2 rounded-lg border ${ldapResult.ok?'bg-green-50 border-green-200 text-green-800':'bg-red-50 border-red-200 text-red-800'}`}>
+              {ldapResult.ok ? '✓ Connection successful — TLS handshake with Google LDAP succeeded' : `✗ ${ldapResult.reason}`}
+            </div>
+          )}
+          <div className="flex justify-between mt-2">
+            <button onClick={()=>setStep(2)} className="btn-secondary text-sm">Back</button>
+            <div className="flex gap-2">
+              <button onClick={testLdap} disabled={ldapTesting} className="btn-secondary text-sm">
+                {ldapTesting?'Testing…':'Test Connection'}
+              </button>
+              <button onClick={()=>setStep(4)} disabled={!ldapResult?.ok} className="btn-primary text-sm">Continue</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {step === 4 && (
+        <div className="flex flex-col gap-3">
+          {enabled ? (
+            <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
+              ✓ Google Secure LDAP is enabled. Create a BYOD policy in the Wi-Fi Policies tab pointing at your BYOD SSID to start allowing personal devices.
+            </p>
+          ) : (
+            <p className="text-sm text-slate-600">
+              Everything's tested and working. Enable Secure LDAP so FreeRADIUS will actually use it for EAP-TTLS/PAP authentication.
+            </p>
+          )}
+          {uploadError && <p className="text-red-500 text-xs">{uploadError}</p>}
+          <div className="flex justify-between mt-2">
+            <button onClick={()=>setStep(3)} className="btn-secondary text-sm">Back</button>
+            {!enabled && (
+              <button onClick={enableLdap} disabled={enabling} className="btn-primary text-sm">
+                {enabling ? 'Enabling…' : 'Enable Google Secure LDAP'}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -686,42 +1076,7 @@ function HaConfigTab() {
       </div>
 
       {/* Google Secure LDAP */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-        <h3 className="font-semibold text-slate-900 mb-1">Google Secure LDAP</h3>
-        <p className="text-xs text-slate-500 mb-4">Used for EAP-TTLS/PAP — FreeRADIUS passes the user's Google password to ClassGuard, which validates it via Google's LDAP endpoint.</p>
-        <div className="grid md:grid-cols-2 gap-4">
-          <Field label="Client certificate path" hint="PEM file on this server">
-            <input className={INPUT} placeholder="/etc/classguard/ldap-client.crt"/>
-          </Field>
-          <Field label="Client key path">
-            <input className={INPUT} placeholder="/etc/classguard/ldap-client.key"/>
-          </Field>
-          <Field label="LDAP base DN" hint="your domain in DC notation">
-            <input className={INPUT} placeholder="dc=school,dc=k12,dc=us"/>
-          </Field>
-        </div>
-        {ldapResult && (
-          <div className={`mt-3 text-sm px-3 py-2 rounded-lg border ${ldapResult.ok?'bg-green-50 border-green-200 text-green-800':'bg-red-50 border-red-200 text-red-800'}`}>
-            {ldapResult.ok ? '✓ Google Secure LDAP connection successful' : `✗ ${ldapResult.reason}`}
-          </div>
-        )}
-        <div className="mt-4 bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-900 space-y-1">
-          <div className="font-semibold mb-2">Google Admin setup (one-time):</div>
-          <ol className="list-decimal list-inside space-y-1">
-            <li>Google Admin Console → Account → LDAP → Add LDAP Client</li>
-            <li>Name: ClassGuard FreeRADIUS · Permissions: Verify user credentials + Read user info</li>
-            <li>Download the generated certificate + private key (PEM format)</li>
-            <li>Copy files to this server (e.g. <code className="bg-blue-100 px-1 rounded">/etc/classguard/ldap-client.crt</code>)</li>
-            <li>Enter the paths above and click Test Connection</li>
-          </ol>
-          <div className="mt-2 font-semibold">Works for other schools too — each school gets their own LDAP client in their Google Admin.</div>
-        </div>
-        <div className="flex justify-end mt-3">
-          <button onClick={testLdap} disabled={ldapTesting} className="btn-secondary text-sm">
-            {ldapTesting?'Testing…':'Test LDAP Connection'}
-          </button>
-        </div>
-      </div>
+      <LdapWizard ldapTesting={ldapTesting} ldapResult={ldapResult} testLdap={testLdap}/>
 
       {/* Android / WiFi profile guide */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
@@ -799,7 +1154,7 @@ function HaConfigTab() {
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Overview','NAS Clients','Devices / NAC','Auth Log','HA & Config'];
+const TABS = ['Overview','NAS Clients','Devices / NAC','Wi-Fi Policies','Auth Log','HA & Config'];
 
 export default function RadiusPage() {
   const [tab, setTab] = useState('Overview');
@@ -826,6 +1181,7 @@ export default function RadiusPage() {
       {tab==='Overview'     && <OverviewTab/>}
       {tab==='NAS Clients'  && <NasTab/>}
       {tab==='Devices / NAC' && <DevicesTab/>}
+      {tab==='Wi-Fi Policies' && <PoliciesTab/>}
       {tab==='Auth Log'     && <LogTab/>}
       {tab==='HA & Config'  && <HaConfigTab/>}
     </div>

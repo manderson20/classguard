@@ -11,6 +11,7 @@ const dhcpDnsAutoRegister = require('./dhcpDnsAutoRegister');
 const dhcpKeaSync = require('./dhcpKeaSync');
 const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
 const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
+const radiusSync = require('./radiusSync');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -222,6 +223,14 @@ function startScheduler() {
   // IPAM reflects who currently holds a dynamically-leased IP.
   cron.schedule('*/2 * * * *', () => {
     dhcpLeaseIpamSync.run().catch(err => console.error('[scheduler] dhcp-lease-ipam-sync error:', err.message));
+  });
+
+  // RADIUS device/NAS auto-provisioning — every 30 minutes. Pulls endpoint
+  // MACs from Mosyle/Snipe-IT/Google Admin (auto-approved by default) and
+  // AP/switch/gateway infrastructure from network controllers (auto-added
+  // as NAS clients) so 802.1X access doesn't require manual entry per device.
+  cron.schedule('*/30 * * * *', () => {
+    radiusSync.syncAllSources().catch(err => console.error('[scheduler] radius-sync error:', err.message));
   });
 }
 

@@ -136,12 +136,13 @@ function ControllersTab() {
 
   const test = async (id) => {
     setTesting(id);
-    setTestResult(r => ({...r, [id]: null}));
+    setTestResult(rs => ({...rs, [id]: null}));
     try {
       const r = await api.post(`/network/controllers/${id}/test`);
-      setTestResult(r => ({...r, [id]: {ok:true, detail: JSON.stringify(r).slice(0,80)}}));
+      const siteNames = (r.sites || []).map(s => s.desc || s.id).join(', ');
+      setTestResult(rs => ({...rs, [id]: {ok:true, detail: siteNames ? `Found ${r.sites.length} site(s): ${siteNames}` : 'Connected'}}));
     } catch(e) {
-      setTestResult(r => ({...r, [id]: {ok:false, detail: e.message}}));
+      setTestResult(rs => ({...rs, [id]: {ok:false, detail: e.message}}));
     }
     setTesting(null);
   };
