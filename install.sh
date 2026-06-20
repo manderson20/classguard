@@ -25,6 +25,30 @@ section "ClassGuard Install"
 info "Working directory: $REPO_DIR"
 
 # ---------------------------------------------------------------------------
+# 0. Pull latest code — makes this script double as the update path too:
+# re-running it on an existing install is the only thing needed to pick up
+# new commits, no separate manual git pull/build/restart steps.
+# Skipped (with a warning) if there are uncommitted local changes, so this
+# never silently clobbers something an admin was editing by hand.
+# ---------------------------------------------------------------------------
+cd "$REPO_DIR"
+if [[ -d .git ]]; then
+  if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    warn "Uncommitted local changes in $REPO_DIR — skipping git pull. Commit/stash them and re-run to update."
+  else
+    section "Step 0 — Pull latest"
+    BEFORE_REV=$(git rev-parse HEAD)
+    git pull --ff-only
+    AFTER_REV=$(git rev-parse HEAD)
+    if [[ "$BEFORE_REV" == "$AFTER_REV" ]]; then
+      info "Already up to date ($AFTER_REV)"
+    else
+      info "Updated $BEFORE_REV -> $AFTER_REV"
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 1. System packages
 # ---------------------------------------------------------------------------
 section "Step 1 — System packages"

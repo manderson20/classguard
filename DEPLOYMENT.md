@@ -65,6 +65,20 @@ That's it — `install.sh` will:
 Takes 5–15 minutes on first run depending on the server's CPU/network speed
 (most of it is the Docker image builds).
 
+### Updating to the latest version
+
+Re-run the exact same command — `install.sh` doubles as the update path:
+
+```bash
+cd /opt/classguard
+sudo bash install.sh
+```
+
+It pulls the latest code (skipped with a warning if you've hand-edited
+anything in `/opt/classguard` — commit or stash those changes first), then
+rebuilds and restarts whatever changed. `.env` is never touched on a
+re-run. No separate `git pull`/`docker compose build` steps needed.
+
 ### If this server has more than one network interface
 
 `install.sh` picks the IP your default route goes out on. If that's the
