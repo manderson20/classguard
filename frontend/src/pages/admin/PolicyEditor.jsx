@@ -244,6 +244,9 @@ function DomainRulesTab({ policy, policyId }) {
           Add Rule
         </button>
       </div>
+      <p className="text-xs text-slate-400">
+        Subdomains are matched automatically — github.com also covers api.github.com, so extra wildcards aren't needed.
+      </p>
       {addRule.error && <p className="text-red-600 text-sm">{addRule.error.message}</p>}
 
       {/* Toolbar */}
