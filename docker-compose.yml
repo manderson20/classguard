@@ -137,6 +137,12 @@ services:
       - tls-certs:/app/certs
     networks:
       - classguard-net
+    # Localhost-only — lets keepalived's host-level vrrp_script health check
+    # (curl http://localhost:3001/health) actually reach the container; it
+    # runs outside Docker, so it can't resolve the api:3001 hostname/port
+    # that other containers use internally.
+    ports:
+      - "127.0.0.1:3001:3001"
     # NET_RAW — fping needs raw ICMP sockets for the IPAM presence-scan job (pingScan.js)
     cap_add:
       - NET_RAW
