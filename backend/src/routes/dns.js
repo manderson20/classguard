@@ -3,6 +3,7 @@ const dnsPromises = require('dns').promises;
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { insertDnsLogBatch } = require('../services/scheduler');
 
 const router = Router();
 
@@ -341,6 +342,28 @@ router.put('/settings', authenticate, requireMinRole('admin'), async (req, res) 
     );
   }
   res.json({ updated: entries.map(([k]) => k) });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/dns/internal/dns-logs/bulk
+// Internal-secret only (see middleware/auth.js's isInternalRequest). A
+// standby node forwards DNS query logs here when its own Postgres is a
+// read-only streaming replica and can't write dns_logs locally — see
+// services/scheduler.js's insertOrForwardDnsLogs. Reuses the exact same
+// insert path as the local drain, so there's no behavioral difference
+// between a log written locally vs. forwarded from a standby.
+// ---------------------------------------------------------------------------
+router.post('/internal/dns-logs/bulk', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { records } = req.body;
+  if (!Array.isArray(records) || records.length === 0) {
+    return res.status(400).json({ error: 'records (non-empty array) is required' });
+  }
+  try {
+    await insertDnsLogBatch(records);
+    res.json({ inserted: records.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
