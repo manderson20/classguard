@@ -116,6 +116,13 @@ JWT_EXPIRES_IN=8h
 # Internal API secret (DNS engine → API)
 INTERNAL_SECRET=${INT_SEC}
 
+# Host/IP this server answers on — admin UI (frontend) and the DNS listener
+# both bind here. Detected automatically above; if this box has multiple
+# NICs and picked the wrong one, edit both lines and re-run
+# "docker compose up -d frontend dns".
+CLASSGUARD_HOST=${SERVER_IP}
+DNS_BIND_IP=${SERVER_IP}
+
 # DNS engine
 DNS_UPSTREAM_PRIMARY=1.1.1.1
 DNS_UPSTREAM_SECONDARY=8.8.8.8

@@ -1,7 +1,11 @@
 # ClassGuard — Deployment Guide
 
-This guide covers a single-server production deployment on Ubuntu 22.04/24.04.
-For multi-node HA, see `imageref/ClassGuard-Specification.md §11`.
+This guide covers a single-server production deployment on a brand-new
+Ubuntu 22.04/24.04 box, running ClassGuard via Docker Compose (the only
+supported deployment method — there is no bare-metal/PM2 path).
+
+Every command below is copy-paste ready. Replace `YOUR_SERVER_IP` and
+`classguard.yourdomain.org` with your own values where shown.
 
 ---
 
@@ -13,7 +17,7 @@ For multi-node HA, see `imageref/ClassGuard-Specification.md §11`.
 4. [Off-network filtering — pushing the DoH profile via MDM](#4-off-network-filtering--pushing-the-doh-profile-via-mdm)
 5. [Google Admin — service account and domain-wide delegation](#5-google-admin--service-account-and-domain-wide-delegation)
 6. [Google Admin — force-installing the Chrome extension](#6-google-admin--force-installing-the-chrome-extension)
-7. [SSL certificate — initial issue and auto-renewal](#7-ssl-certificate--initial-issue-and-auto-renewal)
+7. [TLS certificate — Let's Encrypt via DNS-01](#7-tls-certificate--lets-encrypt-via-dns-01)
 8. [Database backups](#8-database-backups)
 
 ---
@@ -22,48 +26,80 @@ For multi-node HA, see `imageref/ClassGuard-Specification.md §11`.
 
 | Requirement | Minimum |
 |-------------|---------|
-| Ubuntu      | 22.04 LTS |
+| OS          | Ubuntu 22.04 or 24.04 LTS, nothing else installed |
 | RAM         | 4 GB |
 | Disk        | 40 GB SSD |
-| Public IP   | Static (or DDNS) |
-| Domain name | A record pointing to server IP |
-| Ports open  | 53/UDP, 53/TCP, 80/TCP, 443/TCP |
+| Network     | A static LAN IP for this server |
+| Ports open (inbound, from your LAN) | 53/UDP+TCP (DNS), 67/UDP (DHCP, only if using Kea), 80/TCP, 443/TCP |
+| Access      | A user with `sudo`, and the ability to run commands as that user over SSH |
 
-Install Node.js 20, PostgreSQL 15 + TimescaleDB, Redis 7, Nginx, PM2, and Certbot
-as documented in the bootstrap script in `imageref/ClassGuard-Specification.md §2`.
+You do **not** need to pre-install Docker, Node.js, PostgreSQL, or Redis —
+`install.sh` (below) installs everything, including Docker itself.
 
 ---
 
 ## 2. Server setup
 
 ```bash
-# Clone the repo
-git clone https://github.com/manderson20/classguard /opt/classguard
+# 1. Clone the repo
+git clone https://github.com/manderson20/classguard.git /opt/classguard
+cd /opt/classguard
 
-# Install backend dependencies
-cd /opt/classguard/backend && npm ci --omit=dev
+# 2. Run the installer (installs Docker, generates .env, builds and starts everything)
+sudo bash install.sh
+```
 
-# Install dns-engine dependencies
-cd /opt/classguard/dns-engine && npm ci --omit=dev
+That's it — `install.sh` will:
 
-# Build the frontend
-cd /opt/classguard/frontend && npm ci && npm run build
+1. Install Docker Engine + the Compose plugin (skipped if already present).
+2. Add your user to the `docker` group.
+3. Auto-detect this server's LAN IP and generate `.env` with fresh random
+   secrets (`DB_PASSWORD`, `JWT_SECRET`, `INTERNAL_SECRET`) — only on first
+   run; it never overwrites an existing `.env`.
+4. Build every container (`backend`, `dns-engine`, `frontend`, `kea`,
+   `extension-builder`).
+5. Start PostgreSQL + Redis, wait for them to be healthy, run database
+   migrations, then start everything else.
+6. Print the URL to open and the DNS IP to hand out via DHCP.
 
-# Create log directory
-sudo mkdir -p /var/log/classguard
-sudo chown $USER /var/log/classguard
+Takes 5–15 minutes on first run depending on the server's CPU/network speed
+(most of it is the Docker image builds).
 
-# Copy and edit environment file
-cp /opt/classguard/backend/.env.example /opt/classguard/backend/.env
-# Edit .env with your DATABASE_URL, REDIS_URL, JWT_SECRET, GOOGLE_*, etc.
+### If this server has more than one network interface
 
-# Run database migrations
-cd /opt/classguard/backend && node src/scripts/migrate.js
+`install.sh` picks the IP your default route goes out on. If that's the
+wrong NIC, edit `/opt/classguard/.env` and fix **both** `CLASSGUARD_HOST` and
+`DNS_BIND_IP` to the correct LAN IP, then:
 
-# Start processes
-pm2 start /opt/classguard/infrastructure/pm2/ecosystem.config.js --env production
-pm2 save
-pm2 startup    # follow the printed command to enable on boot
+```bash
+cd /opt/classguard
+docker compose up -d frontend dns
+```
+
+### Useful commands afterward
+
+```bash
+docker compose ps                  # check container status
+docker compose logs -f api         # stream API logs
+docker compose logs -f dns         # stream DNS engine logs
+docker compose down                # stop everything
+docker compose up -d               # start everything
+docker compose run --rm migrate    # re-run migrations (idempotent, safe)
+```
+
+### Setting GOOGLE_CLIENT_ID / app domain later
+
+`install.sh` leaves Google OAuth commented out in `.env` — Google sign-in,
+Workspace sync, and the Chrome extension all need a real domain and Google
+Cloud OAuth credentials, set up in [§5](#5-google-admin--service-account-and-domain-wide-delegation)
+and [§6](#6-google-admin--force-installing-the-chrome-extension) below. Once
+`APP_URL` changes from an IP to a real domain, rebuild the frontend and
+extension so they pick it up:
+
+```bash
+docker compose build frontend extension-builder
+docker compose up -d frontend
+docker compose run --rm extension-builder
 ```
 
 ---
@@ -78,32 +114,30 @@ primary DNS resolver for all clients.
 In your router or switch admin panel, set:
 
 ```
-DHCP Option 6 (DNS Server): <CLASSGUARD_SERVER_IP>
+DHCP Option 6 (DNS Server): YOUR_SERVER_IP
 DHCP Option 6 Secondary:    8.8.8.8   # fallback if ClassGuard is down
 ```
 
-### Option B — ISC DHCP / Kea
-
-In your Kea configuration (`/etc/kea/kea-dhcp4.conf`), add to the subnet options:
+### Option B — ISC DHCP / Kea (if not using ClassGuard's built-in Kea)
 
 ```json
 "option-data": [
-  { "name": "domain-name-servers", "data": "CLASSGUARD_SERVER_IP, 8.8.8.8" }
+  { "name": "domain-name-servers", "data": "YOUR_SERVER_IP, 8.8.8.8" }
 ]
 ```
 
 ### Option C — Windows Server DHCP
 
 1. DHCP Manager > Scope > Scope Options > 006 DNS Servers
-2. Add `CLASSGUARD_SERVER_IP` as the first entry.
+2. Add `YOUR_SERVER_IP` as the first entry.
 
 ### Verification
 
 From a client device:
 
 ```bash
-nslookup example.com CLASSGUARD_SERVER_IP
-# Should resolve; blocked domains return 0.0.0.0
+nslookup example.com YOUR_SERVER_IP
+# Should resolve; blocked domains return the block page IP
 ```
 
 ---
@@ -118,9 +152,9 @@ DNS-over-HTTPS on iOS, iPadOS, and macOS devices when off the school network.
 Edit the profile and replace the two placeholders:
 
 | Placeholder | Replace with |
-|-------------|--------------|
-| `CLASSGUARD_DOH_URL` | `https://classguard.school.org/dns-query` |
-| `CLASSGUARD_DOH_SERVER_NAME` | `classguard.school.org` |
+|-------------|---------------|
+| `CLASSGUARD_DOH_URL` | `https://classguard.yourdomain.org/dns-query` |
+| `CLASSGUARD_DOH_SERVER_NAME` | `classguard.yourdomain.org` |
 
 Also generate two fresh UUIDs (`uuidgen`) and replace the `PayloadUUID` values.
 
@@ -162,10 +196,11 @@ service account with domain-wide delegation to read users, groups, and OUs.
 2. Name: `classguard-sync`, Description: `ClassGuard directory sync`.
 3. Click **Done** (no roles needed at the project level).
 4. Click the service account > Keys > Add Key > Create new key > JSON.
-   Download and store the key file securely on the server:
-   ```
-   /etc/classguard/service-account-key.json
-   chmod 600 /etc/classguard/service-account-key.json
+   Download it and place it on the server:
+   ```bash
+   sudo mkdir -p /etc/classguard
+   sudo mv ~/Downloads/classguard-sync-*.json /etc/classguard/service-account-key.json
+   sudo chmod 600 /etc/classguard/service-account-key.json
    ```
 5. Note the **Client ID** (numeric, shown in the service account details).
 
@@ -186,26 +221,33 @@ In your **Google Workspace Admin Console** (admin.google.com):
 
 ### Step 4 — Configure ClassGuard
 
-In `/opt/classguard/backend/.env`:
+In `/opt/classguard/.env` (the repo root, **not** `backend/.env`):
 
 ```env
 GOOGLE_SERVICE_ACCOUNT_KEY_PATH=/etc/classguard/service-account-key.json
-SUPERADMIN_EMAIL=youradmin@school.org
-GOOGLE_WORKSPACE_DOMAIN=school.org
+SUPERADMIN_EMAIL=youradmin@yourdomain.org
+GOOGLE_WORKSPACE_DOMAIN=yourdomain.org
 GOOGLE_CUSTOMER_ID=C0xxxxxxxxx   # optional; defaults to "my_customer"
+```
+
+Then recreate the API container so it picks up the change — `docker compose
+restart` does **not** reload `.env`, you need `up -d` to recreate it:
+
+```bash
+cd /opt/classguard && docker compose up -d api
 ```
 
 ### Step 5 — Run the first sync
 
 ```bash
-curl -X POST https://classguard.school.org/api/v1/sync/google \
+curl -X POST https://classguard.yourdomain.org/api/v1/sync/google \
   -H "Authorization: Bearer <admin-jwt>"
 ```
 
 Check status:
 
 ```bash
-curl https://classguard.school.org/api/v1/sync/status \
+curl https://classguard.yourdomain.org/api/v1/sync/status \
   -H "Authorization: Bearer <admin-jwt>"
 ```
 
@@ -221,17 +263,18 @@ loaded at runtime). Build it once after `GOOGLE_CLIENT_ID`/`APP_URL` are set
 in `.env`:
 
 ```bash
+cd /opt/classguard
 docker compose build extension-builder
 docker compose run --rm extension-builder
 ```
 
-This writes `classguard-extension.zip` to a shared volume that the frontend
-container serves at `https://classguard.school.org/downloads/classguard-extension.zip`.
-Admin → Settings → Extension tab has a **Download Extension** button that
-fetches the same file. Re-run the two commands above any time
-`GOOGLE_CLIENT_ID` or `APP_URL` changes — the server's URL itself does *not*
-require a rebuild, since the extension discovers it at runtime via
-`chrome.storage.managed` (see "Upload to Google Admin" below).
+This writes the extension build to a shared volume that the frontend
+container serves at `https://classguard.yourdomain.org/downloads/`. Admin →
+Settings → Extension tab has a **Download Extension** button that fetches
+the same files. Re-run the two commands above any time `GOOGLE_CLIENT_ID` or
+`APP_URL` changes — the server's URL itself does *not* require a rebuild,
+since the extension discovers it at runtime via `chrome.storage.managed`
+(see "Upload to Google Admin" below).
 
 Use `infrastructure/google-admin/forced-extension-policy.json`.
 
@@ -240,9 +283,9 @@ Use `infrastructure/google-admin/forced-extension-policy.json`.
 Replace the placeholders in the JSON:
 
 | Placeholder | Replace with |
-|-------------|--------------|
+|-------------|---------------|
 | `EXTENSION_ID` | Your published extension's Chrome Web Store ID |
-| `CLASSGUARD_BACKEND_URL` | `https://classguard.school.org` |
+| `CLASSGUARD_BACKEND_URL` | `https://classguard.yourdomain.org` |
 | `CLASSGUARD_GOOGLE_CLIENT_ID` | OAuth 2.0 client ID from Google Cloud Console |
 
 ### Upload to Google Admin
@@ -260,68 +303,69 @@ It cannot be removed or disabled by the user.
 
 ---
 
-## 7. SSL certificate — initial issue and auto-renewal
+## 7. TLS certificate — Let's Encrypt via DNS-01
 
-### Initial issue (Certbot + Nginx plugin)
+ClassGuard issues and renews its own Let's Encrypt certificate internally —
+there's no Certbot, no Nginx plugin, and nothing to install. It uses the
+DNS-01 challenge type specifically because that doesn't require this server
+to be reachable from the public internet on port 80 (HTTP-01's requirement);
+it only needs API access to your DNS provider to create a temporary TXT
+record.
 
-```bash
-sudo certbot --nginx -d classguard.school.org
-```
+### Configure (Admin UI)
 
-Certbot edits the Nginx config automatically. Verify:
+Go to **Admin → High Availability & Config → TLS Certificate** and either:
 
-```bash
-sudo nginx -t && sudo systemctl reload nginx
-```
+- **Automatic** — enter your domain and a Cloudflare API token or AWS Route
+  53 credentials (whichever hosts your DNS zone), then click **Issue
+  Certificate**. ClassGuard creates the TXT record, validates, and installs
+  the cert itself.
+- **Manual** — if your DNS provider isn't Cloudflare/Route53, click **Start
+  Manual Challenge**, add the TXT record it gives you wherever your DNS is
+  hosted, then click **Confirm** once it's published.
 
-### Enable auto-renewal
-
-Certbot installs a systemd timer by default. Verify it is active:
-
-```bash
-systemctl status certbot.timer
-```
-
-If not present, add a cron entry:
-
-```bash
-# /etc/cron.d/certbot
-0 3 * * * root certbot renew --quiet --deploy-hook "systemctl reload nginx"
-```
-
-Test dry-run:
+### Configure (API, if you'd rather script it)
 
 ```bash
-sudo certbot renew --dry-run
+curl -X PUT https://YOUR_SERVER_IP/api/v1/tls \
+  -H "Authorization: Bearer <superadmin-jwt>" -H "Content-Type: application/json" \
+  -d '{
+    "domain": "classguard.yourdomain.org",
+    "acme_email": "you@yourdomain.org",
+    "provider": "cloudflare",
+    "cloudflare_api_token": "YOUR_TOKEN"
+  }'
+
+curl -X POST https://YOUR_SERVER_IP/api/v1/tls/issue \
+  -H "Authorization: Bearer <superadmin-jwt>"
 ```
+
+### Renewal
+
+Fully automatic — a daily 5am job checks expiry and renews within 30 days
+of it (`backend/src/services/scheduler.js`). Nothing to schedule yourself.
 
 ---
 
 ## 8. Database backups
 
+PostgreSQL runs inside the `postgres` container, so backups go through
+`docker compose exec`/`docker exec`, not a host-installed `pg_dump`.
+
 ### Daily pg_dump via cron
 
 ```bash
-# /etc/cron.d/classguard-backup
-0 2 * * * postgres pg_dump classguard | gzip > /var/backups/classguard/classguard-$(date +\%F).sql.gz
-```
-
-Create the backup directory:
-
-```bash
 sudo mkdir -p /var/backups/classguard
-sudo chown postgres /var/backups/classguard
 ```
 
-### Retention — keep 30 days
-
 ```bash
-# Add to the same cron entry (chain with &&):
-find /var/backups/classguard -name "*.sql.gz" -mtime +30 -delete
+# /etc/cron.d/classguard-backup
+0 2 * * * root docker exec classguard-postgres pg_dump -U classguard classguard | gzip > /var/backups/classguard/classguard-$(date +\%F).sql.gz
+0 3 * * * root find /var/backups/classguard -name "*.sql.gz" -mtime +30 -delete
 ```
 
 ### Restore
 
 ```bash
-gunzip -c /var/backups/classguard/classguard-2026-06-15.sql.gz | psql classguard
+gunzip -c /var/backups/classguard/classguard-2026-06-15.sql.gz | docker exec -i classguard-postgres psql -U classguard classguard
 ```
