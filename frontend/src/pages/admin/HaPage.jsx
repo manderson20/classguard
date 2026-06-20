@@ -17,6 +17,61 @@ function Field({ label, hint, children }) {
 }
 
 // ---------------------------------------------------------------------------
+// Join a Primary Cluster — run on the server that wants to JOIN an existing
+// cluster. Pairs with the "+ Add Server" invite generated on the primary's
+// own HA page; no shell/SSH access to either server is needed, both sides
+// are plain UI forms.
+// ---------------------------------------------------------------------------
+function JoinClusterSection({ qc }) {
+  const [primaryUrl, setPrimaryUrl] = useState('');
+  const [token, setToken]           = useState('');
+  const [result, setResult]         = useState(null);
+
+  const join = useMutation({
+    mutationFn: () => api.post('/ha/join-cluster', { primary_url: primaryUrl.trim(), token: token.trim() }),
+    onSuccess: data => {
+      setResult({ ok: true, message: `Joined as ${data.node.ha_role} — registered with ${data.primary_url}.` });
+      setToken('');
+      qc.invalidateQueries({ queryKey: ['ha-nodes'] });
+    },
+    onError: err => setResult({ ok: false, message: err.message || 'Failed to join cluster' }),
+  });
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-8">
+      <h2 className="font-semibold text-slate-800 mb-1">Join a Primary Cluster</h2>
+      <p className="text-xs text-slate-500 mb-4">
+        Run this on a new server to join an existing cluster instead of running standalone — paste the Primary URL
+        and Invite Token shown when an admin on the primary clicks "+ Add Server" there. No CLI/SSH steps required.
+      </p>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+        <Field label="Primary URL">
+          <input className={INPUT} placeholder="https://classguard.yourdomain.org"
+            value={primaryUrl} onChange={e => setPrimaryUrl(e.target.value)} />
+        </Field>
+        <Field label="Invite Token">
+          <input className={INPUT} placeholder="paste the token from the primary's Add Server modal"
+            value={token} onChange={e => setToken(e.target.value)} />
+        </Field>
+      </div>
+
+      {result && (
+        <p className={`text-sm mb-3 ${result.ok ? 'text-green-600' : 'text-red-600'}`}>{result.message}</p>
+      )}
+
+      <button
+        onClick={() => { setResult(null); join.mutate(); }}
+        disabled={!primaryUrl.trim() || !token.trim() || join.isPending}
+        className="btn-primary text-sm"
+      >
+        {join.isPending ? 'Joining…' : 'Join Cluster'}
+      </button>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Database Replication section
 // ---------------------------------------------------------------------------
 function formatBytes(n) {
@@ -443,12 +498,9 @@ function AddServerModal({ onClose, qc }) {
   });
 
   const primaryUrl = window.location.origin;
-  const joinCmd = invite
-    ? `NODE_ID=classguard-new NODE_ROLE=${invite.ha_role} CG_JOIN_TOKEN=${invite.token} APP_URL=http://<THIS_SERVER_IP> CG_PRIMARY_URL=${primaryUrl} docker compose up -d`
-    : '';
 
-  function copyCmd() {
-    navigator.clipboard.writeText(joinCmd).then(() => {
+  function copyToken() {
+    navigator.clipboard.writeText(invite?.token || '').then(() => {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     });
@@ -505,25 +557,35 @@ function AddServerModal({ onClose, qc }) {
               Invite token generated — valid for <strong>7 days</strong>, single-use.
             </div>
 
-            <p className="text-sm text-slate-600 mb-2">
-              Run this command on the new server (replace <code className="bg-slate-100 px-1 rounded">{'<THIS_SERVER_IP>'}</code> with its IP):
+            <p className="text-sm text-slate-600 mb-3">
+              No shell access to the new server needed — on <strong>that server's own</strong> admin panel,
+              go to <strong>High Availability → Join a Primary Cluster</strong> and enter these two values:
             </p>
 
-            <div className="relative">
-              <pre className="bg-slate-900 text-green-300 text-xs rounded-lg p-4 overflow-x-auto whitespace-pre-wrap break-all leading-relaxed">
-                {joinCmd}
-              </pre>
-              <button
-                onClick={copyCmd}
-                className="absolute top-2 right-2 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-1 rounded"
-              >
-                {copied ? '✓ Copied' : 'Copy'}
-              </button>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Primary URL</label>
+                <div className="bg-slate-900 text-green-300 text-xs rounded-lg p-3 break-all">{primaryUrl}</div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Invite Token</label>
+                <div className="relative">
+                  <pre className="bg-slate-900 text-green-300 text-xs rounded-lg p-3 overflow-x-auto whitespace-pre-wrap break-all">
+                    {invite.token}
+                  </pre>
+                  <button
+                    onClick={copyToken}
+                    className="absolute top-2 right-2 text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-1 rounded"
+                  >
+                    {copied ? '✓ Copied' : 'Copy'}
+                  </button>
+                </div>
+              </div>
             </div>
 
             <p className="text-xs text-slate-500 mt-3">
-              The new server will call back to this node using the token and appear in the cluster list automatically.
-              You can also revoke the token from the Pending Invites section if unused.
+              Once that server submits the form, it'll call back here using the token and appear in this cluster
+              list automatically. You can also revoke the token from the Pending Invites section below if unused.
             </p>
 
             <div className="flex justify-end mt-4">
@@ -737,6 +799,8 @@ export default function HaPage() {
         </div>
       )}
 
+      <JoinClusterSection qc={qc} />
+
       <DbReplicationSection />
 
       <VrrpSection />
@@ -747,11 +811,11 @@ export default function HaPage() {
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
         <h3 className="font-semibold text-blue-900 mb-2">How to add a server</h3>
         <ol className="text-sm text-blue-800 space-y-1.5 list-decimal list-inside">
-          <li>Click <strong>+ Add Server</strong> above and choose a role for the new node.</li>
-          <li>Copy the generated <code className="bg-blue-100 px-1 rounded">docker compose</code> command and run it on the new server.</li>
-          <li>The new server connects to the <strong>same PostgreSQL database</strong> and self-registers using the invite token.</li>
-          <li>It appears here within 30 seconds — token is consumed and cannot be reused.</li>
-          <li>For DNS failover: point clients to both server IPs, or use a VRRP virtual IP (keepalived).</li>
+          <li>On <strong>this</strong> (primary) server: click <strong>+ Add Server</strong> above, choose a role, and generate an invite token.</li>
+          <li>On the <strong>new</strong> server's own admin panel: go to High Availability → <strong>Join a Primary Cluster</strong>, and enter this server's URL plus the token.</li>
+          <li>The new server calls back here using the token — it appears in the Cluster Nodes list above within 30 seconds, and the token is consumed (single-use).</li>
+          <li>Each node runs its own PostgreSQL — joining only registers it for cluster visibility/VRRP, it does <strong>not</strong> set up database replication. For an actual standby/replica that survives a primary failure, configure Postgres streaming replication (e.g. Patroni or pg_auto_failover) between the nodes separately — see the Database Replication section above.</li>
+          <li>For DNS/DHCP failover: configure a VRRP virtual IP below so clients always reach whichever node is currently active.</li>
         </ol>
       </div>
 

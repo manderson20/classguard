@@ -230,6 +230,45 @@ router.post('/join', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/v1/ha/join-cluster — admin-driven UI action run on THIS node, to
+// join an existing primary's cluster using an invite token generated there.
+// Complements /join (which the PRIMARY exposes for a node to call into) by
+// giving the JOINING node's own admin a button in their own UI instead of
+// needing shell access to run a docker-compose command with env vars.
+// ---------------------------------------------------------------------------
+router.post('/join-cluster', ...superauth, async (req, res) => {
+  const { primary_url, token } = req.body;
+  if (!primary_url || !token) {
+    return res.status(400).json({ error: 'primary_url and token are required' });
+  }
+  const cleanUrl = primary_url.trim().replace(/\/+$/, '');
+  try {
+    const { data } = await axios.post(`${cleanUrl}/api/v1/ha/join`, {
+      token,
+      node_id:  config.node.id,
+      hostname: process.env.HOSTNAME || config.node.id,
+      api_url:  config.appUrl,
+    }, { timeout: 8000 });
+
+    // Reflect the role the invite assigned us locally too, so this node's
+    // own self-registration heartbeat (registerSelf) stays consistent with
+    // what the primary now has on record for it.
+    if (data?.node?.ha_role) {
+      await pool.query(
+        `UPDATE nodes SET ha_role = $1 WHERE node_id = $2`,
+        [data.node.ha_role, config.node.id]
+      ).catch(() => {});
+    }
+
+    res.json({ joined: true, primary_url: cleanUrl, node: data.node });
+  } catch (err) {
+    const message = err.response?.data?.error || err.message;
+    res.status(err.response?.status && err.response.status < 500 ? err.response.status : 502)
+      .json({ error: `Failed to join ${cleanUrl}: ${message}` });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/ha/summary
 // ---------------------------------------------------------------------------
 router.get('/summary', ...auth, async (req, res) => {
