@@ -4,7 +4,7 @@ const { query, withTransaction } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { invalidatePolicy, invalidateNetworkPolicy } = require('../services/policyResolver');
-const { parseCsv, classifyRows } = require('../services/goguardianImport');
+const { parseCsv, classifyRows, classifyUrl } = require('../services/goguardianImport');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -371,7 +371,19 @@ router.post('/:id/rules', async (req, res) => {
   if (!['allow','deny'].includes(rule_type)) {
     return res.status(400).json({ error: 'rule_type must be allow or deny' });
   }
-  const clean = domain.trim().toLowerCase().replace(/\.$/, '');
+  // Domain rules are matched by exact-match or subdomain-suffix only (DNS has
+  // no concept of "contains") — collapse any *.domain.com / domain.com* style
+  // wildcard input to the bare domain that match actually understands, same
+  // as the GoGuardian import path. A pattern that can't collapse (has a path,
+  // or a wildcard in the middle) would silently never match anything if saved
+  // here, so reject it and point at URL-Path Rules instead.
+  const classified = classifyUrl(domain);
+  if (classified.kind !== 'domain') {
+    return res.status(400).json({
+      error: `"${domain}" isn't a plain domain DNS filtering can match. For a URL path or wildcard like that, add it under URL-Path Rules instead (extension-only).`,
+    });
+  }
+  const clean = classified.value;
   const { rows: [rule] } = await query(
     `INSERT INTO policy_domain_rules (policy_id, domain, rule_type, added_by)
      VALUES ($1,$2,$3,$4)
@@ -650,10 +662,34 @@ router.post('/simulate', async (req, res) => {
   const domain = rawDomain.trim().toLowerCase().replace(/\.$/, '').replace(/^https?:\/\//, '').split('/')[0];
   const trace  = [];
 
-  // Resolve the student's effective policy
-  const { resolvePolicy } = require('../services/policyResolver');
-  const policy = await resolvePolicy(student_id || null);
-  trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(default passthrough)', mode: policy?.mode || 'standard' });
+  // Resolve the effective policy — must mirror dns-engine/src/resolver.js's
+  // own fallback exactly (lines ~67-78): a student's OU policy only applies
+  // while it's in lesson/penalty_box mode; otherwise (and always, for an
+  // unidentified device — no student_id) the network-wide DNS floor policy
+  // is what actually gets enforced. resolvePolicy(null) on its own returns
+  // a much narrower "default passthrough" with no domain rules at all, which
+  // made every "no student selected" simulation diverge from real traffic.
+  const { resolvePolicy, resolveNetworkPolicy } = require('../services/policyResolver');
+  let policy;
+  if (student_id) {
+    const ouPolicy = await resolvePolicy(student_id);
+    policy = (ouPolicy?.mode === 'lesson' || ouPolicy?.mode === 'penalty_box')
+      ? ouPolicy
+      : await resolveNetworkPolicy();
+  } else {
+    policy = await resolveNetworkPolicy();
+  }
+  trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(network floor)', mode: policy?.mode || 'standard' });
+
+  // Global allowlist (admin "AI/Allowlist" overrides) — checked first, before
+  // even lesson_mode/penalty_box, same precedence as resolver.js step 4.
+  const { rows: globalAllowRows } = await query(`SELECT domain FROM allowlist_overrides`);
+  const globalOverrideMatch = globalAllowRows.find(r => domain === r.domain || domain.endsWith(`.${r.domain}`));
+  if (globalOverrideMatch) {
+    trace.push({ step: 'global_allowlist', result: 'allowed', matched: globalOverrideMatch.domain });
+    return res.json({ blocked: false, reason: 'global_allowlist', domain, trace });
+  }
+  trace.push({ step: 'global_allowlist', result: 'no_match' });
 
   // Lesson mode
   if (policy?.mode === 'lesson') {
@@ -672,7 +708,7 @@ router.post('/simulate', async (req, res) => {
     return res.json({ blocked: true, reason: 'penalty_box', domain, trace });
   }
 
-  // Global allow-list
+  // Per-policy allow-list
   const globalAllow = (policy?.resolvedAllowDomains || []).some(e => domain === e || domain.endsWith(`.${e}`));
   if (globalAllow) {
     trace.push({ step: 'allow_list', result: 'allowed', matched: domain });

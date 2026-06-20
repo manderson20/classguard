@@ -5,6 +5,7 @@ const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const classifier         = require('../services/aiClassifier');
 const bookmarks          = require('../services/managedBookmarks');
+const { classifyUrl }    = require('../services/goguardianImport');
 
 const auth = [authenticate, requireMinRole('admin')];
 
@@ -124,7 +125,15 @@ router.post('/allowlist', ...auth, async (req, res) => {
   const { domain, notes } = req.body;
   if (!domain) return res.status(400).json({ error: 'domain required' });
 
-  const clean = domain.toLowerCase().replace(/^www\./, '').replace(/^https?:\/\//, '').split('/')[0];
+  const stripped = domain.toLowerCase().replace(/^www\./, '').replace(/^https?:\/\//, '').split('/')[0];
+  // Same collapse as policy domain rules — matching is exact/subdomain-suffix
+  // only, so a *.domain.com or domain.com* wildcard needs to collapse to the
+  // bare domain or it will silently never match anything.
+  const classified = classifyUrl(stripped);
+  if (classified.kind !== 'domain') {
+    return res.status(400).json({ error: `"${domain}" isn't a plain domain this allowlist can match.` });
+  }
+  const clean = classified.value;
 
   try {
     const { rows } = await pool.query(
