@@ -94,19 +94,19 @@ async function pollAll() {
     const status = r.status === 'fulfilled'
       ? r.value
       : { address: server.address, reachable: false, stratum: null, offset_ms: null,
-          delay_ms: null, jitter_ms: null, reference: null };
+          delay_ms: null, jitter_ms: null, reference: null, poll_interval: null };
 
     await pool.query(
       `INSERT INTO ntp_peer_status
-         (server_id, address, stratum, offset_ms, delay_ms, jitter_ms, reachable, reference, checked_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,NOW())
+         (server_id, address, stratum, offset_ms, delay_ms, jitter_ms, reachable, reference, poll_interval, checked_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
        ON CONFLICT (server_id) DO UPDATE SET
          stratum = EXCLUDED.stratum, offset_ms = EXCLUDED.offset_ms,
          delay_ms = EXCLUDED.delay_ms, jitter_ms = EXCLUDED.jitter_ms,
          reachable = EXCLUDED.reachable, reference = EXCLUDED.reference,
-         checked_at = NOW()`,
+         poll_interval = EXCLUDED.poll_interval, checked_at = NOW()`,
       [server.id, status.address, status.stratum, status.offset_ms,
-       status.delay_ms, status.jitter_ms, status.reachable, status.reference]
+       status.delay_ms, status.jitter_ms, status.reachable, status.reference, status.poll_interval]
     );
   }
 

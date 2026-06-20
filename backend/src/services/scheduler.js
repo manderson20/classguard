@@ -13,6 +13,7 @@ const dhcpKeaSync = require('./dhcpKeaSync');
 const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
 const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 const radiusSync = require('./radiusSync');
+const ntp = require('./ntp');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -285,6 +286,13 @@ function startScheduler() {
   // as NAS clients) so 802.1X access doesn't require manual entry per device.
   cron.schedule('*/30 * * * *', () => {
     radiusSync.syncAllSources().catch(err => console.error('[scheduler] radius-sync error:', err.message));
+  });
+
+  // NTP server polling — every 5 minutes. Previously only ran when an admin
+  // clicked "Poll Now" on the NTP page, so the dashboard showed stale (or,
+  // combined with a separate response-shape bug, no) data indefinitely.
+  cron.schedule('*/5 * * * *', () => {
+    ntp.pollAll().catch(err => console.error('[scheduler] ntp-poll error:', err.message));
   });
 }
 
