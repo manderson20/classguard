@@ -370,14 +370,24 @@ function TlsSection() {
   });
 
   const issue = useMutation({
-    mutationFn: () => api.post('/tls/issue'),
-    onSuccess:  () => qc.invalidateQueries({ queryKey: ['tls-config'] }),
+    // Issuing reads the persisted DB config, not whatever's selected in the
+    // form locally — save any pending edits first so "change provider, hit
+    // Issue" in one motion issues against what's actually on screen, instead
+    // of silently re-issuing with whatever provider was last saved.
+    mutationFn: async () => {
+      if (form) await api.put('/tls', form);
+      return api.post('/tls/issue');
+    },
+    onSuccess:  () => { setForm(null); qc.invalidateQueries({ queryKey: ['tls-config'] }); },
     onError:    err => setActionError(err.message),
   });
 
   const manualStart = useMutation({
-    mutationFn: () => api.post('/tls/manual/start'),
-    onSuccess:  (data) => { setManualRecord(data); qc.invalidateQueries({ queryKey: ['tls-config'] }); },
+    mutationFn: async () => {
+      if (form) await api.put('/tls', form);
+      return api.post('/tls/manual/start');
+    },
+    onSuccess:  (data) => { setForm(null); setManualRecord(data); qc.invalidateQueries({ queryKey: ['tls-config'] }); },
     onError:    err => setActionError(err.message),
   });
 
