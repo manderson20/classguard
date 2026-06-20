@@ -6,6 +6,17 @@ const { Pool } = require('pg');
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
 async function migrate() {
+  // A standby's schema is whatever the primary has, via streaming
+  // replication — there's nothing for it to migrate itself, and any DDL
+  // attempt (even a no-op CREATE TABLE IF NOT EXISTS) fails outright
+  // against a read-only replica before it even checks if the table exists.
+  const { rows: [{ in_recovery }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery');
+  if (in_recovery) {
+    console.log('This node is a read-only standby — skipping migrations (schema comes from the primary via replication).');
+    await pool.end();
+    return;
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
       filename   VARCHAR(255) PRIMARY KEY,
