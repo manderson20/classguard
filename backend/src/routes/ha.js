@@ -177,7 +177,7 @@ router.delete('/invites/:id', ...auth, async (req, res) => {
 // No JWT auth — uses the invite token instead.
 // ---------------------------------------------------------------------------
 router.post('/join', async (req, res) => {
-  const { token, node_id, hostname, api_url, ha_role } = req.body;
+  const { token, node_id, hostname, api_url, ha_role, request_replica } = req.body;
   if (!token || !node_id || !api_url) {
     return res.status(400).json({ error: 'token, node_id, and api_url are required' });
   }
@@ -204,7 +204,7 @@ router.post('/join', async (req, res) => {
     const { rows: nodeRows } = await client.query(
       `INSERT INTO nodes (node_id, hostname, ip, role, ha_role, api_url, version, last_seen, is_active)
        VALUES ($1, $2, '0.0.0.0', 'secondary', $3, $4, 'unknown', NOW(), true)
-       ON CONFLICT (node_id) DO UPDATE SET
+       ON CONFLICT (node_id) WHERE node_id IS NOT NULL DO UPDATE SET
          hostname  = EXCLUDED.hostname,
          ha_role   = EXCLUDED.ha_role,
          api_url   = EXCLUDED.api_url,
@@ -219,8 +219,26 @@ router.post('/join', async (req, res) => {
       [nodeRows[0].id, invite.id]
     );
 
+    // Optionally provision a Postgres replication credential for the joining
+    // node in the same transaction. The role's password is rotated on every
+    // call (not just created once) so each join gets a fresh credential and
+    // a stale one from a previous attempt stops working.
+    let replication = null;
+    if (request_replica) {
+      const password = crypto.randomBytes(18).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 24);
+      const { rows: roleRows } = await client.query(`SELECT 1 FROM pg_roles WHERE rolname = 'replicator'`);
+      if (roleRows.length) {
+        await client.query(`ALTER ROLE replicator WITH PASSWORD '${password}'`);
+      } else {
+        await client.query(`CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '${password}'`);
+      }
+      let primaryHost;
+      try { primaryHost = new URL(config.appUrl).hostname; } catch { primaryHost = config.appUrl; }
+      replication = { host: primaryHost, port: 5432, user: 'replicator', password };
+    }
+
     await client.query('COMMIT');
-    res.status(201).json({ joined: true, node: nodeRows[0] });
+    res.status(201).json({ joined: true, node: nodeRows[0], replication });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -237,7 +255,7 @@ router.post('/join', async (req, res) => {
 // needing shell access to run a docker-compose command with env vars.
 // ---------------------------------------------------------------------------
 router.post('/join-cluster', ...superauth, async (req, res) => {
-  const { primary_url, token } = req.body;
+  const { primary_url, token, request_replica } = req.body;
   if (!primary_url || !token) {
     return res.status(400).json({ error: 'primary_url and token are required' });
   }
@@ -248,6 +266,7 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
       node_id:  config.node.id,
       hostname: process.env.HOSTNAME || config.node.id,
       api_url:  config.appUrl,
+      request_replica: !!request_replica,
     }, { timeout: 8000 });
 
     // Reflect the role the invite assigned us locally too, so this node's
@@ -260,7 +279,29 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
       ).catch(() => {});
     }
 
-    res.json({ joined: true, primary_url: cleanUrl, node: data.node });
+    // We can't safely run docker/volume commands from inside this container
+    // (that needs Docker-socket access, a real security tradeoff we don't
+    // make implicitly) — so instead of doing the pg_basebackup ourselves,
+    // hand back a ready-to-run script with the credentials already filled
+    // in. One paste on this server replaces the manual multi-step dance.
+    let setupScript = null;
+    if (data?.replication) {
+      const { host, port, user, password } = data.replication;
+      setupScript = [
+        'cd /opt/classguard',
+        'docker compose down',
+        'docker volume rm classguard_postgres-data',
+        'docker volume create classguard_postgres-data',
+        'docker run --rm \\',
+        '  -v classguard_postgres-data:/var/lib/postgresql/data \\',
+        `  -e PGPASSWORD='${password}' \\`,
+        '  timescale/timescaledb:latest-pg15 \\',
+        `  pg_basebackup -h ${host} -p ${port} -U ${user} -D /var/lib/postgresql/data -Fp -Xs -P -R`,
+        'docker compose up -d postgres',
+      ].join('\n');
+    }
+
+    res.json({ joined: true, primary_url: cleanUrl, node: data.node, setup_script: setupScript });
   } catch (err) {
     const message = err.response?.data?.error || err.message;
     res.status(err.response?.status && err.response.status < 500 ? err.response.status : 502)
