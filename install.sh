@@ -168,15 +168,17 @@ section "Step 6 — Start services"
 info "Starting postgres and redis first..."
 docker compose up -d postgres redis
 
+# On a brand new volume, TimescaleDB auto-tunes itself and restarts once
+# during its very first init (separate from our own db-init script) — a
+# bare `pg_isready` can catch it ready during that restart's brief window
+# and falsely report success right before it bounces. `--wait` polls the
+# real Compose healthcheck (which needs several consecutive successful
+# checks, not just one) so it rides out that blip correctly.
 info "Waiting for postgres to be healthy..."
-for i in $(seq 1 30); do
-  if docker compose exec -T postgres pg_isready -U classguard &>/dev/null; then
-    info "PostgreSQL is ready"
-    break
-  fi
-  if [[ $i -eq 30 ]]; then error "PostgreSQL did not become ready in time"; fi
-  sleep 2
-done
+if ! docker compose up -d --wait postgres redis; then
+  error "PostgreSQL/Redis did not become healthy in time — check: docker compose logs postgres"
+fi
+info "PostgreSQL is ready"
 
 info "Running database migrations..."
 docker compose run --rm migrate
