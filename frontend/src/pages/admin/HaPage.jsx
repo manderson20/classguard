@@ -425,6 +425,26 @@ function VrrpSection() {
           certificates only ever talk to one address, regardless of which physical node is currently active.
           Install keepalived directly on the host (not in Docker) on each node and deploy the matching config below.
         </p>
+
+        {cfg.vip_address && (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 flex items-start justify-between gap-3">
+            <p className="text-xs text-amber-800">
+              On <strong>each</strong> node, also add this to <code>.env</code> and run{' '}
+              <code>docker compose up -d frontend</code> — without it, the admin UI shows the DNS block page
+              instead of loading when reached via the virtual IP (the floating address has a different Host
+              header than this node's own address, which nginx doesn't otherwise recognize).
+              <br />
+              <code className="block mt-1 bg-amber-100 px-2 py-1 rounded">VRRP_VIP={cfg.vip_address}</code>
+            </p>
+            <button
+              onClick={() => navigator.clipboard.writeText(`VRRP_VIP=${cfg.vip_address}`)}
+              className="text-xs text-amber-700 hover:underline whitespace-nowrap"
+            >
+              Copy
+            </button>
+          </div>
+        )}
+
         <div className="grid md:grid-cols-3 gap-4">
           <Field label="Virtual IP Address (VIP)" hint="shared between nodes">
             <input className={INPUT} value={cfg.vip_address || ''} onChange={e => set('vip_address', e.target.value)} placeholder="172.16.1.249" />
