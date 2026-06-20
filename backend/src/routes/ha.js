@@ -82,6 +82,33 @@ function startHeartbeat() {
       `UPDATE nodes SET last_seen = NOW() WHERE node_id = $1`,
       [config.node.id]
     ).catch(() => {});
+
+    // Split-brain probe — only meaningful for a node that believes it's an
+    // active primary. The scenario this exists for: this node was the
+    // primary, lost contact with the rest of the cluster, another node got
+    // promoted in its place, and now this node is back — its own Postgres
+    // never received that news (it's a separate, diverged writable cluster
+    // now, not a standby of anything), so the only way it can find out is
+    // by asking another node directly over the network. api_url is a
+    // stable IP regardless of how stale this node's own ha_role data is.
+    if (config.node.role === 'primary') {
+      const { rows: peers } = await pool.query(
+        `SELECT api_url FROM nodes WHERE node_id != $1 AND api_url IS NOT NULL`,
+        [config.node.id]
+      );
+      let conflict = false;
+      for (const { api_url } of peers) {
+        try {
+          const { data } = await axios.get(`${api_url}/api/v1/ha/role-check`, { timeout: 3000 });
+          if (data.role === 'primary' && data.in_recovery === false) { conflict = true; break; }
+        } catch { /* peer unreachable — not evidence either way, keep checking others */ }
+      }
+      await pool.query(
+        `INSERT INTO settings (key, value) VALUES ('split_brain_detected', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [conflict ? 'true' : 'false']
+      ).catch(() => {});
+    }
   }, 30_000);
 }
 
@@ -124,6 +151,92 @@ router.get('/nodes/:nodeId', ...auth, async (req, res) => {
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/ha/role-check — unauthenticated by design (no secrets in the
+// response), called by OTHER nodes' heartbeats to detect a split-brain: two
+// nodes both believing they're an active, writable primary at the same
+// time. Must work even if the caller's view of this node is completely
+// stale, so it can't depend on anything replicated.
+// ---------------------------------------------------------------------------
+router.get('/role-check', async (req, res) => {
+  const { rows: [row] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery')
+    .catch(() => ({ rows: [{ in_recovery: null }] }));
+  res.json({ node_id: config.node.id, role: config.node.role, in_recovery: row.in_recovery });
+});
+
+// GET /api/v1/ha/split-brain-status — for the UI's warning banner
+router.get('/split-brain-status', ...auth, async (req, res) => {
+  const { rows: [row] } = await pool.query(`SELECT value FROM settings WHERE key = 'split_brain_detected'`);
+  res.json({ detected: row?.value === 'true' });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/ha/promote — turns THIS standby into a real, writable
+// primary. Must be called directly against the node being promoted —
+// there's no live primary to relay through, that's the entire point of
+// this endpoint. Irreversible, and dangerous if the old primary is still
+// alive somewhere (split-brain) — the role-check probe in the heartbeat is
+// the closest thing to a safety net for that, but it can only detect it
+// after the fact, not prevent it, hence the required explicit confirm flag.
+// ---------------------------------------------------------------------------
+router.post('/promote', ...superauth, async (req, res) => {
+  if (!req.body.confirm) {
+    return res.status(400).json({ error: 'confirm:true is required — this is irreversible' });
+  }
+  try {
+    const { rows: [{ in_recovery }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery');
+    if (!in_recovery) {
+      return res.status(400).json({ error: 'This node is already a writable primary' });
+    }
+
+    await pool.query('SELECT pg_promote()');
+
+    // pg_promote() returns almost immediately but recovery actually ending
+    // lags a beat behind — poll briefly rather than assume it's instant.
+    let promoted = false;
+    for (let i = 0; i < 20; i++) {
+      const { rows: [{ in_recovery: stillRecovering }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery');
+      if (!stillRecovering) { promoted = true; break; }
+      await new Promise(r => setTimeout(r, 500));
+    }
+    if (!promoted) {
+      return res.status(500).json({ error: 'pg_promote() did not complete in time — check postgres logs' });
+    }
+
+    const nodeId = config.node.id;
+    await pool.query(`UPDATE nodes SET ha_role = 'primary', is_active = true WHERE node_id = $1`, [nodeId]);
+    // Purely informational on this node's own (now-authoritative) copy —
+    // does NOT reach out and touch the old primary, which may not even be
+    // reachable right now.
+    await pool.query(`UPDATE nodes SET ha_role = 'demoted' WHERE node_id != $1 AND ha_role = 'primary'`, [nodeId]);
+
+    await pool.query(
+      `INSERT INTO settings (key, value) VALUES ('pending_promotion_env_update', 'true')
+       ON CONFLICT (key) DO UPDATE SET value = 'true'`
+    );
+
+    res.json({ promoted: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/ha/promote-status — local-only, polled by the host-level
+// update-watcher to know when to flip NODE_ROLE/RUN_CRON_JOBS in .env and
+// bring up the rest of the stack (Kea included, this node is a real primary
+// now).
+router.get('/promote-status', async (req, res) => {
+  const { rows: [row] } = await pool.query(`SELECT value FROM settings WHERE key = 'pending_promotion_env_update'`);
+  res.json({ pending: row?.value === 'true' });
+});
+
+// POST /api/v1/ha/promote-complete — local-only, clears the flag once the
+// watcher has flipped .env and restarted the right containers.
+router.post('/promote-complete', async (req, res) => {
+  await pool.query(`DELETE FROM settings WHERE key = 'pending_promotion_env_update'`);
+  res.json({ cleared: true });
 });
 
 // PUT /api/v1/ha/nodes/:nodeId/role

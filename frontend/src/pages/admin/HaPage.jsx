@@ -17,6 +17,85 @@ function Field({ label, hint, children }) {
 }
 
 // ---------------------------------------------------------------------------
+// Promote to Primary — only relevant when THIS node (whichever API the
+// frontend is currently talking to) is a standby. There's no live primary
+// to relay this through, by design — if you're looking at this on a
+// standby's own UI, it's because the real primary is unreachable. Also
+// surfaces the split-brain warning, since an old primary coming back
+// online after another node was promoted has no way to find out except by
+// asking that other node directly (see role-check probe in ha.js).
+// ---------------------------------------------------------------------------
+function PromoteSection() {
+  const qc = useQueryClient();
+  const [confirming, setConfirming] = useState(false);
+
+  const { data: self } = useQuery({
+    queryKey: ['ha-role-check-self'],
+    queryFn:  () => api.get('/ha/role-check'),
+    refetchInterval: 15_000,
+  });
+
+  const { data: splitBrain } = useQuery({
+    queryKey: ['ha-split-brain'],
+    queryFn:  () => api.get('/ha/split-brain-status'),
+    refetchInterval: 15_000,
+  });
+
+  const promote = useMutation({
+    mutationFn: () => api.post('/ha/promote', { confirm: true }),
+    onSuccess:  () => { setConfirming(false); qc.invalidateQueries(); },
+  });
+
+  return (
+    <>
+      {splitBrain?.detected && (
+        <div className="bg-red-50 border border-red-300 rounded-xl p-4 mb-6 text-sm text-red-900">
+          <p className="font-semibold mb-1">Split-brain detected</p>
+          <p>
+            This node believes it's the primary, but another node in the cluster is also an active, writable
+            primary right now. They are no longer replicating from each other and may already have diverging
+            data. Stop writes on one of them immediately and decide which copy is authoritative before doing
+            anything else — this needs to be resolved manually.
+          </p>
+        </div>
+      )}
+
+      {self?.in_recovery && (
+        <div className="bg-white border border-amber-300 rounded-xl p-5 shadow-sm mb-8">
+          <h2 className="font-semibold text-slate-800 mb-2">Promote This Node to Primary</h2>
+          <p className="text-xs text-slate-500 mb-4">
+            This node is currently a read-only standby. Promoting it makes its database writable and starts
+            cron jobs (TLS renewal, blocklist sync, etc.) here — only do this if the actual primary is down and
+            not coming back without intervention. If the old primary is still running anywhere, promoting this
+            node will cause the two to diverge irrecoverably (split-brain).
+          </p>
+          {!confirming ? (
+            <button onClick={() => setConfirming(true)} className="btn-secondary text-sm border-amber-400 text-amber-700">
+              Promote to Primary…
+            </button>
+          ) : (
+            <div className="flex items-center gap-3">
+              <button onClick={() => promote.mutate()} disabled={promote.isPending} className="btn-primary text-sm bg-red-600 hover:bg-red-700">
+                {promote.isPending ? 'Promoting…' : "Yes, I'm sure — promote now"}
+              </button>
+              <button onClick={() => setConfirming(false)} className="text-sm text-slate-500 hover:underline">
+                Cancel
+              </button>
+            </div>
+          )}
+          {promote.error && <p className="text-red-600 text-sm mt-2">{promote.error.message}</p>}
+          {promote.isSuccess && (
+            <p className="text-green-600 text-sm mt-2">
+              Promoted — this node's host-level watcher will flip its role and restart services within a minute.
+            </p>
+          )}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Software Updates — checks the installed version against GitHub's main
 // branch, and lets an admin schedule a maintenance window instead of
 // running anything by hand. Scheduling cascades to every registered node
@@ -910,6 +989,8 @@ export default function HaPage() {
           + Add Server
         </button>
       </div>
+
+      <PromoteSection />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
