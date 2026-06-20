@@ -30,6 +30,12 @@ services:
       - ./infrastructure/postgres/init-kea-db.sh:/docker-entrypoint-initdb.d/init-kea-db.sh:ro
     networks:
       - classguard-net
+    # Only published when this node is acting as a replication source for
+    # another node — bound to the LAN IP (never 0.0.0.0) so it's reachable
+    # from other servers on the network but not the public internet. The
+    # replicator role + pg_hba.conf still gate who can actually connect.
+    ports:
+      - "${CLASSGUARD_HOST:-172.16.1.250}:5432:5432"
     healthcheck:
       test:     ["CMD-SHELL", "pg_isready -U classguard"]
       interval: 10s
