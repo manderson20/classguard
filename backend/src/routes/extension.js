@@ -20,6 +20,19 @@ fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 const router     = Router();
 const oauthClient = new OAuth2Client(config.google.clientId);
 
+// Admins/superadmins aren't scoped to a roster, only teachers are — these
+// remote-device commands are privileged enough that a teacher should only
+// ever be able to target a student actually on one of their own rosters.
+async function teacherOwnsStudent(teacherId, studentId) {
+  const { rows } = await query(
+    `SELECT 1 FROM class_members cm
+     JOIN classes c ON c.id = cm.class_id
+     WHERE cm.student_id = $1 AND c.teacher_id = $2 LIMIT 1`,
+    [studentId, teacherId]
+  );
+  return rows.length > 0;
+}
+
 // ---------------------------------------------------------------------------
 // POST /api/v1/extension/auth
 // Exchange a Google OAuth access token (from chrome.identity.getAuthToken) for
@@ -181,7 +194,7 @@ router.post('/heartbeat', authenticate, async (req, res) => {
 // Body: { url, title }
 // ---------------------------------------------------------------------------
 router.post('/tab-event', authenticate, async (req, res) => {
-  const { url, title = '' } = req.body;
+  const { url, title = '', event = 'navigation' } = req.body;
   if (!url) return res.status(400).json({ error: 'url required' });
 
   const studentId = req.user.userId;
@@ -196,14 +209,36 @@ router.post('/tab-event', authenticate, async (req, res) => {
     'student_id', studentId,
     'url',        url.substring(0, 1000),
     'title',      title.substring(0, 200),
+    'event',      event,
     'ts',         ts.toString()
   ).catch(() => {});
+
+  // For an actual navigation (not a tab-closed report), look up the most
+  // recent matching dns_logs row so the teacher's live view can show WHY a
+  // domain was blocked without a separate polling endpoint — the DNS engine
+  // already decided allow/block before the browser ever got here.
+  let action = null, block_reason = null;
+  if (event === 'navigation') {
+    try {
+      const hostname = new URL(url).hostname;
+      const { rows } = await query(
+        `SELECT action, block_reason FROM dns_logs
+         WHERE user_id = $1 AND domain = $2
+         ORDER BY queried_at DESC LIMIT 1`,
+        [studentId, hostname]
+      );
+      if (rows[0]) { action = rows[0].action; block_reason = rows[0].block_reason; }
+    } catch { /* malformed URL — skip the lookup, not fatal */ }
+  }
 
   // Emit to teacher dashboards via the Socket.io bridge
   events.emit('student:activity', {
     studentId,
     url:   url.substring(0, 1000),
     title: title.substring(0, 200),
+    event,
+    action,
+    block_reason,
     ts,
   });
 
@@ -428,6 +463,10 @@ router.post('/request-screenshot', authenticate, requireMinRole('teacher'), asyn
   const { student_id } = req.body;
   if (!student_id) return res.status(400).json({ error: 'student_id required' });
 
+  if (req.user.role === 'teacher' && !(await teacherOwnsStudent(req.user.userId, student_id))) {
+    return res.status(403).json({ error: 'This student is not on one of your rosters' });
+  }
+
   // Emit to the student's connected extension socket
   events.emit('teacher:screenshot_request', {
     studentId:   student_id,
@@ -435,6 +474,74 @@ router.post('/request-screenshot', authenticate, requireMinRole('teacher'), asyn
   });
 
   res.json({ ok: true, message: 'Screenshot request sent to device' });
+});
+
+// ---------------------------------------------------------------------------
+// Remote device commands — lock/unlock screen, open/close tab. Same shape as
+// request-screenshot above: authenticate, verify roster ownership, emit a
+// teacher:* event for sockets/index.js to relay to the student's extension,
+// log to teacher_actions for accountability.
+// ---------------------------------------------------------------------------
+async function logTeacherAction(req, student_id, action_type, detail = null) {
+  let classId = null;
+  try {
+    const { rows } = await query(
+      `SELECT cm.class_id FROM class_members cm
+       JOIN classes c ON c.id = cm.class_id
+       WHERE cm.student_id = $1 AND c.teacher_id = $2 LIMIT 1`,
+      [student_id, req.user.userId]
+    );
+    classId = rows[0]?.class_id || null;
+  } catch { /* best-effort, audit log shouldn't block the action */ }
+  await query(
+    `INSERT INTO teacher_actions (teacher_id, student_id, class_id, action_type, detail)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [req.user.userId, student_id, classId, action_type, detail]
+  ).catch(() => {});
+}
+
+router.post('/lock-request', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { student_id, message } = req.body;
+  if (!student_id) return res.status(400).json({ error: 'student_id required' });
+  if (req.user.role === 'teacher' && !(await teacherOwnsStudent(req.user.userId, student_id))) {
+    return res.status(403).json({ error: 'This student is not on one of your rosters' });
+  }
+  events.emit('teacher:lock_request', { studentId: student_id, message: message || null });
+  await logTeacherAction(req, student_id, 'lock', message || null);
+  res.json({ ok: true });
+});
+
+router.post('/unlock-request', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { student_id } = req.body;
+  if (!student_id) return res.status(400).json({ error: 'student_id required' });
+  if (req.user.role === 'teacher' && !(await teacherOwnsStudent(req.user.userId, student_id))) {
+    return res.status(403).json({ error: 'This student is not on one of your rosters' });
+  }
+  events.emit('teacher:unlock_request', { studentId: student_id });
+  await logTeacherAction(req, student_id, 'unlock');
+  res.json({ ok: true });
+});
+
+router.post('/open-tab-request', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { student_id, url } = req.body;
+  if (!student_id) return res.status(400).json({ error: 'student_id required' });
+  if (req.user.role === 'teacher' && !(await teacherOwnsStudent(req.user.userId, student_id))) {
+    return res.status(403).json({ error: 'This student is not on one of your rosters' });
+  }
+  events.emit('teacher:open_tab_request', { studentId: student_id, url: url || null });
+  await logTeacherAction(req, student_id, 'open_tab', url || null);
+  res.json({ ok: true });
+});
+
+router.post('/close-tab-request', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { student_id } = req.body;
+  if (!student_id) return res.status(400).json({ error: 'student_id required' });
+  if (req.user.role === 'teacher' && !(await teacherOwnsStudent(req.user.userId, student_id))) {
+    return res.status(403).json({ error: 'This student is not on one of your rosters' });
+  }
+  events.emit('teacher:close_tab_request', { studentId: student_id });
+  await logTeacherAction(req, student_id, 'close_tab');
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------

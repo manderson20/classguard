@@ -51,7 +51,7 @@ const setupSockets = (io) => {
   // Student tab activity: forward to all class rooms the student belongs to
   // Uses a Redis-cached class membership list (TTL 5 min) to avoid a DB query
   // on every browser navigation.
-  events.on('student:activity', async ({ studentId, url, title, ts }) => {
+  events.on('student:activity', async ({ studentId, url, title, ts, event, action, block_reason }) => {
     if (!studentId) return;
 
     try {
@@ -63,14 +63,14 @@ const setupSockets = (io) => {
         classIds = JSON.parse(cached);
       } else {
         const { rows } = await query(
-          'SELECT class_id FROM class_members WHERE user_id = $1',
+          'SELECT class_id FROM class_members WHERE student_id = $1',
           [studentId]
         );
         classIds = rows.map(r => r.class_id);
         await redis.set(cacheKey, JSON.stringify(classIds), 'EX', 300);
       }
 
-      const payload = { studentId, url, title, ts };
+      const payload = { studentId, url, title, ts, event, action, block_reason };
       for (const classId of classIds) {
         io.to(`class:${classId}`).emit('student:activity', payload);
       }
@@ -98,6 +98,24 @@ const setupSockets = (io) => {
     if (studentId) {
       io.to(`student:${studentId}`).emit('screenshot:request');
     }
+  });
+
+  // Remote device commands — same shape as screenshot_request above, one
+  // event in, one matching command out to the student's extension socket.
+  events.on('teacher:lock_request', ({ studentId, message }) => {
+    if (studentId) io.to(`student:${studentId}`).emit('lock:engage', { message });
+  });
+
+  events.on('teacher:unlock_request', ({ studentId }) => {
+    if (studentId) io.to(`student:${studentId}`).emit('lock:release');
+  });
+
+  events.on('teacher:open_tab_request', ({ studentId, url }) => {
+    if (studentId) io.to(`student:${studentId}`).emit('tab:open', { url });
+  });
+
+  events.on('teacher:close_tab_request', ({ studentId }) => {
+    if (studentId) io.to(`student:${studentId}`).emit('tab:close');
   });
 };
 

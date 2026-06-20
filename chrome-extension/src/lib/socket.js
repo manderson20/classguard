@@ -8,7 +8,10 @@ import { getServerUrl } from './api.js';
 
 let _socket = null;
 
-export async function connectSocket({ jwt, onPolicyUpdated, onScreenshotRequest }) {
+export async function connectSocket({
+  jwt, onPolicyUpdated, onScreenshotRequest,
+  onLockRequest, onUnlockRequest, onOpenTabRequest, onCloseTabRequest,
+}) {
   if (_socket && _socket.connected) return;
   if (_socket) _socket.disconnect();
 
@@ -30,6 +33,20 @@ export async function connectSocket({ jwt, onPolicyUpdated, onScreenshotRequest 
   // Teacher-initiated screenshot request from backend
   _socket.on('screenshot:request', () => {
     if (typeof onScreenshotRequest === 'function') onScreenshotRequest('teacher_request');
+  });
+
+  // Teacher-initiated remote device commands
+  _socket.on('lock:engage', (data) => {
+    if (typeof onLockRequest === 'function') onLockRequest(data);
+  });
+  _socket.on('lock:release', () => {
+    if (typeof onUnlockRequest === 'function') onUnlockRequest();
+  });
+  _socket.on('tab:open', (data) => {
+    if (typeof onOpenTabRequest === 'function') onOpenTabRequest(data);
+  });
+  _socket.on('tab:close', () => {
+    if (typeof onCloseTabRequest === 'function') onCloseTabRequest();
   });
 }
 

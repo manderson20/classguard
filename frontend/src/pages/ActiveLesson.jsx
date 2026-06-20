@@ -4,8 +4,11 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 
-function StudentTile({ student, activity, onRestrict, onRelease }) {
-  const [highlight, setHighlight] = useState(false);
+function StudentTile({ student, activity, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab }) {
+  const [highlight, setHighlight]   = useState(false);
+  const [locked, setLocked]         = useState(false);
+  const [urlInputOpen, setUrlInputOpen] = useState(false);
+  const [urlInput, setUrlInput]     = useState('');
   const prevUrl = useRef(null);
 
   useEffect(() => {
@@ -22,6 +25,20 @@ function StudentTile({ student, activity, onRestrict, onRelease }) {
   })();
 
   const isRestricted = student.policy_mode === 'penalty_box';
+  const isBlocked     = activity?.action === 'blocked';
+  const isClosed       = activity?.event === 'closed';
+
+  const toggleLock = () => {
+    if (locked) { onUnlock(student.id); setLocked(false); }
+    else { onLock(student.id); setLocked(true); }
+  };
+
+  const submitUrl = () => {
+    if (!urlInput.trim()) return;
+    onOpenTabUrl(student.id, urlInput.trim());
+    setUrlInput('');
+    setUrlInputOpen(false);
+  };
 
   return (
     <div className={`card p-4 transition-all ${highlight ? 'ring-2 ring-blue-400' : ''} ${isRestricted ? 'opacity-60' : ''}`}>
@@ -41,6 +58,11 @@ function StudentTile({ student, activity, onRestrict, onRelease }) {
       <div className="min-h-[36px]">
         {isRestricted ? (
           <span className="text-xs text-amber-600 font-medium">⚠️ Restricted</span>
+        ) : isBlocked ? (
+          <div>
+            <div className="text-xs font-semibold text-red-600 truncate">Blocked: {activity.block_reason || hostname}</div>
+            <div className="text-xs text-slate-400 font-mono truncate">{hostname}</div>
+          </div>
         ) : hostname ? (
           <div>
             <div className="text-xs font-mono text-primary-700 truncate">{hostname}</div>
@@ -51,7 +73,36 @@ function StudentTile({ student, activity, onRestrict, onRelease }) {
         ) : (
           <span className="text-xs text-slate-400">Waiting for activity…</span>
         )}
+        {isClosed && <div className="text-xs text-slate-400 italic mt-0.5">Tab closed</div>}
       </div>
+
+      <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-slate-100">
+        <button onClick={toggleLock}
+          className={`text-xs px-2 py-1 rounded-md border ${locked ? 'bg-slate-700 text-white border-slate-700' : 'text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
+          {locked ? 'Unlock' : 'Lock'}
+        </button>
+        <button onClick={() => onOpenTab(student.id)}
+          className="text-xs px-2 py-1 rounded-md border text-slate-600 border-slate-300 hover:bg-slate-50">
+          Open Tab
+        </button>
+        <button onClick={() => setUrlInputOpen(v => !v)}
+          className="text-xs px-2 py-1 rounded-md border text-slate-600 border-slate-300 hover:bg-slate-50">
+          Open URL…
+        </button>
+        <button onClick={() => onCloseTab(student.id)}
+          className="text-xs px-2 py-1 rounded-md border text-slate-600 border-slate-300 hover:bg-slate-50">
+          Close Tab
+        </button>
+      </div>
+
+      {urlInputOpen && (
+        <div className="flex gap-1.5 mt-2">
+          <input autoFocus value={urlInput} onChange={e => setUrlInput(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && submitUrl()}
+            placeholder="https://…" className="flex-1 text-xs border border-slate-300 rounded-md px-2 py-1" />
+          <button onClick={submitUrl} className="text-xs px-2 py-1 rounded-md bg-blue-600 text-white">Go</button>
+        </div>
+      )}
     </div>
   );
 }
@@ -95,6 +146,12 @@ export default function ActiveLesson() {
     mutationFn: (studentId) => api.delete(`/penalty-box/${studentId}`),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['class', classId] }),
   });
+
+  const lock        = useMutation({ mutationFn: (studentId) => api.post('/extension/lock-request', { student_id: studentId }) });
+  const unlock       = useMutation({ mutationFn: (studentId) => api.post('/extension/unlock-request', { student_id: studentId }) });
+  const openTab      = useMutation({ mutationFn: (studentId) => api.post('/extension/open-tab-request', { student_id: studentId }) });
+  const openTabUrl   = useMutation({ mutationFn: ({ studentId, url }) => api.post('/extension/open-tab-request', { student_id: studentId, url }) });
+  const closeTab     = useMutation({ mutationFn: (studentId) => api.post('/extension/close-tab-request', { student_id: studentId }) });
 
   if (!cls) return null;
 
@@ -146,6 +203,11 @@ export default function ActiveLesson() {
                 activity={activity[student.id]}
                 onRestrict={(id) => restrict.mutate(id)}
                 onRelease={(id) => release.mutate(id)}
+                onLock={(id) => lock.mutate(id)}
+                onUnlock={(id) => unlock.mutate(id)}
+                onOpenTab={(id) => openTab.mutate(id)}
+                onOpenTabUrl={(id, url) => openTabUrl.mutate({ studentId: id, url })}
+                onCloseTab={(id) => closeTab.mutate(id)}
               />
             ))}
           </div>

@@ -40,7 +40,7 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
 
   if (role === 'teacher') {
     conditions.push(`u.id IN (
-      SELECT cm.user_id FROM class_members cm
+      SELECT cm.student_id FROM class_members cm
       JOIN classes c ON c.id = cm.class_id
       WHERE c.teacher_id = $${values.length + 1}
     )`);
@@ -116,7 +116,7 @@ router.get('/:id/effective-policy', authenticate, requireMinRole('teacher'), asy
     const { rows: membership } = await query(
       `SELECT 1 FROM class_members cm
        JOIN classes c ON c.id = cm.class_id
-       WHERE cm.user_id = $1 AND c.teacher_id = $2
+       WHERE cm.student_id = $1 AND c.teacher_id = $2
        LIMIT 1`,
       [req.params.id, req.user.userId]
     );

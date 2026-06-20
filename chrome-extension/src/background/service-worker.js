@@ -42,6 +42,7 @@ async function init() {
 
   chrome.alarms.onAlarm.addListener(onAlarm);
   chrome.tabs.onUpdated.addListener(onTabUpdated);
+  chrome.tabs.onRemoved.addListener(onTabRemoved);
 
   const jwt = await getStoredJWT();
   if (jwt) {
@@ -52,6 +53,10 @@ async function init() {
       jwt,
       onPolicyUpdated:   () => syncPolicy(),
       onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
+      onLockRequest:     (data) => lockScreen(data?.message),
+      onUnlockRequest:   () => unlockScreen(),
+      onOpenTabRequest:  (data) => openTab(data?.url),
+      onCloseTabRequest: () => closeTab(),
     });
   } else {
     await authenticate();
@@ -85,6 +90,10 @@ async function authenticate() {
       jwt: token,
       onPolicyUpdated:   () => syncPolicy(),
       onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
+      onLockRequest:     (data) => lockScreen(data?.message),
+      onUnlockRequest:   () => unlockScreen(),
+      onOpenTabRequest:  (data) => openTab(data?.url),
+      onCloseTabRequest: () => closeTab(),
     });
 
     await apiFetch('/extension/register', {
@@ -221,6 +230,10 @@ async function onAlarm(alarm) {
           jwt,
           onPolicyUpdated:   () => syncPolicy(),
           onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
+          onLockRequest:     (data) => lockScreen(data?.message),
+          onUnlockRequest:   () => unlockScreen(),
+          onOpenTabRequest:  (data) => openTab(data?.url),
+          onCloseTabRequest: () => closeTab(),
         });
       }
     }
@@ -234,6 +247,19 @@ async function onAlarm(alarm) {
 // ---------------------------------------------------------------------------
 // Tab monitoring
 // ---------------------------------------------------------------------------
+// chrome.tabs.onRemoved gives a tabId but no URL — and the service worker can
+// be suspended between a tab's last update and its close, wiping any plain
+// in-memory map — so the last-known url/title per tab is kept in
+// chrome.storage.session, which survives a service worker restart within
+// the same browser session (unlike a JS variable) but still clears on
+// browser close (unlike chrome.storage.local, which would leak forever).
+async function rememberTab(tabId, url, title) {
+  await chrome.storage.session.set({ [`cg_tab_${tabId}`]: { url, title } });
+}
+async function forgetTab(tabId) {
+  await chrome.storage.session.remove(`cg_tab_${tabId}`);
+}
+
 async function onTabUpdated(tabId, changeInfo, tab) {
   if (changeInfo.status !== 'complete') return;
   if (!tab.url || !tab.url.startsWith('http')) return;
@@ -246,6 +272,7 @@ async function onTabUpdated(tabId, changeInfo, tab) {
     jwt,
     body: { url: tab.url, title: tab.title || '' },
   }).catch(() => {});
+  rememberTab(tabId, tab.url, tab.title || '').catch(() => {});
 
   // Push current keywords to the newly loaded tab
   const data = await chrome.storage.local.get(KEYWORDS_CACHE_KEY);
@@ -255,6 +282,50 @@ async function onTabUpdated(tabId, changeInfo, tab) {
       keywords: data[KEYWORDS_CACHE_KEY],
     }).catch(() => {});
   }
+}
+
+async function onTabRemoved(tabId) {
+  const jwt = await getStoredJWT();
+  if (!jwt) return;
+
+  const data = await chrome.storage.session.get(`cg_tab_${tabId}`);
+  const last = data[`cg_tab_${tabId}`];
+  forgetTab(tabId).catch(() => {});
+  if (!last?.url) return; // never tracked (e.g. a non-http tab) — nothing to report
+
+  apiFetch('/extension/tab-event', {
+    method: 'POST',
+    jwt,
+    body: { url: last.url, title: last.title || '', event: 'closed' },
+  }).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Remote device commands — lock/unlock screen, open/close tab
+// ---------------------------------------------------------------------------
+async function lockScreen(message) {
+  await chrome.storage.local.set({ cg_locked: { message: message || null } });
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    chrome.tabs.sendMessage(tab.id, { type: 'CG_LOCK_SCREEN', message: message || null }).catch(() => {});
+  }
+}
+
+async function unlockScreen() {
+  await chrome.storage.local.remove('cg_locked');
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    chrome.tabs.sendMessage(tab.id, { type: 'CG_UNLOCK_SCREEN' }).catch(() => {});
+  }
+}
+
+async function openTab(url) {
+  await chrome.tabs.create(url ? { url } : {});
+}
+
+async function closeTab() {
+  const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
 }
 
 // ---------------------------------------------------------------------------
