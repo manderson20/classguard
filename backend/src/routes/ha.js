@@ -506,6 +506,212 @@ router.post('/self-report', authenticate, requireMinRole('superadmin'), async (r
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/ha/check-update — compares this node's version against the
+// VERSION file on GitHub's main branch, and surfaces the relevant
+// CHANGELOG.md section if an update is available. Pure read, no relay
+// needed — every node can check this independently.
+// ---------------------------------------------------------------------------
+const GITHUB_REPO = 'manderson20/classguard';
+
+router.get('/check-update', ...auth, async (req, res) => {
+  try {
+    const { data: latestVersionRaw } = await axios.get(
+      `https://api.github.com/repos/${GITHUB_REPO}/contents/VERSION?ref=main`,
+      { headers: { Accept: 'application/vnd.github.raw' }, timeout: 8000 }
+    );
+    const latestVersion = String(latestVersionRaw).trim();
+
+    let changelog = null;
+    try {
+      const { data: changelogRaw } = await axios.get(
+        `https://api.github.com/repos/${GITHUB_REPO}/contents/CHANGELOG.md?ref=main`,
+        { headers: { Accept: 'application/vnd.github.raw' }, timeout: 8000 }
+      );
+      const escaped = latestVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const match = String(changelogRaw).match(new RegExp(`## \\[${escaped}\\][^]*?(?=\\n## \\[|$)`));
+      changelog = match ? match[0].trim() : null;
+    } catch { /* changelog is a nice-to-have, not fatal if GitHub rate-limits this second call */ }
+
+    res.json({
+      current_version: config.version,
+      latest_version: latestVersion,
+      update_available: latestVersion !== config.version,
+      changelog,
+    });
+  } catch (err) {
+    res.status(502).json({ error: `Failed to check GitHub: ${err.message}` });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/ha/schedule-update — runs ON the primary. Writes one
+// update_schedule row per active node directly (this table only exists on
+// the primary's writable DB) — no relay needed on this side, since each
+// secondary picks its own row up later via GET /update-status.
+// ---------------------------------------------------------------------------
+router.post('/schedule-update', ...superauth, async (req, res) => {
+  const { scheduled_at, target_version } = req.body;
+  if (!scheduled_at || !target_version) {
+    return res.status(400).json({ error: 'scheduled_at and target_version are required' });
+  }
+  try {
+    const { rows: nodeRows } = await pool.query(`SELECT node_id FROM nodes WHERE is_active = true`);
+    const results = [];
+    for (const { node_id } of nodeRows) {
+      const { rows } = await pool.query(
+        `INSERT INTO update_schedule (node_id, target_version, scheduled_at, requested_by)
+         VALUES ($1, $2, $3, $4)
+         ON CONFLICT (node_id) WHERE status IN ('pending', 'in_progress')
+         DO UPDATE SET scheduled_at = EXCLUDED.scheduled_at, target_version = EXCLUDED.target_version
+         RETURNING *`,
+        [node_id, target_version, scheduled_at, req.user.userId || null]
+      );
+      results.push(rows[0]);
+    }
+    res.status(201).json({ scheduled: results });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/v1/ha/schedule-update/:nodeId — cancel a pending/in_progress schedule for one node
+router.delete('/schedule-update/:nodeId', ...superauth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `UPDATE update_schedule SET status = 'failed', log = 'Cancelled by admin', completed_at = NOW()
+       WHERE node_id = $1 AND status IN ('pending', 'in_progress') RETURNING id`,
+      [req.params.nodeId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'No active schedule for that node' });
+    res.json({ cancelled: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/ha/update-schedule — cluster-wide view for the UI
+router.get('/update-schedule', ...auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT s.*, n.hostname FROM update_schedule s
+       JOIN nodes n ON n.node_id = s.node_id
+       ORDER BY s.created_at DESC LIMIT 50`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/ha/update-status — called by THIS node's own host-level
+// update-watcher (see infrastructure/update-watcher), no auth needed
+// (localhost-only trust boundary, same as /vrrp-local and the keepalived
+// health check). Returns this node's own pending update, if any —
+// relayed through the primary if this node is a standby, since
+// update_schedule only exists on the primary's writable DB.
+// ---------------------------------------------------------------------------
+router.get('/update-status', async (req, res) => {
+  const nodeId = config.node.id;
+  try {
+    if (config.node.role === 'primary') {
+      const { rows } = await pool.query(
+        `SELECT * FROM update_schedule WHERE node_id = $1 AND status IN ('pending','in_progress')
+         ORDER BY scheduled_at LIMIT 1`,
+        [nodeId]
+      );
+      return res.json({ pending: rows[0] || null });
+    }
+
+    const { rows: [primary] } = await pool.query(
+      `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+    );
+    const { rows: [secretRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
+    if (!primary?.api_url || !secretRow?.value) {
+      return res.json({ pending: null });
+    }
+    const { data } = await axios.get(`${primary.api_url}/api/v1/ha/update-status-for/${nodeId}`, {
+      headers: { 'x-internal-secret': secretRow.value },
+      timeout: 5000,
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/ha/update-status-for/:nodeId — internal-secret only, the primary-side
+// target of the relay above
+router.get('/update-status-for/:nodeId', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT * FROM update_schedule WHERE node_id = $1 AND status IN ('pending','in_progress')
+       ORDER BY scheduled_at LIMIT 1`,
+      [req.params.nodeId]
+    );
+    res.json({ pending: rows[0] || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/ha/update-complete — called by THIS node's own update-watcher
+// after running (or attempting) the actual update, no auth needed (same
+// localhost trust boundary). Relayed through the primary if this node is a
+// standby. Body: { status: 'in_progress'|'completed'|'failed', log }
+// ---------------------------------------------------------------------------
+router.post('/update-complete', async (req, res) => {
+  const { status, log } = req.body;
+  const nodeId = config.node.id;
+  if (!status) return res.status(400).json({ error: 'status is required' });
+  try {
+    if (config.node.role === 'primary') {
+      await pool.query(
+        `UPDATE update_schedule SET status = $1, log = $2,
+           completed_at = CASE WHEN $1 IN ('completed','failed') THEN NOW() ELSE completed_at END
+         WHERE node_id = $3 AND status IN ('pending','in_progress')`,
+        [status, log || null, nodeId]
+      );
+      return res.json({ updated: true });
+    }
+
+    const { rows: [primary] } = await pool.query(
+      `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+    );
+    const { rows: [secretRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
+    if (!primary?.api_url || !secretRow?.value) {
+      return res.status(503).json({ error: 'primary/secret not found in replicated data yet' });
+    }
+    await axios.post(`${primary.api_url}/api/v1/ha/update-complete-for/${nodeId}`, { status, log }, {
+      headers: { 'x-internal-secret': secretRow.value },
+      timeout: 5000,
+    });
+    res.json({ forwarded: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/v1/ha/update-complete-for/:nodeId — internal-secret only, the
+// primary-side target of the relay above
+router.post('/update-complete-for/:nodeId', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { status, log } = req.body;
+  if (!status) return res.status(400).json({ error: 'status is required' });
+  try {
+    await pool.query(
+      `UPDATE update_schedule SET status = $1, log = $2,
+         completed_at = CASE WHEN $1 IN ('completed','failed') THEN NOW() ELSE completed_at END
+       WHERE node_id = $3 AND status IN ('pending','in_progress')`,
+      [status, log || null, req.params.nodeId]
+    );
+    res.json({ updated: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/ha/summary
 // ---------------------------------------------------------------------------
 router.get('/summary', ...auth, async (req, res) => {

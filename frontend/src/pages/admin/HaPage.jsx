@@ -17,6 +17,145 @@ function Field({ label, hint, children }) {
 }
 
 // ---------------------------------------------------------------------------
+// Software Updates — checks the installed version against GitHub's main
+// branch, and lets an admin schedule a maintenance window instead of
+// running anything by hand. Scheduling cascades to every registered node
+// (see /schedule-update), each picking up its own row via its host-level
+// update-watcher (installed by install.sh) once the scheduled time arrives.
+// ---------------------------------------------------------------------------
+function SoftwareUpdateSection() {
+  const qc = useQueryClient();
+  const [scheduledAt, setScheduledAt] = useState('');
+  const [result, setResult] = useState(null);
+
+  const { data: check, isLoading: checking, refetch } = useQuery({
+    queryKey: ['ha-check-update'],
+    queryFn:  () => api.get('/ha/check-update'),
+  });
+
+  const { data: schedule = [] } = useQuery({
+    queryKey: ['ha-update-schedule'],
+    queryFn:  () => api.get('/ha/update-schedule'),
+    refetchInterval: 15_000,
+  });
+
+  const scheduleUpdate = useMutation({
+    mutationFn: () => api.post('/ha/schedule-update', {
+      scheduled_at: new Date(scheduledAt).toISOString(),
+      target_version: check.latest_version,
+    }),
+    onSuccess: data => {
+      setResult({ ok: true, message: `Scheduled on ${data.scheduled.length} node(s).` });
+      qc.invalidateQueries({ queryKey: ['ha-update-schedule'] });
+    },
+    onError: err => setResult({ ok: false, message: err.message || 'Failed to schedule update' }),
+  });
+
+  const cancelUpdate = useMutation({
+    mutationFn: nodeId => api.delete(`/ha/schedule-update/${nodeId}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ha-update-schedule'] }),
+  });
+
+  const activeSchedule = schedule.filter(s => s.status === 'pending' || s.status === 'in_progress');
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-8">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold text-slate-800">Software Updates</h2>
+        <button onClick={() => refetch()} className="text-xs text-blue-600 hover:underline" disabled={checking}>
+          {checking ? 'Checking…' : 'Check for updates'}
+        </button>
+      </div>
+
+      {check && (
+        <div className="text-sm mb-3">
+          <p className="text-slate-600">
+            Installed: <strong>{check.current_version}</strong> &nbsp;·&nbsp;
+            Latest on GitHub: <strong>{check.latest_version}</strong>
+          </p>
+          {!check.update_available && (
+            <p className="text-green-600 text-xs mt-1">Up to date.</p>
+          )}
+        </div>
+      )}
+
+      {check?.update_available && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+          <p className="text-sm font-medium text-blue-900 mb-2">
+            Update available: {check.current_version} → {check.latest_version}
+          </p>
+          {check.changelog && (
+            <pre className="text-xs text-blue-800 whitespace-pre-wrap bg-white border border-blue-100 rounded p-2 mb-3 max-h-48 overflow-y-auto">
+              {check.changelog}
+            </pre>
+          )}
+          <div className="flex items-end gap-3">
+            <Field label="Schedule for">
+              <input type="datetime-local" className={INPUT} value={scheduledAt}
+                onChange={e => setScheduledAt(e.target.value)} />
+            </Field>
+            <button
+              onClick={() => { setResult(null); scheduleUpdate.mutate(); }}
+              disabled={!scheduledAt || scheduleUpdate.isPending || activeSchedule.length > 0}
+              className="btn-primary text-sm"
+            >
+              {scheduleUpdate.isPending ? 'Scheduling…' : 'Schedule Update'}
+            </button>
+          </div>
+          <p className="text-xs text-blue-700 mt-2">
+            Applies to every active node in the cluster at the time you pick — each node briefly restarts its
+            containers (DNS resolution is interrupted for a few seconds per node).
+          </p>
+        </div>
+      )}
+
+      {result && (
+        <p className={`text-sm mb-3 ${result.ok ? 'text-green-600' : 'text-red-600'}`}>{result.message}</p>
+      )}
+
+      {schedule.length > 0 && (
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
+              <th className="py-1.5">Node</th>
+              <th>Target</th>
+              <th>Scheduled</th>
+              <th>Status</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {schedule.map(s => (
+              <tr key={s.id} className="border-b border-slate-100">
+                <td className="py-1.5">{s.hostname}</td>
+                <td>{s.target_version}</td>
+                <td>{new Date(s.scheduled_at).toLocaleString()}</td>
+                <td>
+                  <span className={
+                    s.status === 'completed' ? 'text-green-600' :
+                    s.status === 'failed'    ? 'text-red-600'   :
+                    s.status === 'in_progress' ? 'text-amber-600' : 'text-slate-500'
+                  }>
+                    {s.status}
+                  </span>
+                </td>
+                <td className="text-right">
+                  {(s.status === 'pending' || s.status === 'in_progress') && (
+                    <button onClick={() => cancelUpdate.mutate(s.node_id)} className="text-xs text-red-600 hover:underline">
+                      Cancel
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Join a Primary Cluster — run on the server that wants to JOIN an existing
 // cluster. Pairs with the "+ Add Server" invite generated on the primary's
 // own HA page; no shell/SSH access to either server is needed, both sides
@@ -869,6 +1008,8 @@ export default function HaPage() {
           </div>
         </div>
       )}
+
+      <SoftwareUpdateSection />
 
       <JoinClusterSection qc={qc} />
 
