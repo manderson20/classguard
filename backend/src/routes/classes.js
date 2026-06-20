@@ -16,7 +16,7 @@ router.get('/', async (req, res) => {
 
   const { rows } = await query(
     `SELECT c.*, u.full_name AS teacher_name,
-            COUNT(cm.user_id) AS student_count
+            COUNT(cm.student_id) AS student_count
      FROM classes c
      JOIN users u ON u.id = c.teacher_id
      LEFT JOIN class_members cm ON cm.class_id = c.id
@@ -46,12 +46,18 @@ router.get('/:id', async (req, res) => {
   const { rows: members } = await query(
     `SELECT u.id, u.full_name, u.email, u.google_ou
      FROM class_members cm
-     JOIN users u ON u.id = cm.user_id
+     JOIN users u ON u.id = cm.student_id
      WHERE cm.class_id = $1
      ORDER BY u.full_name`,
     [req.params.id]
   );
-  res.json({ ...rows[0], members });
+
+  const { rows: activeLesson } = await query(
+    `SELECT * FROM lesson_sessions WHERE class_id = $1 AND is_active = true LIMIT 1`,
+    [req.params.id]
+  );
+
+  res.json({ ...rows[0], members, active_lesson: activeLesson[0] || null });
 });
 
 // POST /api/v1/classes
@@ -96,7 +102,7 @@ router.post('/:id/members', async (req, res) => {
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
   await query(
-    'INSERT INTO class_members (class_id, user_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
+    'INSERT INTO class_members (class_id, student_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
     [req.params.id, user_id]
   );
   res.status(201).json({ class_id: req.params.id, user_id });
@@ -105,7 +111,7 @@ router.post('/:id/members', async (req, res) => {
 // DELETE /api/v1/classes/:id/members/:userId
 router.delete('/:id/members/:userId', async (req, res) => {
   await query(
-    'DELETE FROM class_members WHERE class_id = $1 AND user_id = $2',
+    'DELETE FROM class_members WHERE class_id = $1 AND student_id = $2',
     [req.params.id, req.params.userId]
   );
   res.json({ ok: true });
@@ -156,6 +162,13 @@ router.post('/:id/lessons', async (req, res) => {
 
 // PATCH /api/v1/classes/:id/lessons/:lessonId  — update allowed domains mid-lesson
 router.patch('/:id/lessons/:lessonId', async (req, res) => {
+  const { role, userId } = req.user;
+  const { rows: cls } = await query('SELECT teacher_id FROM classes WHERE id = $1', [req.params.id]);
+  if (!cls[0]) return res.status(404).json({ error: 'Class not found' });
+  if (role === 'teacher' && cls[0].teacher_id !== userId) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
   const { allowed_domains } = req.body;
   const { rows } = await query(
     `UPDATE lesson_sessions
@@ -176,6 +189,13 @@ router.patch('/:id/lessons/:lessonId', async (req, res) => {
 
 // DELETE /api/v1/classes/:id/lessons/:lessonId  — end a lesson
 router.delete('/:id/lessons/:lessonId', async (req, res) => {
+  const { role, userId } = req.user;
+  const { rows: cls } = await query('SELECT teacher_id FROM classes WHERE id = $1', [req.params.id]);
+  if (!cls[0]) return res.status(404).json({ error: 'Class not found' });
+  if (role === 'teacher' && cls[0].teacher_id !== userId) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
   const { rows } = await query(
     `UPDATE lesson_sessions
      SET is_active = false, ended_at = NOW()
@@ -188,6 +208,9 @@ router.delete('/:id/lessons/:lessonId', async (req, res) => {
   const studentIds = await invalidatePoliciesForClass(req.params.id);
   for (const sid of studentIds) {
     events.emit('policy:updated', { studentId: sid });
+    // A lock is a deliberate, temporary state for this lesson — don't leave
+    // a student locked out of their own browser once the period has ended.
+    events.emit('teacher:unlock_request', { studentId: sid });
   }
 
   res.json(rows[0]);

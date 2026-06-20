@@ -99,7 +99,7 @@ router.get('/logs', authenticate, requireMinRole('teacher'), async (req, res) =>
   // Teachers can only see their own students
   if (req.user.role === 'teacher') {
     conditions.push(`user_id IN (
-      SELECT cm.user_id FROM class_members cm
+      SELECT cm.student_id FROM class_members cm
       JOIN classes c ON c.id = cm.class_id
       WHERE c.teacher_id = $${values.length + 1}
     )`);
@@ -169,7 +169,7 @@ router.get('/stats', authenticate, requireMinRole('teacher'), async (req, res) =
     if (req.user.role === 'teacher') {
       values.push(req.user.userId);
       userFilter += ` AND user_id IN (
-        SELECT cm.user_id FROM class_members cm
+        SELECT cm.student_id FROM class_members cm
         JOIN classes c ON c.id = cm.class_id
         WHERE c.teacher_id = $${values.length}
       )`;
@@ -213,7 +213,7 @@ router.get('/stats', authenticate, requireMinRole('teacher'), async (req, res) =
   }
   if (req.user.role === 'teacher') {
     conditions.push(`user_id IN (
-      SELECT cm.user_id FROM class_members cm
+      SELECT cm.student_id FROM class_members cm
       JOIN classes c ON c.id = cm.class_id
       WHERE c.teacher_id = $${values.length + 1}
     )`);
