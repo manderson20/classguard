@@ -23,19 +23,32 @@ function Field({ label, hint, children }) {
 // are plain UI forms.
 // ---------------------------------------------------------------------------
 function JoinClusterSection({ qc }) {
-  const [primaryUrl, setPrimaryUrl] = useState('');
-  const [token, setToken]           = useState('');
-  const [result, setResult]         = useState(null);
+  const [primaryUrl, setPrimaryUrl]       = useState('');
+  const [token, setToken]                 = useState('');
+  const [requestReplica, setRequestReplica] = useState(false);
+  const [result, setResult]               = useState(null);
 
   const join = useMutation({
-    mutationFn: () => api.post('/ha/join-cluster', { primary_url: primaryUrl.trim(), token: token.trim() }),
+    mutationFn: () => api.post('/ha/join-cluster', {
+      primary_url: primaryUrl.trim(),
+      token: token.trim(),
+      request_replica: requestReplica,
+    }),
     onSuccess: data => {
-      setResult({ ok: true, message: `Joined as ${data.node.ha_role} — registered with ${data.primary_url}.` });
+      setResult({
+        ok: true,
+        message: `Joined as ${data.node.ha_role} — registered with ${data.primary_url}.`,
+        setupScript: data.setup_script || null,
+      });
       setToken('');
       qc.invalidateQueries({ queryKey: ['ha-nodes'] });
     },
     onError: err => setResult({ ok: false, message: err.message || 'Failed to join cluster' }),
   });
+
+  function copyScript() {
+    navigator.clipboard.writeText(result?.setupScript || '');
+  }
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-8">
@@ -56,8 +69,32 @@ function JoinClusterSection({ qc }) {
         </Field>
       </div>
 
+      <label className="flex items-start gap-2 text-xs text-slate-600 mb-3">
+        <input type="checkbox" className="mt-0.5" checked={requestReplica}
+          onChange={e => setRequestReplica(e.target.checked)} />
+        <span>
+          Also set up as a live database replica of this primary.{' '}
+          <strong>This deletes this server's current local database</strong> — only check this for a fresh
+          standby node, not one with data you want to keep. You'll get a one-paste script to finish the setup.
+        </span>
+      </label>
+
       {result && (
         <p className={`text-sm mb-3 ${result.ok ? 'text-green-600' : 'text-red-600'}`}>{result.message}</p>
+      )}
+
+      {result?.setupScript && (
+        <div className="mb-3">
+          <div className="flex items-center justify-between mb-1">
+            <span className="text-xs font-medium text-slate-600">
+              Run this once on this server's terminal to complete replica setup:
+            </span>
+            <button onClick={copyScript} className="text-xs text-blue-600 hover:underline">Copy</button>
+          </div>
+          <pre className="bg-slate-900 text-slate-100 text-xs rounded-lg p-3 overflow-x-auto whitespace-pre">
+            {result.setupScript}
+          </pre>
+        </div>
       )}
 
       <button
@@ -814,7 +851,7 @@ export default function HaPage() {
           <li>On <strong>this</strong> (primary) server: click <strong>+ Add Server</strong> above, choose a role, and generate an invite token.</li>
           <li>On the <strong>new</strong> server's own admin panel: go to High Availability → <strong>Join a Primary Cluster</strong>, and enter this server's URL plus the token.</li>
           <li>The new server calls back here using the token — it appears in the Cluster Nodes list above within 30 seconds, and the token is consumed (single-use).</li>
-          <li>Each node runs its own PostgreSQL — joining only registers it for cluster visibility/VRRP, it does <strong>not</strong> set up database replication. For an actual standby/replica that survives a primary failure, configure Postgres streaming replication (e.g. Patroni or pg_auto_failover) between the nodes separately — see the Database Replication section above.</li>
+          <li>Each node runs its own PostgreSQL — joining alone only registers it for cluster visibility/VRRP, it does <strong>not</strong> set up database replication. Check "Also set up as a live database replica" above to have this primary issue a replication credential and hand back a ready-to-run script — paste that once on the new server to make it a real streaming standby. (For fully automated failover/promotion beyond that, look at Patroni or pg_auto_failover separately.)</li>
           <li>For DNS/DHCP failover: configure a VRRP virtual IP below so clients always reach whichever node is currently active.</li>
         </ol>
       </div>
