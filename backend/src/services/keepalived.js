@@ -124,14 +124,15 @@ function generateNotifyScript(apiUrl) {
 # Notifies ClassGuard API when this node's VRRP role changes.
 STATE=$1
 API="${apiUrl || 'http://localhost:3001'}"
-TOKEN=$(grep INTERNAL_SECRET /opt/classguard/.env 2>/dev/null | cut -d= -f2-)
+TOKEN=$(grep '^INTERNAL_SECRET=' /opt/classguard/.env 2>/dev/null | cut -d= -f2-)
+NODE_ID=$(grep '^NODE_ID=' /opt/classguard/.env 2>/dev/null | cut -d= -f2-)
 
 curl -sf -X POST "$API/api/v1/ha/vrrp-notify" \\
   -H "Content-Type: application/json" \\
   -H "X-Internal-Secret: $TOKEN" \\
-  -d "{\\"state\\":\\"$STATE\\"}" || true
+  -d "{\\"state\\":\\"$STATE\\",\\"node_id\\":\\"$NODE_ID\\"}" || true
 
-logger "ClassGuard VRRP state changed to $STATE"
+logger "ClassGuard VRRP state changed to $STATE on node $NODE_ID"
 `;
 }
 

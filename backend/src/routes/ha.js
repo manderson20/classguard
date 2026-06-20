@@ -341,6 +341,31 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/v1/ha/vrrp-notify — called by keepalived's notify.sh (see
+// services/keepalived.js's generateNotifyScript) on every MASTER/BACKUP/FAULT
+// transition, so the Cluster Nodes list reflects which node actually holds
+// the VIP right now. Deliberately separate from ha_role (the Postgres
+// replication role) — a VRRP failover does NOT promote a standby's database;
+// that's still a manual step, so we never imply otherwise here.
+// ---------------------------------------------------------------------------
+router.post('/vrrp-notify', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { state, node_id } = req.body;
+  if (!state || !node_id) {
+    return res.status(400).json({ error: 'state and node_id are required' });
+  }
+  try {
+    const { rows } = await pool.query(
+      `UPDATE nodes SET vrrp_state = $1, last_seen = NOW() WHERE node_id = $2 RETURNING node_id, vrrp_state`,
+      [state, node_id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Node not found' });
+    res.json({ updated: true, ...rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/ha/summary
 // ---------------------------------------------------------------------------
 router.get('/summary', ...auth, async (req, res) => {
