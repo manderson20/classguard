@@ -23,7 +23,7 @@ router.get('/status', ...auth, async (req, res) => {
        WHERE key IN (
          'zammad_url','zammad_token',
          'mosyle_access_token',
-         'snipeit_url','snipeit_token',
+         'snipeit_url','snipeit_token','snipeit_client_id','snipeit_client_secret',
          'phpipam_url','phpipam_app_id',
          'last_mosyle_sync','last_snipeit_sync','last_zammad_sync','last_google_sync',
          'last_mosyle_error','last_snipeit_error','last_zammad_error','last_google_error',
@@ -38,7 +38,7 @@ router.get('/status', ...auth, async (req, res) => {
   res.json({
     zammad:   { configured: !!(cfg.zammad_url && cfg.zammad_token),    lastSync: cfg.last_zammad_sync  || null, lastError: cfg.last_zammad_error  || null },
     mosyle:   { configured: !!cfg.mosyle_access_token,                 lastSync: cfg.last_mosyle_sync  || null, lastError: cfg.last_mosyle_error  || null, deviceCount: deviceCount.mosyle  ?? 0 },
-    snipeit:  { configured: !!(cfg.snipeit_url && cfg.snipeit_token),  lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0 },
+    snipeit:  { configured: !!(cfg.snipeit_url && (cfg.snipeit_token || (cfg.snipeit_client_id && cfg.snipeit_client_secret))), lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0 },
     google:   { configured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || (cfg.google_client_id && cfg.google_client_secret)), lastSync: cfg.last_google_sync || null, lastError: cfg.last_google_error || null, deviceCount: deviceCount.google_admin ?? 0 },
     phpipam:  { configured: !!(cfg.phpipam_url && cfg.phpipam_app_id) },
   });
@@ -72,11 +72,11 @@ router.get('/devices', ...auth, async (req, res) => {
   try {
     const [{ rows }, { rows: total }] = await Promise.all([
       pool.query(
-        `SELECT * FROM integration_devices ${where}
+        `SELECT * FROM integration_devices d ${where}
          ORDER BY synced_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
         [...values, limit, offset]
       ),
-      pool.query(`SELECT COUNT(*) FROM integration_devices ${where}`, values),
+      pool.query(`SELECT COUNT(*) FROM integration_devices d ${where}`, values),
     ]);
     res.json({ devices: rows, total: parseInt(total[0].count, 10), page: parseInt(page, 10) });
   } catch (err) {

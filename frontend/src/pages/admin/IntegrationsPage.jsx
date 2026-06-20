@@ -97,6 +97,8 @@ function ZammadSection({ status }) {
   const [modal, setModal] = useState(null);
   const [form, setForm]   = useState({ title:'', customer_email:'', description:'' });
   const [settings, setSettings] = useState({ zammad_url:'', zammad_token:'' });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const configured = status?.zammad?.configured;
 
   const { data: tickets = [] } = useQuery({ queryKey:['tickets'], queryFn:()=>api.get('/integrations/tickets'), enabled: !!configured });
@@ -107,9 +109,17 @@ function ZammadSection({ status }) {
   });
 
   const saveSettings = async () => {
-    await api.put('/settings', settings);
-    qc.invalidateQueries({queryKey:['integrations-status']});
-    setModal(null);
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await api.put('/settings', settings);
+      qc.invalidateQueries({queryKey:['integrations-status']});
+      setModal(null);
+    } catch (e) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
   };
 
   const fmtDate = d => d ? new Date(d).toLocaleString() : '—';
@@ -167,9 +177,10 @@ function ZammadSection({ status }) {
             <Field label="Zammad URL (e.g. https://support.example.com)"><input className={INPUT} value={settings.zammad_url} onChange={e=>setSettings(s=>({...s,zammad_url:e.target.value}))}/></Field>
             <Field label="API Token"><input type="password" className={INPUT} value={settings.zammad_token} onChange={e=>setSettings(s=>({...s,zammad_token:e.target.value}))}/></Field>
           </div>
+          {saveError && <p className="text-red-500 text-xs mt-2">{saveError}</p>}
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={()=>setModal(null)} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={saveSettings} className="btn-primary text-sm">Save</button>
+            <button onClick={saveSettings} disabled={saving} className="btn-primary text-sm">{saving ? 'Saving…' : 'Save'}</button>
           </div>
         </Modal>
       )}
@@ -253,12 +264,22 @@ function MosyleSection({ status }) {
   const qc = useQueryClient();
   const [modal, setModal] = useState(null);
   const [token, setToken] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const configured = status?.mosyle?.configured;
 
   const save = async () => {
-    await api.put('/settings', { mosyle_access_token: token });
-    qc.invalidateQueries({queryKey:['integrations-status']});
-    setModal(null);
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await api.put('/settings', { mosyle_access_token: token });
+      qc.invalidateQueries({queryKey:['integrations-status']});
+      setModal(null);
+    } catch (e) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -267,7 +288,7 @@ function MosyleSection({ status }) {
         <StatusDot ok={configured}/>
         <span className="text-sm text-slate-600">{configured ? 'Connected' : 'Not configured'}</span>
         <div className="ml-auto flex gap-2">
-          <button onClick={()=>setModal(true)} className="text-xs text-slate-500 hover:text-slate-700 underline">Settings</button>
+          <button onClick={()=>{setSaveError(null);setModal(true);}} className="text-xs text-slate-500 hover:text-slate-700 underline">Settings</button>
           {configured && <SyncButton label="Sync Apple devices" endpoint="/integrations/sync/mosyle"/>}
         </div>
       </div>
@@ -276,9 +297,10 @@ function MosyleSection({ status }) {
       {modal && (
         <Modal title="Mosyle Settings" onClose={()=>setModal(null)}>
           <Field label="Mosyle Access Token"><input type="password" className={INPUT} value={token} onChange={e=>setToken(e.target.value)}/></Field>
+          {saveError && <p className="text-red-500 text-xs mt-2">{saveError}</p>}
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={()=>setModal(null)} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={save} className="btn-primary text-sm">Save</button>
+            <button onClick={save} disabled={saving} className="btn-primary text-sm">{saving ? 'Saving…' : 'Save'}</button>
           </div>
         </Modal>
       )}
@@ -292,13 +314,23 @@ function MosyleSection({ status }) {
 function SnipeitSection({ status }) {
   const qc = useQueryClient();
   const [modal, setModal] = useState(null);
-  const [form, setForm]   = useState({ snipeit_url:'', snipeit_token:'' });
+  const [form, setForm]   = useState({ snipeit_url:'', snipeit_token:'', snipeit_client_id:'', snipeit_client_secret:'' });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
   const configured = status?.snipeit?.configured;
 
   const save = async () => {
-    await api.put('/settings', form);
-    qc.invalidateQueries({queryKey:['integrations-status']});
-    setModal(null);
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await api.put('/settings', form);
+      qc.invalidateQueries({queryKey:['integrations-status']});
+      setModal(null);
+    } catch (e) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
@@ -317,11 +349,24 @@ function SnipeitSection({ status }) {
         <Modal title="Snipe-IT Settings" onClose={()=>setModal(null)}>
           <div className="flex flex-col gap-3">
             <Field label="Snipe-IT URL"><input className={INPUT} value={form.snipeit_url} onChange={e=>setForm(f=>({...f,snipeit_url:e.target.value}))}/></Field>
-            <Field label="API Token"><input type="password" className={INPUT} value={form.snipeit_token} onChange={e=>setForm(f=>({...f,snipeit_token:e.target.value}))}/></Field>
+            <Field label="Personal Access Token">
+              <input type="password" className={INPUT} value={form.snipeit_token} onChange={e=>setForm(f=>({...f,snipeit_token:e.target.value}))}/>
+              <span className="text-[11px] text-slate-400 font-normal normal-case">From your account menu → Manage API Keys → Create New Token (a long JWT)</span>
+            </Field>
+            <div className="border-t border-slate-200 pt-3 mt-1">
+              <p className="text-xs font-semibold text-slate-500 uppercase mb-2">
+                Or, if your instance only lets you create an OAuth Client
+              </p>
+              <div className="flex flex-col gap-3">
+                <Field label="OAuth Client ID"><input className={INPUT} value={form.snipeit_client_id} onChange={e=>setForm(f=>({...f,snipeit_client_id:e.target.value}))}/></Field>
+                <Field label="OAuth Client Secret"><input type="password" className={INPUT} value={form.snipeit_client_secret} onChange={e=>setForm(f=>({...f,snipeit_client_secret:e.target.value}))}/></Field>
+              </div>
+            </div>
           </div>
+          {saveError && <p className="text-red-500 text-xs mt-2">{saveError}</p>}
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={()=>setModal(null)} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={save} className="btn-primary text-sm">Save</button>
+            <button onClick={save} disabled={saving} className="btn-primary text-sm">{saving ? 'Saving…' : 'Save'}</button>
           </div>
         </Modal>
       )}

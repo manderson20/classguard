@@ -15,6 +15,10 @@ async function apiFetch(path, options = {}) {
 
   if (res.status === 401) {
     localStorage.removeItem('cg_token');
+    // Surface this before navigating away — otherwise a session expiring
+    // mid-action (e.g. saving integration settings) looks like nothing
+    // happened at all, since the page unloads before any catch block runs.
+    alert('Your session has expired. Please log in again — anything you just tried to save was not saved.');
     window.location.href = '/login';
     throw new Error('Session expired');
   }

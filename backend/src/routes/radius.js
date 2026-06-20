@@ -1,11 +1,17 @@
 const express  = require('express');
 const router   = express.Router();
+const fs       = require('fs');
+const path     = require('path');
+const multer   = require('multer');
 const { pool } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const radiusLdap = require('../services/radiusLdap');
 const radiusSync = require('../services/radiusSync');
 const keepalived = require('../services/keepalived');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024 } });
+const CERT_DIR = process.env.TLS_CERT_DIR || '/app/certs';
 
 const auth      = [authenticate, requireMinRole('admin')];
 const superauth = [authenticate, requireMinRole('superadmin')];
@@ -132,11 +138,13 @@ router.post('/authorize', radiusSecret, async (req, res) => {
       const { rows } = await pool.query(
         `SELECT u.*, rp.vlan, rp.can_access
          FROM users u
-         LEFT JOIN radius_user_policies rp ON (rp.user_id = u.id OR rp.group_id IN (
-           SELECT group_id FROM group_members WHERE user_id = u.id
-         )) AND (rp.ssid IS NULL OR rp.ssid = $2)
+         LEFT JOIN radius_user_policies rp ON (
+           rp.user_id = u.id
+           OR rp.group_id IN (SELECT group_id FROM group_members WHERE user_id = u.id)
+           OR (rp.user_id IS NULL AND rp.group_id IS NULL) -- default/catch-all policy
+         ) AND (rp.ssid IS NULL OR rp.ssid = $2)
          WHERE lower(u.email) = lower($1) AND u.is_active = true
-         ORDER BY rp.priority DESC NULLS LAST
+         ORDER BY (rp.user_id IS NOT NULL) DESC, (rp.group_id IS NOT NULL) DESC, rp.priority DESC NULLS LAST
          LIMIT 1`,
         [username, ssid || '']
       );
@@ -320,12 +328,13 @@ router.delete('/nas/:id', ...superauth, async (req, res) => {
 // ---------------------------------------------------------------------------
 
 router.get('/devices', ...auth, async (req, res) => {
-  const { status, source, search, limit = 100, offset = 0 } = req.query;
+  const { status, source, device_type, search, limit = 100, offset = 0 } = req.query;
   const conditions = [];
   const params     = [];
 
   if (status) { conditions.push(`d.status = $${params.length+1}`); params.push(status); }
   if (source) { conditions.push(`d.source = $${params.length+1}`); params.push(source); }
+  if (device_type) { conditions.push(`d.device_type = $${params.length+1}`); params.push(device_type); }
   if (search) {
     conditions.push(`(d.mac_address::text ILIKE $${params.length+1} OR d.device_name ILIKE $${params.length+1})`);
     params.push(`%${search}%`);
@@ -394,7 +403,7 @@ router.put('/devices/:id', ...auth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
-// POST /devices/bulk — bulk approve or block
+// POST /devices/bulk — bulk approve or block a specific set of ids
 router.post('/devices/bulk', ...auth, async (req, res) => {
   const { ids, status } = req.body;
   if (!ids?.length || !['approved','blocked','pending'].includes(status)) {
@@ -405,6 +414,39 @@ router.post('/devices/bulk', ...auth, async (req, res) => {
     [status, ids]
   );
   res.json({ updated: ids.length });
+});
+
+// POST /devices/bulk-by-filter — bulk approve/block every device matching a
+// filter (status/source/device_type/search), not just what's loaded on the
+// current page. Needed for categories with thousands of devices (e.g. 2000+
+// Chromebooks) where selecting rows one page at a time isn't practical.
+router.post('/devices/bulk-by-filter', ...auth, async (req, res) => {
+  const { status, source, device_type, search, newStatus } = req.body;
+  if (!['approved','blocked','pending'].includes(newStatus)) {
+    return res.status(400).json({ error: 'valid newStatus required' });
+  }
+
+  const conditions = [];
+  const params     = [];
+  if (status)      { conditions.push(`status = $${params.length+1}`);      params.push(status); }
+  if (source)       { conditions.push(`source = $${params.length+1}`);      params.push(source); }
+  if (device_type)  { conditions.push(`device_type = $${params.length+1}`); params.push(device_type); }
+  if (search) {
+    conditions.push(`(mac_address::text ILIKE $${params.length+1} OR device_name ILIKE $${params.length+1})`);
+    params.push(`%${search}%`);
+  }
+  // Require at least one filter — an unfiltered call would silently touch
+  // every device in the table, which is never the intent of a "by category" action.
+  if (!conditions.length) {
+    return res.status(400).json({ error: 'at least one filter (status/source/device_type/search) is required' });
+  }
+
+  const where = 'WHERE ' + conditions.join(' AND ');
+  const { rows } = await pool.query(
+    `UPDATE radius_devices SET status = $${params.length+1}, updated_at = NOW() ${where} RETURNING id`,
+    [...params, newStatus]
+  );
+  res.json({ updated: rows.length });
 });
 
 router.delete('/devices/:id', ...superauth, async (req, res) => {
@@ -462,7 +504,12 @@ router.get('/policies', ...auth, async (req, res) => {
 
 router.post('/policies', ...auth, async (req, res) => {
   const { user_id, group_id, ssid, vlan, can_access, priority, notes } = req.body;
-  if (!user_id && !group_id) return res.status(400).json({ error: 'user_id or group_id required' });
+  // A policy with neither user_id nor group_id is a default/catch-all that
+  // applies to anyone authenticating — require an SSID so it can't
+  // accidentally apply org-wide across every network by omission.
+  if (!user_id && !group_id && !ssid) {
+    return res.status(400).json({ error: 'user_id, group_id, or (for a default policy) ssid is required' });
+  }
   const { rows } = await pool.query(
     `INSERT INTO radius_user_policies (user_id, group_id, ssid, vlan, can_access, priority, notes)
      VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
@@ -594,6 +641,44 @@ router.post('/ldap/test', ...superauth, async (req, res) => {
     const result = await radiusLdap.testConnection();
     res.json(result);
   } catch (err) { res.status(502).json({ ok: false, reason: err.message }); }
+});
+
+// POST /radius/ldap/upload — accepts the cert/key files downloaded from
+// Google Admin's LDAP client setup and stores them in the shared certs
+// volume (same one TLS uses), then saves the resulting paths + base_dn/domain
+// as settings. Splitting this from /ldap/test lets the wizard upload once
+// and re-test repeatedly without re-uploading.
+router.post('/ldap/upload', ...superauth, upload.fields([{ name: 'cert', maxCount: 1 }, { name: 'key', maxCount: 1 }]), async (req, res) => {
+  const certFile = req.files?.cert?.[0];
+  const keyFile  = req.files?.key?.[0];
+  const { base_dn, google_domain } = req.body;
+
+  if (!certFile || !keyFile) return res.status(400).json({ error: 'cert and key files are both required' });
+  if (!base_dn) return res.status(400).json({ error: 'base_dn is required' });
+
+  try {
+    fs.mkdirSync(CERT_DIR, { recursive: true });
+    const certPath = path.join(CERT_DIR, 'ldap-client.crt');
+    const keyPath  = path.join(CERT_DIR, 'ldap-client.key');
+    fs.writeFileSync(certPath, certFile.buffer, { mode: 0o600 });
+    fs.writeFileSync(keyPath, keyFile.buffer, { mode: 0o600 });
+
+    const settings = {
+      ldap_client_cert_path: certPath,
+      ldap_client_key_path:  keyPath,
+      ldap_base_dn:           base_dn,
+      ldap_google_domain:     google_domain || null,
+    };
+    for (const [key, value] of Object.entries(settings)) {
+      await pool.query(
+        `INSERT INTO settings (key, value, updated_at) VALUES ($1,$2,NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [key, value]
+      );
+    }
+    radiusLdap.invalidateSettingsCache();
+    res.json({ saved: true, certPath, keyPath });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 module.exports = router;

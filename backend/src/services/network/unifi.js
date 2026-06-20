@@ -52,9 +52,53 @@ async function login(baseUrl, username, password) {
   throw new Error(`UniFi login failed — ${failures.join('; ')}`);
 }
 
-async function logout(baseUrl, cookies, isOs) {
-  const path = isOs ? '/api/auth/logout' : '/api/logout';
-  await request(baseUrl, path, 'POST', {}, cookies).catch(() => {});
+// ---------------------------------------------------------------------------
+// Session cache — UniFi (especially cloud-linked accounts) rate-limits login
+// attempts aggressively. Logging in fresh on every sync/test call (every 15
+// minutes via cron, plus manual Test/Sync clicks) risks tripping that limiter
+// for no benefit, since UniFi OS sessions stay valid for a long idle window.
+// Cache the cookie per controller and only re-login when it's missing, past
+// our conservative expiry, or rejected with a 401 on actual use.
+// ---------------------------------------------------------------------------
+const sessionCache = new Map(); // key: `${base_url}|${username}` -> { cookies, isOs, expiresAt }
+const SESSION_TTL_MS = 45 * 60 * 1000; // conservative — well under UniFi OS's idle timeout
+
+function sessionKey(baseUrl, username) {
+  return `${baseUrl}|${username}`;
+}
+
+async function getSession(baseUrl, username, password, { forceFresh = false } = {}) {
+  const key = sessionKey(baseUrl, username);
+  const cached = sessionCache.get(key);
+  if (!forceFresh && cached && cached.expiresAt > Date.now()) {
+    return cached;
+  }
+  const session = await login(baseUrl, username, password);
+  sessionCache.set(key, { ...session, expiresAt: Date.now() + SESSION_TTL_MS });
+  return session;
+}
+
+function isAuthError(err) {
+  return err.response && (err.response.status === 401 || err.response.status === 403);
+}
+
+/**
+ * Run an authenticated request, transparently retrying once with a fresh
+ * login if the cached session turns out to be stale (401/403).
+ */
+async function withSession(config, fn) {
+  const { base_url, username, password } = config;
+  if (!base_url || !username || !password) throw new Error('UniFi: base_url, username, password required');
+
+  let session = await getSession(base_url, username, password);
+  try {
+    return await fn(session);
+  } catch (err) {
+    if (!isAuthError(err)) throw err;
+    sessionCache.delete(sessionKey(base_url, username));
+    session = await getSession(base_url, username, password, { forceFresh: true });
+    return await fn(session);
+  }
 }
 
 /**
@@ -62,12 +106,9 @@ async function logout(baseUrl, cookies, isOs) {
  * Returns array of normalised client objects.
  */
 async function fetchClients(config) {
-  const { base_url, username, password, site_id = 'default' } = config;
-  if (!base_url || !username || !password) throw new Error('UniFi: base_url, username, password required');
+  const { base_url, site_id = 'default' } = config;
 
-  const { cookies, isOs } = await login(base_url, username, password);
-
-  try {
+  return withSession(config, async ({ cookies, isOs }) => {
     const apiBase = isOs ? '/proxy/network' : '';
     const res     = await request(
       base_url,
@@ -97,21 +138,49 @@ async function fetchClients(config) {
       last_seen:       c.last_seen  ? new Date(c.last_seen  * 1000) : null,
       raw_data:        c,
     }));
-  } finally {
-    await logout(base_url, cookies, isOs);
-  }
+  });
+}
+
+/**
+ * Fetch infrastructure devices (APs, switches, gateways) for a site —
+ * distinct from fetchClients(), which returns end-user stations.
+ */
+async function fetchDevices(config) {
+  const { base_url, site_id = 'default' } = config;
+
+  return withSession(config, async ({ cookies, isOs }) => {
+    const apiBase = isOs ? '/proxy/network' : '';
+    const res     = await request(
+      base_url,
+      `${apiBase}/api/s/${site_id}/stat/device`,
+      'GET',
+      null,
+      cookies
+    );
+
+    const raw = res.data?.data || [];
+    return raw.map(d => ({
+      mac:       (d.mac || '').toLowerCase(),
+      ip:        d.ip || null,
+      name:      d.name || d.mac,
+      model:     d.model || null,
+      type:      d.type || 'other', // uap, usw, uxg/ugw
+      isOnline:  d.state === 1,
+    })).filter(d => d.ip);
+  });
 }
 
 /**
  * Test connectivity and auth — returns site list on success.
  */
 async function testConnection(config) {
-  const { base_url, username, password } = config;
-  const { cookies, isOs } = await login(base_url, username, password);
-  const apiBase = isOs ? '/proxy/network' : '';
-  const res     = await request(base_url, `${apiBase}/api/self/sites`, 'GET', null, cookies);
-  await logout(base_url, cookies, isOs);
-  return { ok: true, sites: (res.data?.data || []).map(s => ({ id: s.name, desc: s.desc })) };
+  const { base_url } = config;
+  const sites = await withSession(config, async ({ cookies, isOs }) => {
+    const apiBase = isOs ? '/proxy/network' : '';
+    const res     = await request(base_url, `${apiBase}/api/self/sites`, 'GET', null, cookies);
+    return (res.data?.data || []).map(s => ({ id: s.name, desc: s.desc }));
+  });
+  return { ok: true, sites };
 }
 
-module.exports = { fetchClients, testConnection, vendor: 'unifi' };
+module.exports = { fetchClients, fetchDevices, testConnection, vendor: 'unifi' };

@@ -57,7 +57,7 @@ async function listDevices({ page = 0, type = 'ios' } = {}) {
 // one type used to be indistinguishable from "this school has 0 Macs", which
 // made syncDevices() silently report success with 0 devices on a bad token.
 async function listAllDevices() {
-  const types   = ['ios', 'mac'];
+  const types   = ['ios', 'mac', 'tvos'];
   const results = await Promise.all(types.map(t => listDevices({ type: t })));
   return results.flat();
 }
