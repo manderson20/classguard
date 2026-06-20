@@ -12,7 +12,7 @@ router.get('/servers', ...auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
       `SELECT s.*, p.stratum, p.offset_ms, p.delay_ms, p.jitter_ms,
-              p.reachable, p.reference, p.checked_at
+              p.reachable, p.reference, p.poll_interval, p.checked_at
        FROM ntp_servers s
        LEFT JOIN ntp_peer_status p ON p.server_id = s.id
        ORDER BY s.prefer DESC, s.address`
@@ -49,19 +49,25 @@ router.delete('/servers/:id', ...auth, async (req, res) => {
   res.json({ deleted: true });
 });
 
-// POST /api/v1/ntp/poll  — trigger an immediate poll of all servers
+// POST /api/v1/ntp/poll  — trigger an immediate poll of all servers, waits
+// for it to finish (a few seconds at most) so the caller can refetch and
+// actually see fresh results, instead of guessing how long to wait.
 router.post('/poll', ...auth, async (req, res) => {
-  res.json({ status: 'started' });
-  ntp.pollAll().catch(err => console.error('[ntp] poll error:', err.message));
+  try {
+    await ntp.pollAll();
+    res.json({ status: 'completed' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // GET /api/v1/ntp/status  — latest cached poll results
 router.get('/status', ...auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT s.address, s.prefer, s.is_active,
+      `SELECT s.id, s.address, s.prefer, s.is_active,
               p.stratum, p.offset_ms, p.delay_ms, p.jitter_ms,
-              p.reachable, p.reference, p.checked_at
+              p.reachable, p.reference, p.poll_interval, p.checked_at
        FROM ntp_servers s
        LEFT JOIN ntp_peer_status p ON p.server_id = s.id
        WHERE s.is_active = true

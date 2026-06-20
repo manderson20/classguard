@@ -30,22 +30,16 @@ export default function NtpPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [polling, setPolling] = useState(false);
 
-  const { data: ntpData = {}, isLoading } = useQuery({
-    queryKey: ['ntp-status'],
-    queryFn:  () => api.get('/ntp/status'),
-    refetchInterval: 60_000,
-  });
-
-  const { data: servers = [] } = useQuery({
+  const { data: servers = [], isLoading } = useQuery({
     queryKey: ['ntp-servers'],
     queryFn:  () => api.get('/ntp/servers'),
+    refetchInterval: 60_000,
   });
 
   const addServer = useMutation({
     mutationFn: () => api.post('/ntp/servers', form),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['ntp-servers'] });
-      qc.invalidateQueries({ queryKey: ['ntp-status'] });
       setShowAdd(false);
       setForm({ address:'', description:'', prefer: false });
     },
@@ -53,21 +47,18 @@ export default function NtpPage() {
 
   const delServer = useMutation({
     mutationFn: id => api.delete(`/ntp/servers/${id}`),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ['ntp-servers'] });
-      qc.invalidateQueries({ queryKey: ['ntp-status'] });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ntp-servers'] }),
   });
 
   const poll = async () => {
     setPolling(true);
-    try { await api.post('/ntp/poll'); qc.invalidateQueries({ queryKey: ['ntp-status'] }); }
+    try { await api.post('/ntp/poll'); await qc.invalidateQueries({ queryKey: ['ntp-servers'] }); }
     finally { setPolling(false); }
   };
 
-  const results  = ntpData.results  || [];
-  const synced   = ntpData.synced;
-  const minStrat = ntpData.min_stratum;
+  const reachableServers = servers.filter(s => s.reachable && s.stratum != null);
+  const synced   = reachableServers.length > 0;
+  const minStrat = synced ? Math.min(...reachableServers.map(s => s.stratum)) : null;
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -95,7 +86,7 @@ export default function NtpPage() {
           </div>
           <div className={`text-xs mt-0.5 ${synced ? 'text-green-700' : 'text-yellow-700'}`}>
             {synced
-              ? `Best stratum: ${minStrat ?? '—'} · ${results.filter(r=>r.reachable).length} / ${results.length} servers reachable`
+              ? `Best stratum: ${minStrat ?? '—'} · ${servers.filter(s=>s.reachable).length} / ${servers.length} servers reachable`
               : 'No reachable NTP servers detected, or no poll has been run yet.'}
           </div>
         </div>
@@ -145,35 +136,32 @@ export default function NtpPage() {
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {servers.map(srv => {
-                const r = results.find(x => x.server_id === srv.id);
-                return (
-                  <tr key={srv.id} className="hover:bg-slate-50">
-                    <td className="px-3 py-3">
-                      <div className="font-mono font-medium text-slate-800 text-xs">{srv.address}</div>
-                      {srv.description && <div className="text-xs text-slate-400">{srv.description}</div>}
-                      {srv.prefer && <span className="text-xs bg-purple-100 text-purple-700 px-1 rounded">prefer</span>}
-                    </td>
-                    <td className="px-3 py-3">
-                      {r ? (
-                        r.reachable
-                          ? <span className="text-xs font-medium text-green-600">✓ Yes</span>
-                          : <span className="text-xs font-medium text-red-500">✗ No</span>
-                      ) : <span className="text-xs text-slate-400">—</span>}
-                    </td>
-                    <td className="px-3 py-3"><StratumBadge stratum={r?.stratum}/></td>
-                    <td className="px-3 py-3"><OffsetBar ms={r?.offset_ms}/></td>
-                    <td className="px-3 py-3 text-xs font-mono text-slate-600">{r?.delay_ms != null ? `${r.delay_ms.toFixed(2)}ms` : '—'}</td>
-                    <td className="px-3 py-3 text-xs font-mono text-slate-600">{r?.jitter_ms != null ? `${r.jitter_ms.toFixed(2)}ms` : '—'}</td>
-                    <td className="px-3 py-3 text-xs font-mono text-slate-500">{r?.reference || '—'}</td>
-                    <td className="px-3 py-3 text-xs text-slate-500">{r?.poll_interval ? `${r.poll_interval}s` : '—'}</td>
-                    <td className="px-3 py-3 text-xs text-slate-400">{r?.checked_at ? new Date(r.checked_at).toLocaleTimeString() : '—'}</td>
-                    <td className="px-3 py-3">
-                      <button onClick={()=>delServer.mutate(srv.id)} className="text-xs text-red-500 hover:underline">Remove</button>
-                    </td>
-                  </tr>
-                );
-              })}
+              {servers.map(srv => (
+                <tr key={srv.id} className="hover:bg-slate-50">
+                  <td className="px-3 py-3">
+                    <div className="font-mono font-medium text-slate-800 text-xs">{srv.address}</div>
+                    {srv.description && <div className="text-xs text-slate-400">{srv.description}</div>}
+                    {srv.prefer && <span className="text-xs bg-purple-100 text-purple-700 px-1 rounded">prefer</span>}
+                  </td>
+                  <td className="px-3 py-3">
+                    {srv.checked_at ? (
+                      srv.reachable
+                        ? <span className="text-xs font-medium text-green-600">✓ Yes</span>
+                        : <span className="text-xs font-medium text-red-500">✗ No</span>
+                    ) : <span className="text-xs text-slate-400">—</span>}
+                  </td>
+                  <td className="px-3 py-3"><StratumBadge stratum={srv.stratum}/></td>
+                  <td className="px-3 py-3"><OffsetBar ms={srv.offset_ms}/></td>
+                  <td className="px-3 py-3 text-xs font-mono text-slate-600">{srv.delay_ms != null ? `${srv.delay_ms.toFixed(2)}ms` : '—'}</td>
+                  <td className="px-3 py-3 text-xs font-mono text-slate-600">{srv.jitter_ms != null ? `${srv.jitter_ms.toFixed(2)}ms` : '—'}</td>
+                  <td className="px-3 py-3 text-xs font-mono text-slate-500">{srv.reference || '—'}</td>
+                  <td className="px-3 py-3 text-xs text-slate-500">{srv.poll_interval ? `${srv.poll_interval}s` : '—'}</td>
+                  <td className="px-3 py-3 text-xs text-slate-400">{srv.checked_at ? new Date(srv.checked_at).toLocaleTimeString() : '—'}</td>
+                  <td className="px-3 py-3">
+                    <button onClick={()=>delServer.mutate(srv.id)} className="text-xs text-red-500 hover:underline">Remove</button>
+                  </td>
+                </tr>
+              ))}
               {!servers.length && (
                 <tr><td colSpan={10} className="text-center text-slate-400 py-8">
                   No NTP servers configured. Add your first server above.
