@@ -96,7 +96,7 @@ async function insertOrForwardDnsLogs(records) {
     throw new Error('cannot forward dns logs to primary — node/secret not found in replicated data yet');
   }
 
-  await axios.post(`${primary.api_url}/api/v1/internal/dns-logs/bulk`, { records }, {
+  await axios.post(`${primary.api_url}/api/v1/dns/internal/dns-logs/bulk`, { records }, {
     headers: { 'x-internal-secret': secretRow.value },
     timeout: 8000,
   });
