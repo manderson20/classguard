@@ -665,13 +665,18 @@ router.post('/update-complete', async (req, res) => {
   const { status, log } = req.body;
   const nodeId = config.node.id;
   if (!status) return res.status(400).json({ error: 'status is required' });
+  // Computed here, not reused inline in SQL — node-pg infers $1 as varchar
+  // from "status = $1" but text from an explicit "$1::text" cast elsewhere
+  // in the same query, and Postgres rejects that as an inconsistent type
+  // for the same parameter even though varchar/text are trivially coercible.
+  const isTerminal = status === 'completed' || status === 'failed';
   try {
     if (config.node.role === 'primary') {
       await pool.query(
         `UPDATE update_schedule SET status = $1, log = $2,
-           completed_at = CASE WHEN $1 IN ('completed','failed') THEN NOW() ELSE completed_at END
+           completed_at = CASE WHEN $4 THEN NOW() ELSE completed_at END
          WHERE node_id = $3 AND status IN ('pending','in_progress')`,
-        [status, log || null, nodeId]
+        [status, log || null, nodeId, isTerminal]
       );
       return res.json({ updated: true });
     }
@@ -698,12 +703,13 @@ router.post('/update-complete', async (req, res) => {
 router.post('/update-complete-for/:nodeId', authenticate, requireMinRole('superadmin'), async (req, res) => {
   const { status, log } = req.body;
   if (!status) return res.status(400).json({ error: 'status is required' });
+  const isTerminal = status === 'completed' || status === 'failed';
   try {
     await pool.query(
       `UPDATE update_schedule SET status = $1, log = $2,
-         completed_at = CASE WHEN $1 IN ('completed','failed') THEN NOW() ELSE completed_at END
+         completed_at = CASE WHEN $4 THEN NOW() ELSE completed_at END
        WHERE node_id = $3 AND status IN ('pending','in_progress')`,
-      [status, log || null, req.params.nodeId]
+      [status, log || null, req.params.nodeId, isTerminal]
     );
     res.json({ updated: true });
   } catch (err) {
