@@ -126,7 +126,7 @@ app.get('/health', async (req, res) => {
   const { pool } = require('./db');
   try {
     await pool.query('SELECT 1');
-    res.json({ status: 'ok', node: config.node.id, version: process.env.npm_package_version });
+    res.json({ status: 'ok', node: config.node.id, version: config.version });
   } catch {
     res.status(503).json({ status: 'error', node: config.node.id, detail: 'database unreachable' });
   }

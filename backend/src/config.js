@@ -8,7 +8,14 @@ const required = (key) => {
   return val;
 };
 
+// process.env.npm_package_version is only set by npm scripts (npm start),
+// not when the container runs `node src/index.js` directly — every call
+// site that used it was silently always undefined. Read package.json
+// itself instead, so this actually tracks real releases.
+const { version } = require('../package.json');
+
 module.exports = {
+  version,
   port: parseInt(process.env.PORT) || 3001,
   nodeEnv: process.env.NODE_ENV || 'development',
   appUrl: process.env.APP_URL || 'http://localhost:3001',

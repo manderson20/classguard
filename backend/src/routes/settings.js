@@ -3,6 +3,7 @@ const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const config              = require('../config');
 
 const auth = [authenticate, requireMinRole('admin')];
 
@@ -49,7 +50,7 @@ router.get('/', ...auth, async (req, res) => {
     );
     const result = Object.fromEntries(rows.map(r => [r.key, r.value]));
     // Also surface the app version
-    result.version = process.env.npm_package_version || '0.0.1';
+    result.version = config.version;
     res.json(result);
   } catch (err) {
     console.error('[settings] GET error:', err);
