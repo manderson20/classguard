@@ -14,11 +14,44 @@ const superauth = [authenticate, requireMinRole('superadmin')];
 // ---------------------------------------------------------------------------
 // Self-registration — upserts this node on startup using node_id as the key
 // ---------------------------------------------------------------------------
+
+// Relays this node's own status to the primary when it can't write locally
+// (a read-only standby) — same pattern as DNS log forwarding and VRRP
+// state: read the primary's api_url + internal_secret from our own
+// (replicated) data, POST to a primary-side endpoint that does the actual
+// write. Used by both registerSelf() and the heartbeat interval below.
+async function relayToPrimary(payload) {
+  try {
+    const { rows: [primary] } = await pool.query(
+      `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+    );
+    const { rows: [secretRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
+    if (!primary?.api_url || !secretRow?.value) return;
+    await axios.post(`${primary.api_url}/api/v1/ha/self-report`, payload, {
+      headers: { 'x-internal-secret': secretRow.value },
+      timeout: 5000,
+    });
+  } catch (err) {
+    console.warn('[ha] relay to primary failed:', err.message);
+  }
+}
+
 async function registerSelf() {
-  const nodeId  = config.node.id;                     // NODE_ID env var || 'node1'
-  const version = config.version;
-  const apiUrl  = config.appUrl;
-  const hostname = process.env.HOSTNAME || nodeId;
+  const nodeId   = config.node.id;                     // NODE_ID env var || 'node1'
+  const version  = config.version;
+  const apiUrl   = config.appUrl;
+  // NODE_ID, not process.env.HOSTNAME — every ClassGuard install's api
+  // container has the same hardcoded Docker hostname, so a second node
+  // writing that literal value would collide with the primary's own row.
+  const hostname = nodeId;
+  const haRole   = config.node.role === 'primary' ? 'primary' : 'standby';
+
+  const { rows: [{ in_recovery }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery')
+    .catch(() => ({ rows: [{ in_recovery: false }] }));
+
+  if (in_recovery) {
+    return relayToPrimary({ node_id: nodeId, hostname, ha_role: haRole, api_url: apiUrl, version });
+  }
 
   // ON CONFLICT on hostname (existing unique constraint) — also stamps node_id
   await pool.query(
@@ -31,14 +64,20 @@ async function registerSelf() {
        version   = EXCLUDED.version,
        last_seen = NOW(),
        is_active = true`,
-    [nodeId, hostname, config.node.role,
-     config.node.role === 'primary' ? 'primary' : 'standby', apiUrl, version]
+    [nodeId, hostname, config.node.role, haRole, apiUrl, version]
   ).catch(err => console.warn('[ha] self-register:', err.message));
 }
 
 function startHeartbeat() {
   registerSelf();
   setInterval(async () => {
+    const { rows: [{ in_recovery }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery')
+      .catch(() => ({ rows: [{ in_recovery: false }] }));
+
+    if (in_recovery) {
+      return relayToPrimary({ node_id: config.node.id, version: config.version });
+    }
+
     await pool.query(
       `UPDATE nodes SET last_seen = NOW() WHERE node_id = $1`,
       [config.node.id]
@@ -177,7 +216,7 @@ router.delete('/invites/:id', ...auth, async (req, res) => {
 // No JWT auth — uses the invite token instead.
 // ---------------------------------------------------------------------------
 router.post('/join', async (req, res) => {
-  const { token, node_id, hostname, api_url, ha_role, request_replica } = req.body;
+  const { token, node_id, hostname, api_url, ha_role, request_replica, version } = req.body;
   if (!token || !node_id || !api_url) {
     return res.status(400).json({ error: 'token, node_id, and api_url are required' });
   }
@@ -203,15 +242,16 @@ router.post('/join', async (req, res) => {
 
     const { rows: nodeRows } = await client.query(
       `INSERT INTO nodes (node_id, hostname, ip, role, ha_role, api_url, version, last_seen, is_active)
-       VALUES ($1, $2, '0.0.0.0', 'secondary', $3, $4, 'unknown', NOW(), true)
+       VALUES ($1, $2, '0.0.0.0', 'secondary', $3, $4, $5, NOW(), true)
        ON CONFLICT (node_id) WHERE node_id IS NOT NULL DO UPDATE SET
          hostname  = EXCLUDED.hostname,
          ha_role   = EXCLUDED.ha_role,
          api_url   = EXCLUDED.api_url,
+         version   = EXCLUDED.version,
          last_seen = NOW(),
          is_active = true
        RETURNING *`,
-      [node_id, hostname || node_id, ha_role || invite.ha_role, api_url]
+      [node_id, hostname || node_id, ha_role || invite.ha_role, api_url, version || 'unknown']
     );
 
     await client.query(
@@ -305,6 +345,7 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
       node_id:  config.node.id,
       hostname: config.node.id,
       api_url:  config.appUrl,
+      version:  config.version,
       request_replica: !!request_replica,
     }, { timeout: 8000 });
 
@@ -429,6 +470,36 @@ router.post('/vrrp-local', async (req, res) => {
       timeout: 5000,
     });
     res.json({ forwarded: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/ha/self-report — a standby's registerSelf()/heartbeat relay
+// target (see relayToPrimary above) for whatever it can't write to its own
+// read-only Postgres: version, last_seen, etc. Only touches fields actually
+// provided, so a heartbeat tick (which only sends node_id + version) never
+// clobbers hostname/ha_role/api_url with nulls.
+// ---------------------------------------------------------------------------
+router.post('/self-report', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { node_id, hostname, ha_role, api_url, version } = req.body;
+  if (!node_id) return res.status(400).json({ error: 'node_id is required' });
+  try {
+    const { rows } = await pool.query(
+      `UPDATE nodes SET
+         hostname  = COALESCE($2, hostname),
+         ha_role   = COALESCE($3, ha_role),
+         api_url   = COALESCE($4, api_url),
+         version   = COALESCE($5, version),
+         last_seen = NOW(),
+         is_active = true
+       WHERE node_id = $1
+       RETURNING node_id`,
+      [node_id, hostname || null, ha_role || null, api_url || null, version || null]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Node not found' });
+    res.json({ updated: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
