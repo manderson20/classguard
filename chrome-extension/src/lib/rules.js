@@ -10,6 +10,10 @@
 //   10–9  — reserved
 //   100+  — per-domain block rules (standard mode deny list, batched 100/rule)
 //   2000+ — per-domain allow rules (overrides, lesson whitelist)
+//   3000  — YouTube-Restrict header injection
+//   4000+ — per-pattern URL-path rules (e.g. GoGuardian import) — one rule
+//           per pattern since urlFilter has no multi-pattern batching
+//   20000 — override codes (kept clear of the 4000+ range)
 
 const ALL_RESOURCE_TYPES = [
   'main_frame', 'sub_frame', 'script', 'stylesheet',
@@ -125,12 +129,45 @@ function buildRules(policy, overrideDomains = []) {
     if (resolvedAllowDomains.length > 0) {
       rules.push(allowRule(2000, resolvedAllowDomains));
     }
+
+    // URL-path rules (e.g. imported from GoGuardian) — these are MORE
+    // specific than a domain-level rule, so they outrank domain-allow: a
+    // path denied here still blocks even under an otherwise-allowed domain
+    // (e.g. allow youtube.com generally, but block one specific video URL).
+    // declarativeNetRequest has no batched multi-pattern condition like
+    // requestDomains, so this is one rule per pattern.
+    const urlRules = policy?.resolvedUrlRules || [];
+    let urlRuleId = 4000;
+    for (const { pattern, rule_type } of urlRules) {
+      if (rule_type === 'deny') {
+        rules.push({
+          id:        urlRuleId++,
+          priority:  15,
+          action:    { type: 'redirect', redirect: { extensionPath: '/blocked.html?reason=policy' } },
+          condition: { urlFilter: pattern, resourceTypes: PAGE_TYPES },
+        });
+        rules.push({
+          id:        urlRuleId++,
+          priority:  15,
+          action:    { type: 'block' },
+          condition: { urlFilter: pattern, resourceTypes: SUB_TYPES },
+        });
+      } else {
+        rules.push({
+          id:        urlRuleId++,
+          priority:  16,
+          action:    { type: 'allow' },
+          condition: { urlFilter: pattern, resourceTypes: ALL_RESOURCE_TYPES },
+        });
+      }
+    }
   }
 
   // Override codes — highest priority allow rules, bypass all blocks except CIPA
+  // (id kept well clear of the 4000+ per-pattern URL-rule range above)
   if (overrideDomains.length > 0) {
     rules.push({
-      id:       5000,
+      id:       20000,
       priority: 20,
       action:   { type: 'allow' },
       condition: { requestDomains: overrideDomains, resourceTypes: ALL_RESOURCE_TYPES },

@@ -8,6 +8,8 @@ export default function PoliciesPage() {
   const navigate = useNavigate();
   const [deleting,     setDeleting]     = useState(null);
   const [createError,  setCreateError]  = useState('');
+  const [creating,     setCreating]     = useState(false);
+  const [newName,      setNewName]      = useState('');
 
   const { data: policies = [], isLoading } = useQuery({
     queryKey: ['policies'],
@@ -25,14 +27,16 @@ export default function PoliciesPage() {
   });
 
   const createDefault = useMutation({
-    mutationFn: () => api.post('/policies', {
-      name: 'New Policy',
+    mutationFn: name => api.post('/policies', {
+      name,
       description: '',
       mode: 'standard',
       is_default: false,
     }),
     onSuccess: data => {
       qc.invalidateQueries({ queryKey: ['policies'] });
+      setCreating(false);
+      setNewName('');
       navigate(`/admin/policies/${data.id}`);
     },
     onError: e => setCreateError(e.message || 'Failed to create policy'),
@@ -47,9 +51,8 @@ export default function PoliciesPage() {
             className="text-sm text-primary-600 hover:underline font-medium">
             ⚡ Filter Simulator
           </Link>
-          <button className="btn-primary" onClick={() => { setCreateError(''); createDefault.mutate(); }}
-            disabled={createDefault.isPending}>
-            {createDefault.isPending ? 'Creating…' : '+ New Policy'}
+          <button className="btn-primary" onClick={() => { setCreateError(''); setNewName(''); setCreating(true); }}>
+            + New Policy
           </button>
         </div>
       </div>
@@ -108,6 +111,34 @@ export default function PoliciesPage() {
               No policies configured. Click <strong>+ New Policy</strong> to get started.
             </div>
           )}
+        </div>
+      )}
+
+      {/* New policy name prompt */}
+      {creating && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
+            <h2 className="font-semibold text-slate-900 mb-2">Name this policy</h2>
+            <input
+              autoFocus
+              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-full focus:outline-none focus:ring-1 focus:ring-primary-500"
+              placeholder="e.g. Elementary Standard, Staff Default…"
+              value={newName}
+              onChange={e => setNewName(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && newName.trim()) createDefault.mutate(newName.trim()); }}
+            />
+            {createError && <p className="text-red-600 text-sm mt-2">{createError}</p>}
+            <div className="flex gap-3 justify-end mt-5">
+              <button className="btn-secondary" onClick={() => setCreating(false)}>Cancel</button>
+              <button
+                className="btn-primary"
+                onClick={() => createDefault.mutate(newName.trim())}
+                disabled={!newName.trim() || createDefault.isPending}
+              >
+                {createDefault.isPending ? 'Creating…' : 'Create'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 

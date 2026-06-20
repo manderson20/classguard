@@ -12,7 +12,7 @@ router.get('/me/effective-policy', authenticate, async (req, res) => {
   if (req.user.role !== 'student') {
     return res.status(400).json({ error: 'Effective policy only applies to students' });
   }
-  const policy = await resolvePolicy(req.user.userId);
+  const policy = await resolvePolicy(req.user.userId, req.query.location);
 
   // Append YouTube video rules — not cached in policyResolver to keep cache small
   let youtubeAllowVideos = [];
@@ -123,7 +123,7 @@ router.get('/:id/effective-policy', authenticate, requireMinRole('teacher'), asy
     if (!membership[0]) return res.status(403).json({ error: 'Forbidden' });
   }
 
-  const policy = await resolvePolicy(req.params.id);
+  const policy = await resolvePolicy(req.params.id, req.query.location);
   res.json(policy);
 });
 

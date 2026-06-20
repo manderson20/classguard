@@ -54,6 +54,7 @@ function SettingsTab({ policy, policyId }) {
     youtube_restricted: policy.youtube_restricted || 'moderate',
     block_page_message: policy.block_page_message || '',
     is_default:         policy.is_default         || false,
+    is_network_policy:  policy.is_network_policy  || false,
   });
   const [saved, setSaved] = useState(false);
   const f = v => setForm(p => ({ ...p, ...v }));
@@ -62,8 +63,8 @@ function SettingsTab({ policy, policyId }) {
     mutationFn: () => api.patch(`/policies/${policyId}`, form),
     onSuccess: () => {
       setSaved(true);
-      qc.invalidateQueries(['policy', policyId]);
-      qc.invalidateQueries(['policies']);
+      qc.invalidateQueries({ queryKey: ['policy', policyId] });
+      qc.invalidateQueries({ queryKey: ['policies'] });
       setTimeout(() => setSaved(false), 2500);
     },
   });
@@ -128,6 +129,24 @@ function SettingsTab({ policy, policyId }) {
         </label>
       </div>
 
+      <div className="border border-amber-200 bg-amber-50 rounded-xl p-4">
+        <label className="flex items-center gap-3 cursor-pointer">
+          <input type="checkbox" checked={form.is_network_policy}
+            onChange={e => f({ is_network_policy: e.target.checked })}
+            className="w-4 h-4 rounded text-amber-600 accent-amber-600" />
+          <div>
+            <p className="text-sm font-medium text-slate-800">Use as DNS Network Policy</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Enforced at the DNS level for <strong>every</strong> device on the network — students, staff, guests,
+              unmanaged devices — regardless of who's signed in. This is the one network-wide floor; only one policy
+              can hold this role at a time. A student or staff member's own OU/group/student-level policy (assigned
+              in the Assignments tab of whichever policy applies to them) layers <em>additional</em> restrictions on
+              top of this floor via the extension — it can never loosen what the floor blocks here.
+            </p>
+          </div>
+        </label>
+      </div>
+
       {save.error && <p className="text-red-600 text-sm">{save.error.message}</p>}
       <div className="flex items-center gap-3">
         <button className={BTN_P} onClick={() => save.mutate()} disabled={!form.name || save.isPending}>
@@ -149,24 +168,25 @@ function DomainRulesTab({ policy, policyId }) {
   const [search,      setSearch]      = useState('');
   const [filterType,  setFilterType]  = useState('');
   const [importError, setImportError] = useState('');
+  const [ggOpen,       setGgOpen]      = useState(false);
   const fileRef = useRef();
 
   const rules = policy.domainRules || [];
 
   const addRule = useMutation({
     mutationFn: () => api.post(`/policies/${policyId}/rules`, { domain: newDomain.trim(), rule_type: newType }),
-    onSuccess:  () => { setNewDomain(''); qc.invalidateQueries(['policy', policyId]); },
+    onSuccess:  () => { setNewDomain(''); qc.invalidateQueries({ queryKey: ['policy', policyId] }); },
   });
 
   const deleteRule = useMutation({
     mutationFn: ruleId => api.delete(`/policies/${policyId}/rules/${ruleId}`),
-    onSuccess:  () => qc.invalidateQueries(['policy', policyId]),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['policy', policyId] }),
   });
 
   const importRules = useMutation({
     mutationFn: rows => api.post(`/policies/${policyId}/rules/import`, rows),
     onSuccess: data => {
-      qc.invalidateQueries(['policy', policyId]);
+      qc.invalidateQueries({ queryKey: ['policy', policyId] });
       setImportError(`Imported ${data.imported} rules${data.skipped ? `, ${data.skipped} skipped` : ''}`);
     },
     onError: e => setImportError(e.message),
@@ -245,8 +265,13 @@ function DomainRulesTab({ policy, policyId }) {
           <button className={BTN_S} onClick={handleExport} disabled={rules.length === 0}>
             Export CSV
           </button>
+          <button className={BTN_S} onClick={() => setGgOpen(true)}>
+            Import from GoGuardian
+          </button>
         </div>
       </div>
+
+      {ggOpen && <GoGuardianImportModal policyId={policyId} onClose={() => setGgOpen(false)} />}
 
       {importError && (
         <p className={`text-sm ${importError.startsWith('Imported') ? 'text-green-600' : 'text-red-600'}`}>
@@ -299,6 +324,207 @@ function DomainRulesTab({ policy, policyId }) {
           </div>
         </div>
       )}
+
+      <UrlRulesSection policy={policy} policyId={policyId} />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// URL-path rules — extension-only, since DNS never sees a path. Shown below
+// the domain rules in the same tab since they're both "rule lists for this
+// policy", just enforced at different layers.
+// ---------------------------------------------------------------------------
+function UrlRulesSection({ policy, policyId }) {
+  const qc = useQueryClient();
+  const [pattern,  setPattern]  = useState('');
+  const [type,      setType]    = useState('deny');
+  const rules = policy.urlRules || [];
+
+  const addRule = useMutation({
+    mutationFn: () => api.post(`/policies/${policyId}/url-rules`, { pattern: pattern.trim(), rule_type: type }),
+    onSuccess:  () => { setPattern(''); qc.invalidateQueries({ queryKey: ['policy', policyId] }); },
+  });
+
+  const deleteRule = useMutation({
+    mutationFn: ruleId => api.delete(`/policies/${policyId}/url-rules/${ruleId}`),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['policy', policyId] }),
+  });
+
+  return (
+    <div className="mt-8 pt-6 border-t border-slate-200 space-y-4">
+      <div>
+        <h3 className="text-sm font-semibold text-slate-700">URL-Path Rules <span className="text-xs font-normal text-slate-400">(Extension only)</span></h3>
+        <p className="text-xs text-slate-400 mt-1">
+          DNS filtering can only see a domain, never a path — so a rule like <code className="bg-slate-100 px-1 rounded">youtube.com/watch*v=X</code> or
+          <code className="bg-slate-100 px-1 rounded ml-1">*.example.com/games/*</code> can only be enforced by the Chrome extension on managed devices,
+          not at the network/DNS level. Use <code className="bg-slate-100 px-1 rounded">*</code> as a wildcard.
+        </p>
+      </div>
+
+      <div className="flex gap-2 items-center">
+        <select className={SELECT + ' w-24'} value={type} onChange={e => setType(e.target.value)}>
+          <option value="allow">Allow</option>
+          <option value="deny">Block</option>
+        </select>
+        <input className={INPUT} placeholder="youtube.com/watch*v=BUjeVodnbzA"
+          value={pattern} onChange={e => setPattern(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && pattern && addRule.mutate()} />
+        <button className={BTN_P + ' whitespace-nowrap'} disabled={!pattern.trim() || addRule.isPending}
+          onClick={() => addRule.mutate()}>
+          Add Rule
+        </button>
+      </div>
+      {addRule.error && <p className="text-red-600 text-sm">{addRule.error.message}</p>}
+
+      {rules.length === 0 ? (
+        <div className="text-center py-6 text-slate-400 text-sm">
+          No URL-path rules yet — add one above or import from GoGuardian.
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-slate-200">
+          <table className="w-full text-sm">
+            <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+              <tr>
+                <th className="px-4 py-2 text-left">Action</th>
+                <th className="px-4 py-2 text-left">Pattern</th>
+                <th className="px-4 py-2 text-left">Source</th>
+                <th className="px-4 py-2"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {rules.map(r => (
+                <tr key={r.id} className="hover:bg-slate-50">
+                  <td className="px-4 py-2">
+                    <span className={`text-xs px-2 py-0.5 rounded font-semibold ${RULE_TYPE_COLOR[r.rule_type]}`}>
+                      {r.rule_type === 'deny' ? 'Block' : 'Allow'}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 font-mono text-slate-800 break-all">{r.pattern}</td>
+                  <td className="px-4 py-2 text-xs text-slate-400">
+                    {r.source === 'goguardian_import' ? 'GoGuardian import' : 'Manual'}
+                  </td>
+                  <td className="px-4 py-2 text-right">
+                    <button onClick={() => deleteRule.mutate(r.id)}
+                      className="text-xs text-red-500 hover:underline">Remove</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="px-4 py-2 text-xs text-slate-400 border-t border-slate-100">
+            {rules.length} rule{rules.length === 1 ? '' : 's'}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// GoGuardian CSV import — upload, preview classification (domain vs URL-path
+// rules, anything skipped), then confirm before writing.
+// ---------------------------------------------------------------------------
+function GoGuardianImportModal({ policyId, onClose }) {
+  const qc = useQueryClient();
+  const [file,    setFile]    = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [error,   setError]   = useState('');
+  const [busy,    setBusy]    = useState(false);
+  const [done,    setDone]    = useState(null);
+
+  const runRequest = async (previewMode) => {
+    const form = new FormData();
+    form.append('file', file);
+    const token = localStorage.getItem('cg_token');
+    const res = await fetch(
+      `${import.meta.env.VITE_API_URL || ''}/api/v1/policies/${policyId}/import-goguardian${previewMode ? '?preview=1' : ''}`,
+      { method: 'POST', headers: token ? { Authorization: `Bearer ${token}` } : {}, body: form }
+    );
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+    return data;
+  };
+
+  const handlePreview = async () => {
+    if (!file) { setError('Choose a CSV file first'); return; }
+    setError(''); setBusy(true);
+    try {
+      setPreview(await runRequest(true));
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConfirm = async () => {
+    setError(''); setBusy(true);
+    try {
+      const result = await runRequest(false);
+      setDone(result);
+      qc.invalidateQueries({ queryKey: ['policy', policyId] });
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-lg w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto">
+        <h3 className="text-lg font-semibold text-slate-800">Import from GoGuardian</h3>
+
+        {!done ? (
+          <>
+            <p className="text-sm text-slate-500">
+              Upload a GoGuardian filter-policy CSV export (<code className="bg-slate-100 px-1 rounded">action,url,...</code>).
+              Domain-only rows become DNS + extension rules; anything with a URL path or an un-collapsible
+              wildcard becomes an extension-only URL-path rule, since DNS can't see a path.
+            </p>
+            <input type="file" accept=".csv,.txt"
+              onChange={e => { setFile(e.target.files[0] || null); setPreview(null); setError(''); }}
+              className="block w-full text-sm" />
+
+            {error && <p className="text-red-600 text-sm">{error}</p>}
+
+            {preview && (
+              <div className="border border-slate-200 rounded-lg p-3 text-sm space-y-1 bg-slate-50">
+                <p><strong>{preview.totalRows}</strong> rows read</p>
+                <p><strong>{preview.domainRules.length}</strong> domain rules (DNS + extension)</p>
+                <p><strong>{preview.urlRules.length}</strong> URL-path rules (extension only)</p>
+                {preview.skipped.length > 0 && (
+                  <p className="text-amber-600"><strong>{preview.skipped.length}</strong> rows skipped (e.g. bare IP addresses)</p>
+                )}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button className={BTN_S} onClick={onClose}>Cancel</button>
+              {!preview ? (
+                <button className={BTN_P} disabled={!file || busy} onClick={handlePreview}>
+                  {busy ? 'Reading…' : 'Preview'}
+                </button>
+              ) : (
+                <button className={BTN_P} disabled={busy} onClick={handleConfirm}>
+                  {busy ? 'Importing…' : `Import ${preview.domainRules.length + preview.urlRules.length} rules`}
+                </button>
+              )}
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-green-600">
+              Imported {done.domainImported} domain rules and {done.urlImported} URL-path rules
+              {done.skipped ? ` (${done.skipped} skipped)` : ''}.
+            </p>
+            <div className="flex justify-end">
+              <button className={BTN_P} onClick={onClose}>Done</button>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
@@ -320,12 +546,12 @@ function CategoriesTab({ policy, policyId }) {
   const setRule = useMutation({
     mutationFn: ({ category_slug, action }) =>
       api.put('/categories/policy-rules', { policy_id: policyId, category_slug, action }),
-    onSuccess: () => qc.invalidateQueries(['policy', policyId]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policy', policyId] }),
   });
 
   const removeRule = useMutation({
     mutationFn: ruleId => api.delete(`/categories/policy-rules/${ruleId}`),
-    onSuccess:  () => qc.invalidateQueries(['policy', policyId]),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['policy', policyId] }),
   });
 
   const handleAction = (slug, action, existingRuleId) => {
@@ -420,7 +646,7 @@ function BlocklistsTab({ policy, policyId }) {
       enabled
         ? api.post(`/policies/${policyId}/blocklists`, { source_id })
         : api.delete(`/policies/${policyId}/blocklists/${source_id}`),
-    onSuccess: () => qc.invalidateQueries(['policy', policyId]),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['policy', policyId] }),
   });
 
   return (
@@ -505,7 +731,7 @@ function YouTubeTab({ policy, policyId }) {
     }),
     onSuccess: () => {
       setSaved(true);
-      qc.invalidateQueries(['policy', policyId]);
+      qc.invalidateQueries({ queryKey: ['policy', policyId] });
       setTimeout(() => setSaved(false), 2500);
     },
   });
@@ -689,14 +915,14 @@ function VideoRulesPanel({ policy, policyId }) {
     }),
     onSuccess: () => {
       setInput(''); setLookupData(null); setLookupErr('');
-      qc.invalidateQueries(['policy', policyId]);
+      qc.invalidateQueries({ queryKey: ['policy', policyId] });
     },
     onError: e => setLookupErr(e.message),
   });
 
   const removeRule = useMutation({
     mutationFn: videoId => api.delete(`/policies/${policyId}/youtube-videos/${videoId}`),
-    onSuccess:  () => qc.invalidateQueries(['policy', policyId]),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['policy', policyId] }),
   });
 
   return (
@@ -828,6 +1054,7 @@ function AssignmentsTab({ policy, policyId }) {
   const [subnet,     setSubnet]     = useState('');
   const [studentId,  setStudentId]  = useState('');
   const [groupId,    setGroupId]    = useState('');
+  const [location,   setLocation]   = useState('any');
   const [addError,   setAddError]   = useState('');
 
   const { data: ouList = [] } = useQuery({
@@ -851,33 +1078,57 @@ function AssignmentsTab({ policy, policyId }) {
     mutationFn: body => api.post(`/policies/${policyId}/assignments`, body),
     onSuccess: () => {
       setOuPath(''); setSubnet(''); setStudentId(''); setGroupId(''); setAddError('');
-      qc.invalidateQueries(['policy', policyId]);
+      qc.invalidateQueries({ queryKey: ['policy', policyId] });
     },
     onError: e => setAddError(e.message || 'Failed to add assignment'),
   });
 
   const removeAssignment = useMutation({
     mutationFn: id => api.delete(`/policies/${policyId}/assignments/${id}`),
-    onSuccess:  () => qc.invalidateQueries(['policy', policyId]),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['policy', policyId] }),
   });
 
   const handleAdd = () => {
     setAddError('');
     if (addType === 'ou') {
       if (!ouPath.trim()) { setAddError('Enter an OU path'); return; }
-      addAssignment.mutate({ target_type: 'ou', target_ou: ouPath.trim() });
+      addAssignment.mutate({ target_type: 'ou', target_ou: ouPath.trim(), location });
     } else if (addType === 'subnet') {
       if (!subnet.trim()) { setAddError('Enter a CIDR (e.g. 192.168.100.0/24)'); return; }
       if (!/^[\d.]+\/\d+$/.test(subnet.trim())) { setAddError('Invalid CIDR format — use x.x.x.x/nn'); return; }
       addAssignment.mutate({ target_type: 'subnet', target_subnet: subnet.trim() });
     } else if (addType === 'student') {
       if (!studentId) { setAddError('Select a student'); return; }
-      addAssignment.mutate({ target_type: 'student', target_id: studentId });
+      addAssignment.mutate({ target_type: 'student', target_id: studentId, location });
     } else if (addType === 'group') {
       if (!groupId) { setAddError('Select a group'); return; }
-      addAssignment.mutate({ target_type: 'group', target_id: groupId });
+      addAssignment.mutate({ target_type: 'group', target_id: groupId, location });
     }
   };
+
+  const LOCATION_LABEL = { any: 'Any (same everywhere)', on_campus: 'On-Campus only', off_campus: 'Off-Campus only' };
+
+  const LocationPicker = () => (
+    <div className="space-y-1">
+      <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">When does this apply?</label>
+      <div className="flex gap-2 flex-wrap">
+        {Object.entries(LOCATION_LABEL).map(([loc, label]) => (
+          <button key={loc} onClick={() => setLocation(loc)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+              location === loc ? 'border-primary-500 bg-primary-50 text-primary-700' : 'border-slate-200 text-slate-600 hover:border-slate-300'
+            }`}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {location !== 'any' && (
+        <p className="text-xs text-slate-400">
+          Determined by source IP at DNS-query time — On-Campus means a documented school subnet in IPAM; everything else counts as Off-Campus.
+          You can set both an On-Campus and an Off-Campus assignment for the same target to have different policies in each.
+        </p>
+      )}
+    </div>
+  );
 
   // Build OU tree for display (prefix-sorted = hierarchical order)
   const ouTree = [...ouList].sort();
@@ -933,6 +1184,7 @@ function AssignmentsTab({ policy, policyId }) {
                 + Assign
               </button>
             </div>
+            <LocationPicker/>
             {ouTree.length > 0 ? (
               <div className="border border-slate-200 rounded-lg overflow-hidden">
                 <div className="px-3 py-1.5 bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide">
@@ -941,7 +1193,7 @@ function AssignmentsTab({ policy, policyId }) {
                 <div className="max-h-48 overflow-y-auto divide-y divide-slate-100">
                   {ouTree.map(p => {
                     const depth   = (p.match(/\//g) || []).length - 1;
-                    const already = assignments.some(a => a.target_ou === p && a.target_type === 'ou');
+                    const already = assignments.some(a => a.target_ou === p && a.target_type === 'ou' && (a.location || 'any') === location);
                     return (
                       <button key={p} disabled={already}
                         onClick={() => { setOuPath(p); }}
@@ -953,7 +1205,7 @@ function AssignmentsTab({ policy, policyId }) {
                         </span>
                         <span className="font-mono">{p.split('/').pop()}</span>
                         <span className="text-slate-400 ml-1 font-normal">{p}</span>
-                        {already && <span className="ml-auto text-xs text-slate-300">assigned</span>}
+                        {already && <span className="ml-auto text-xs text-slate-300">already assigned for this location</span>}
                       </button>
                     );
                   })}
@@ -1024,6 +1276,7 @@ function AssignmentsTab({ policy, policyId }) {
                 + Assign
               </button>
             </div>
+            <LocationPicker/>
           </div>
         )}
 
@@ -1045,6 +1298,7 @@ function AssignmentsTab({ policy, policyId }) {
                 + Assign
               </button>
             </div>
+            <LocationPicker/>
           </div>
         )}
 
@@ -1067,6 +1321,7 @@ function AssignmentsTab({ policy, policyId }) {
               <tr>
                 <th className="px-4 py-2 text-left">Type</th>
                 <th className="px-4 py-2 text-left">Target</th>
+                <th className="px-4 py-2 text-left">Location</th>
                 <th className="px-4 py-2 text-left">Assigned</th>
                 <th className="px-4 py-2"></th>
               </tr>
@@ -1098,6 +1353,15 @@ function AssignmentsTab({ policy, policyId }) {
                       <span className="font-medium text-slate-800">
                         {a.target_name || a.target_ou || a.target_id}
                       </span>
+                    )}
+                  </td>
+                  <td className="px-4 py-3">
+                    {a.location === 'on_campus' ? (
+                      <span className="text-xs px-2 py-0.5 rounded font-semibold bg-amber-100 text-amber-700">On-Campus</span>
+                    ) : a.location === 'off_campus' ? (
+                      <span className="text-xs px-2 py-0.5 rounded font-semibold bg-sky-100 text-sky-700">Off-Campus</span>
+                    ) : (
+                      <span className="text-xs px-2 py-0.5 rounded font-medium bg-slate-100 text-slate-500">Any</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-400">
@@ -1149,6 +1413,11 @@ export default function PolicyEditor() {
           {policy.is_default && (
             <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-primary-100 text-primary-700 font-medium">
               Default
+            </span>
+          )}
+          {policy.is_network_policy && (
+            <span className="ml-1 text-xs px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 font-medium">
+              DNS Network Floor
             </span>
           )}
           <span className={`text-xs px-2 py-0.5 rounded font-medium ${
