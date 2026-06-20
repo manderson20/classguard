@@ -229,7 +229,7 @@ router.get('/managed-config', (req, res) => {
   res.json({
     serverUrl:      config.appUrl || process.env.APP_URL || '',
     googleClientId: config.google?.clientId || '',
-    version:        process.env.npm_package_version || '0.0.1',
+    version:        config.version,
   });
 });
 

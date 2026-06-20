@@ -16,7 +16,7 @@ const superauth = [authenticate, requireMinRole('superadmin')];
 // ---------------------------------------------------------------------------
 async function registerSelf() {
   const nodeId  = config.node.id;                     // NODE_ID env var || 'node1'
-  const version = process.env.npm_package_version || '0.0.1';
+  const version = config.version;
   const apiUrl  = config.appUrl;
   const hostname = process.env.HOSTNAME || nodeId;
 
