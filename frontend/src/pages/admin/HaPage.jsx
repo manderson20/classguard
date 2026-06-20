@@ -23,16 +23,18 @@ function Field({ label, hint, children }) {
 // are plain UI forms.
 // ---------------------------------------------------------------------------
 function JoinClusterSection({ qc }) {
-  const [primaryUrl, setPrimaryUrl]       = useState('');
-  const [token, setToken]                 = useState('');
-  const [requestReplica, setRequestReplica] = useState(false);
-  const [result, setResult]               = useState(null);
+  const [primaryUrl, setPrimaryUrl]             = useState('');
+  const [token, setToken]                       = useState('');
+  const [requestReplica, setRequestReplica]     = useState(false);
+  const [requestActiveStandby, setRequestActiveStandby] = useState(false);
+  const [result, setResult]                     = useState(null);
 
   const join = useMutation({
     mutationFn: () => api.post('/ha/join-cluster', {
       primary_url: primaryUrl.trim(),
       token: token.trim(),
       request_replica: requestReplica,
+      request_active_standby: requestReplica && requestActiveStandby,
     }),
     onSuccess: data => {
       setResult({
@@ -69,7 +71,7 @@ function JoinClusterSection({ qc }) {
         </Field>
       </div>
 
-      <label className="flex items-start gap-2 text-xs text-slate-600 mb-3">
+      <label className="flex items-start gap-2 text-xs text-slate-600 mb-2">
         <input type="checkbox" className="mt-0.5" checked={requestReplica}
           onChange={e => setRequestReplica(e.target.checked)} />
         <span>
@@ -78,6 +80,18 @@ function JoinClusterSection({ qc }) {
           standby node, not one with data you want to keep. You'll get a one-paste script to finish the setup.
         </span>
       </label>
+
+      {requestReplica && (
+        <label className="flex items-start gap-2 text-xs text-slate-600 mb-3 ml-5">
+          <input type="checkbox" className="mt-0.5" checked={requestActiveStandby}
+            onChange={e => setRequestActiveStandby(e.target.checked)} />
+          <span>
+            Also bring this node online as an active secondary DNS resolver (not just a cold failover spare) —
+            the script will also flip this node's own role/cron config and start its redis/api/dns/frontend
+            containers. Query history from queries it resolves still lands in the primary's logs, not lost.
+          </span>
+        </label>
+      )}
 
       {result && (
         <p className={`text-sm mb-3 ${result.ok ? 'text-green-600' : 'text-red-600'}`}>{result.message}</p>
