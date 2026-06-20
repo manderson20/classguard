@@ -82,6 +82,8 @@
       showLockOverlay(msg.message);
     } else if (msg.type === 'CG_UNLOCK_SCREEN') {
       hideLockOverlay();
+    } else if (msg.type === 'CG_CHAT_MESSAGE') {
+      onIncomingChatMessage(msg.threadId, msg.message);
     }
   });
 
@@ -186,4 +188,179 @@
     if (overlay) overlay.remove();
     document.documentElement.style.overflow = _prevOverflow || '';
   }
+
+  // ---------------------------------------------------------------------------
+  // Chat widget — a non-blocking floating bubble, unlike the lock overlay it
+  // never captures pointer events on the rest of the page. Lives in every
+  // tab so a message can't be missed just because the student isn't on the
+  // tab the teacher expects. The service worker proxies all REST calls
+  // (CG_CHAT_*) since content scripts never call the backend directly here.
+  // ---------------------------------------------------------------------------
+  let _threads      = [];
+  let _activeThread = null;     // thread id currently open in the panel
+  let _messages     = [];       // messages for _activeThread
+  let _expanded      = false;
+
+  function totalUnread() {
+    return _threads.reduce((sum, t) => sum + (t.unread_count || 0), 0);
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement('div');
+    div.textContent = s == null ? '' : s;
+    return div.innerHTML;
+  }
+
+  function buildChatWidget() {
+    if (document.getElementById('cg-chat-root')) return;
+
+    const root = document.createElement('div');
+    root.id = 'cg-chat-root';
+    root.style.cssText = 'position:fixed;bottom:16px;right:16px;z-index:2147483646;font:14px system-ui,sans-serif;';
+
+    root.innerHTML = `
+      <div id="cg-chat-bubble" style="
+        width:48px;height:48px;border-radius:50%;background:#1a56db;color:#fff;
+        display:flex;align-items:center;justify-content:center;font-size:22px;
+        cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.25);position:relative;">
+        💬
+        <span id="cg-chat-badge" style="
+          position:absolute;top:-4px;right:-4px;background:#dc2626;color:#fff;
+          font-size:11px;font-weight:700;border-radius:9px;min-width:18px;height:18px;
+          display:none;align-items:center;justify-content:center;padding:0 4px;">0</span>
+      </div>
+      <div id="cg-chat-panel" style="
+        display:none;position:absolute;bottom:58px;right:0;width:320px;height:420px;
+        background:#fff;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.3);
+        flex-direction:column;overflow:hidden;">
+        <div style="background:#1a56db;color:#fff;padding:10px 12px;display:flex;align-items:center;justify-content:space-between;">
+          <select id="cg-chat-thread-select" style="flex:1;margin-right:8px;font-size:12px;border-radius:6px;border:none;padding:4px;"></select>
+          <span id="cg-chat-close" style="cursor:pointer;font-weight:700;">✕</span>
+        </div>
+        <div id="cg-chat-messages" style="flex:1;overflow-y:auto;padding:10px;background:#f8fafc;"></div>
+        <div style="display:flex;border-top:1px solid #e2e8f0;">
+          <input id="cg-chat-input" type="text" placeholder="Type a message…" maxlength="2000"
+            style="flex:1;border:none;padding:10px;font-size:13px;outline:none;">
+          <button id="cg-chat-send" style="border:none;background:#1a56db;color:#fff;padding:0 14px;cursor:pointer;">Send</button>
+        </div>
+      </div>`;
+
+    document.documentElement.appendChild(root);
+
+    document.getElementById('cg-chat-bubble').addEventListener('click', () => toggleChatPanel(true));
+    document.getElementById('cg-chat-close').addEventListener('click', () => toggleChatPanel(false));
+    document.getElementById('cg-chat-thread-select').addEventListener('change', (e) => openThread(e.target.value));
+    document.getElementById('cg-chat-send').addEventListener('click', sendChatMessage);
+    document.getElementById('cg-chat-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') sendChatMessage();
+    });
+  }
+
+  function renderBadge() {
+    const badge = document.getElementById('cg-chat-badge');
+    if (!badge) return;
+    const n = totalUnread();
+    badge.textContent = n > 9 ? '9+' : String(n);
+    badge.style.display = n > 0 ? 'flex' : 'none';
+  }
+
+  function renderThreadOptions() {
+    const select = document.getElementById('cg-chat-thread-select');
+    if (!select) return;
+    select.innerHTML = _threads.map(t => {
+      const label = t.type === 'group' ? (t.name || 'Group chat') : 'Teacher';
+      const unread = t.unread_count ? ` (${t.unread_count})` : '';
+      return `<option value="${t.id}">${escapeHtml(label)}${unread}</option>`;
+    }).join('') || '<option value="">No conversations yet</option>';
+    if (_activeThread) select.value = _activeThread;
+  }
+
+  function renderMessages() {
+    const container = document.getElementById('cg-chat-messages');
+    if (!container) return;
+    if (!_messages.length) {
+      container.innerHTML = '<div style="color:#94a3b8;font-size:12px;text-align:center;margin-top:20px;">No messages yet</div>';
+      return;
+    }
+    container.innerHTML = _messages.map(m => {
+      const mine = m.sender_id === _selfId;
+      const text = m.deleted ? '<em style="color:#94a3b8;">message deleted</em>' : escapeHtml(m.body);
+      return `<div style="margin-bottom:8px;display:flex;justify-content:${mine ? 'flex-end' : 'flex-start'};">
+        <div style="max-width:75%;padding:6px 10px;border-radius:10px;font-size:13px;
+          background:${mine ? '#1a56db' : '#e2e8f0'};color:${mine ? '#fff' : '#1e293b'};">${text}</div>
+      </div>`;
+    }).join('');
+    container.scrollTop = container.scrollHeight;
+  }
+
+  let _selfId = null;
+
+  async function refreshThreads() {
+    const res = await chrome.runtime.sendMessage({ type: 'CG_CHAT_GET_THREADS' }).catch(() => null);
+    _threads = res?.threads || [];
+    if (!_activeThread && _threads[0]) _activeThread = _threads[0].id;
+    renderThreadOptions();
+    renderBadge();
+  }
+
+  async function openThread(threadId) {
+    if (!threadId) return;
+    _activeThread = threadId;
+    const res = await chrome.runtime.sendMessage({ type: 'CG_CHAT_GET_MESSAGES', threadId }).catch(() => null);
+    _messages = res?.messages || [];
+    renderMessages();
+    chrome.runtime.sendMessage({ type: 'CG_CHAT_MARK_READ', threadId }).catch(() => {});
+    const t = _threads.find(x => x.id === threadId);
+    if (t) t.unread_count = 0;
+    renderBadge();
+  }
+
+  async function sendChatMessage() {
+    const input = document.getElementById('cg-chat-input');
+    const body = input.value.trim();
+    if (!body || !_activeThread) return;
+    input.value = '';
+    const res = await chrome.runtime.sendMessage({ type: 'CG_CHAT_SEND_MESSAGE', threadId: _activeThread, body }).catch(() => null);
+    if (res && !res.error) {
+      _selfId = _selfId || res.sender_id;
+      _messages.push(res);
+      renderMessages();
+    }
+  }
+
+  function toggleChatPanel(open) {
+    _expanded = open;
+    const panel = document.getElementById('cg-chat-panel');
+    if (panel) panel.style.display = open ? 'flex' : 'none';
+    if (open && _activeThread) openThread(_activeThread);
+  }
+
+  function onIncomingChatMessage(threadId, message) {
+    buildChatWidget();
+    const t = _threads.find(x => x.id === threadId);
+    if (t) {
+      t.last_message = message.deleted ? null : message.body;
+    } else {
+      _threads.push({ id: threadId, type: 'direct', unread_count: 0 });
+    }
+    if (_expanded && _activeThread === threadId) {
+      _messages.push(message);
+      renderMessages();
+      chrome.runtime.sendMessage({ type: 'CG_CHAT_MARK_READ', threadId }).catch(() => {});
+    } else {
+      const target = _threads.find(x => x.id === threadId);
+      if (target) target.unread_count = (target.unread_count || 0) + 1;
+    }
+    renderThreadOptions();
+    renderBadge();
+  }
+
+  // Only build the widget for students — teachers/admins use the web app,
+  // not the extension, for chat. CG_GET_STATUS already tells us the role.
+  chrome.runtime.sendMessage({ type: 'CG_GET_STATUS' }, (status) => {
+    if (status?.user?.role !== 'student') return;
+    _selfId = status.user.id;
+    buildChatWidget();
+    refreshThreads();
+  });
 }());
