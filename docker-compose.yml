@@ -228,6 +228,10 @@ services:
       # Requests to this host serve the admin SPA; all other hostnames
       # (DNS-sinkhled blocked domains) serve the block page.
       CLASSGUARD_HOST: ${CLASSGUARD_HOST:-172.16.1.250}
+      # VRRP floating IP (HA Cluster page), if configured — so the admin UI
+      # loads correctly when reached via the virtual IP, not just this
+      # node's own real address. Blank/unset on a non-HA node.
+      VRRP_VIP: ${VRRP_VIP:-}
     ports:
       - "80:80"
       - "443:443"
