@@ -18,6 +18,72 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.1.0] - 2026-06-20
+
+Bumped MINOR, not PATCH — this release moves ClassGuard from a single-server
+deployment to a genuinely working multi-server HA cluster (replication +
+failover tested live between two physical servers), alongside several new
+policy/integration features.
+
+### Added
+
+- **On/off-campus policy layer** — DNS-level network floor (applies to every
+  device on a subnet, regardless of OU) plus OU-level extension policy on
+  top, so students and staff can be filtered separately. GoGuardian CSV
+  import for migrating existing policies.
+- **NAC / RADIUS integrations** — OAuth client-credentials auth for
+  Snipe-IT, UniFi controller session caching, RADIUS NAS auto-provisioning
+  from MDM/network-controller sources, BYOD policy + Secure LDAP setup
+  wizard.
+- **Phone directory and DHCP↔IPAM integration** — phone system import,
+  device-level DNS tracking across integration sources.
+- **Let's Encrypt DNS-01 automation** and a Database Replication status
+  panel on the HA page.
+- **`install.sh` now doubles as the update path** — re-running it on an
+  existing install pulls the latest code and rebuilds only what changed;
+  no separate manual `git pull`/`docker compose build` steps.
+- **Full HA cluster join, entirely from the UI** — generate an invite on
+  the primary, paste the URL + token into the joining node's own "Join a
+  Primary Cluster" form. No CLI or SSH access to either server required.
+- **One-click-adjacent Postgres streaming replication setup** — the primary
+  issues a scoped, rotation-safe replication credential and a dedicated
+  replication slot per node; the joining node gets a ready-to-paste script
+  that bases-back-up and brings up a real streaming standby.
+- **Standbys can now actively serve DNS**, not just sit idle as a cold
+  failover spare — query logs from a standby forward to the primary so
+  history stays unified regardless of which node answered the query.
+- **Real VRRP failover via keepalived** — virtual IP automatically moves to
+  whichever node is healthy, with live state (MASTER/BACKUP/FAULT) reported
+  back to the Cluster Nodes list. Tested end-to-end on two physical
+  servers: stopping the primary handed off the VIP (and the admin UI)
+  to the standby within seconds; restarting the primary reclaimed it via
+  priority preemption.
+- **Settings page** reorganized into tabs.
+
+### Fixed
+
+- Kea's control-socket path and an unsubstituted `DB_PASSWORD` in its config.
+- Kea was sharing the app's database, which made `db-init` impossible on
+  any fresh install — gave it a dedicated database.
+- `install.sh` could die under `set -e` during IP auto-detection on a
+  minimal/offline base image, and a first-boot TimescaleDB tuning restart
+  could race a naive readiness check.
+- `docker-compose.override.yml` was tracked in git and silently forced
+  every fresh install into dev mode — untracked it.
+- Deployment docs described a PM2/bare-metal setup that no longer exists;
+  rewritten to match the real Docker/`install.sh` path.
+- A whole cluster of HA bugs found only by actually deploying replication
+  and VRRP on two real servers rather than just reviewing the code: a
+  partial-unique-index mismatch meant `/join` had never actually
+  succeeded for any node; rotating the shared replication credential on
+  every join silently broke every other already-connected standby;
+  migrations could block `api` from ever starting on a read-only standby;
+  the admin UI didn't resolve when reached via the VRRP virtual IP; and
+  keepalived's own health-check/notify scripts were calling unreachable
+  ports and unauthenticated endpoints.
+
+---
+
 ## [0.0.4] - 2026-06-17
 
 ### Added
@@ -93,6 +159,7 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 ---
 
 <!-- Links updated each release -->
-[Unreleased]: https://github.com/manderson20/classguard/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/manderson20/classguard/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/manderson20/classguard/compare/v0.0.4...v0.1.0
 [0.0.4]: https://github.com/manderson20/classguard/compare/v0.0.1...v0.0.4
 [0.0.1]: https://github.com/manderson20/classguard/releases/tag/v0.0.1
