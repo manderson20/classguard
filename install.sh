@@ -29,7 +29,7 @@ info "Working directory: $REPO_DIR"
 # ---------------------------------------------------------------------------
 section "Step 1 — System packages"
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl
+apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl iproute2
 
 # ---------------------------------------------------------------------------
 # 2. Docker Engine + Compose plugin
@@ -84,8 +84,11 @@ if [[ -f .env ]]; then
 else
   info "No .env found — generating from template..."
 
-  # Detect primary non-loopback IP
-  SERVER_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1)
+  # Detect primary non-loopback IP. The `|| true` matters: under
+  # set -euo pipefail, any failure in this pipeline (no default route yet,
+  # `ip` missing, etc.) would otherwise kill the whole script right here,
+  # before ever reaching the 127.0.0.1 fallback on the next line.
+  SERVER_IP=$(ip route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src") print $(i+1)}' | head -1) || true
   SERVER_IP="${SERVER_IP:-127.0.0.1}"
   info "Detected server IP: $SERVER_IP"
 
@@ -198,7 +201,8 @@ for i in $(seq 1 40); do
   sleep 3
 done
 
-SERVER_IP=$(grep '^APP_URL=' .env | sed 's|http://||;s|https://||' | cut -d/ -f1)
+SERVER_IP=$(grep '^APP_URL=' .env | sed 's|http://||;s|https://||' | cut -d/ -f1) || true
+SERVER_IP="${SERVER_IP:-this-server}"
 
 # ---------------------------------------------------------------------------
 # Done
