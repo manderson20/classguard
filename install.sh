@@ -53,7 +53,7 @@ fi
 # ---------------------------------------------------------------------------
 section "Step 1 — System packages"
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl iproute2
+apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl iproute2 jq
 
 # ---------------------------------------------------------------------------
 # 2. Docker Engine + Compose plugin
@@ -208,7 +208,16 @@ info "Running database migrations..."
 docker compose run --rm migrate
 
 info "Starting remaining services..."
-docker compose up -d
+# A standby's Postgres (and Kea's own database, replicated along with it) is
+# read-only, so Kea would just crash-loop trying to write leases there —
+# only bring up the services that are actually safe/useful on a standby.
+NODE_ROLE_CURRENT=$(grep '^NODE_ROLE=' .env | cut -d= -f2-)
+if [[ "$NODE_ROLE_CURRENT" == "standby" ]]; then
+  info "NODE_ROLE=standby — starting redis/api/dns/frontend only (skipping kea)"
+  docker compose up -d redis api dns frontend
+else
+  docker compose up -d
+fi
 
 # ---------------------------------------------------------------------------
 # 6. Wait for API to be healthy
@@ -229,6 +238,21 @@ done
 
 SERVER_IP=$(grep '^APP_URL=' .env | cut -d= -f2- | sed 's|http://||;s|https://||' | cut -d/ -f1) || true
 SERVER_IP="${SERVER_IP:-this-server}"
+
+# ---------------------------------------------------------------------------
+# 8. Scheduled-update watcher — installed once, idempotent on re-run.
+# Polls this node's own API every minute for an admin-scheduled update
+# (HA page → Software Updates) and runs this exact install.sh again once
+# the scheduled time arrives, so a maintenance window can be picked in the
+# UI instead of someone having to be on a terminal at a specific time.
+# ---------------------------------------------------------------------------
+section "Step 8 — Scheduled-update watcher"
+cp "$REPO_DIR/infrastructure/update-watcher/classguard-update-watcher.service" /etc/systemd/system/
+cp "$REPO_DIR/infrastructure/update-watcher/classguard-update-watcher.timer"   /etc/systemd/system/
+chmod +x "$REPO_DIR/infrastructure/update-watcher/update-watcher.sh"
+systemctl daemon-reload
+systemctl enable --now classguard-update-watcher.timer
+info "Update watcher installed — checks every minute for an admin-scheduled update"
 
 # ---------------------------------------------------------------------------
 # Done

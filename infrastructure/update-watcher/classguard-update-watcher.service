@@ -1,0 +1,7 @@
+[Unit]
+Description=ClassGuard scheduled update watcher
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/classguard/infrastructure/update-watcher/update-watcher.sh
