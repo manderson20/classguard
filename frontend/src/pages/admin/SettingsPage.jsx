@@ -23,6 +23,54 @@ function Field({ label, hint, children }) {
   );
 }
 
+function ExtensionDownloadStatus() {
+  const [status, setStatus] = useState('checking'); // checking | ready | missing
+  const [meta, setMeta] = useState(null);
+
+  useEffect(() => {
+    fetch('/downloads/classguard-extension.zip', { method: 'HEAD' })
+      .then((res) => {
+        if (!res.ok) { setStatus('missing'); return; }
+        setMeta({
+          size:         res.headers.get('content-length'),
+          lastModified: res.headers.get('last-modified'),
+        });
+        setStatus('ready');
+      })
+      .catch(() => setStatus('missing'));
+  }, []);
+
+  if (status === 'checking') {
+    return <p className="text-xs text-slate-400">Checking for a built extension package…</p>;
+  }
+
+  if (status === 'missing') {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
+        No build found on this server yet. On the host, run:
+        <pre className="bg-slate-800 text-green-300 rounded p-2 mt-2 font-mono leading-5">docker compose build extension-builder{'\n'}docker compose run --rm extension-builder</pre>
+        Then refresh this page. Re-run the same command any time <strong>Google Client ID</strong> or the server's public URL changes.
+      </div>
+    );
+  }
+
+  const sizeMb = meta?.size ? (Number(meta.size) / (1024 * 1024)).toFixed(1) : null;
+  return (
+    <div className="flex items-center gap-3">
+      <a
+        href="/downloads/classguard-extension.zip"
+        download
+        className="inline-flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
+      >
+        Download Extension (.zip)
+      </a>
+      <span className="text-xs text-slate-400">
+        {sizeMb && `${sizeMb} MB`}{meta?.lastModified && ` · built ${new Date(meta.lastModified).toLocaleString()}`}
+      </span>
+    </div>
+  );
+}
+
 function ExtensionDeploySection({ googleClientId }) {
   const [copied, setCopied] = useState('');
   const serverUrl = window.location.origin;
@@ -41,19 +89,22 @@ function ExtensionDeploySection({ googleClientId }) {
   return (
     <Section title="Chrome Extension — Google Admin Deployment">
       <p className="text-xs text-slate-500 mb-4">
-        ClassGuard uses a single generic extension that self-configures per school via Google Admin Console
-        managed storage — no custom build required. Follow these steps to deploy it.
+        The extension is built specifically for this server (its Google OAuth client ID is baked into the
+        manifest), then self-configures its server URL per school via Google Admin Console managed storage.
+        Follow these steps to deploy it.
       </p>
 
       <div className="space-y-5">
         {/* Step 1 */}
         <div>
-          <div className="text-sm font-semibold text-slate-700 mb-1">Step 1 — Publish or sideload the extension</div>
-          <p className="text-xs text-slate-500">
-            Either upload the built <code className="bg-slate-100 px-1 rounded font-mono">dist/</code> folder to the Chrome Web Store
-            as an unlisted extension, or use Google Admin → Devices → Chrome → Apps &amp; Extensions → Force-install from CRX.
-            Copy the extension ID once it's installed.
+          <div className="text-sm font-semibold text-slate-700 mb-1">Step 1 — Download and publish the extension</div>
+          <p className="text-xs text-slate-500 mb-3">
+            This package is pre-built with this server's Google Client ID baked into its manifest (required for{' '}
+            <code className="font-mono">chrome.identity.getAuthToken</code> sign-in — it can't be supplied at runtime).
+            Upload the zip to the Chrome Web Store as an unlisted extension, or use Google Admin → Devices → Chrome →
+            Apps &amp; Extensions → Force-install from CRX. Copy the extension ID once it's installed.
           </p>
+          <ExtensionDownloadStatus />
         </div>
 
         {/* Step 2 */}
@@ -89,8 +140,10 @@ function ExtensionDeploySection({ googleClientId }) {
         {/* What managed storage replaces */}
         <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-700">
           <strong>How it works:</strong> The extension reads <code className="font-mono">chrome.storage.managed</code> at runtime to
-          discover the ClassGuard server URL. This means one extension package works for every school district —
-          each school's admin sets their own server URL via the Google Admin policy, exactly like GoGuardian's deployment model.
+          discover the ClassGuard server URL, so you never need to rebuild it just because the server's address changes —
+          set <strong>serverUrl</strong> via the Google Admin policy below, exactly like GoGuardian's deployment model.
+          The <strong>Google Client ID</strong> is the one exception: Chrome requires it to be compiled into the
+          extension's manifest, so re-download and re-publish the extension if you ever change it.
         </div>
       </div>
     </Section>
@@ -366,6 +419,11 @@ export default function SettingsPage() {
     queryFn:  () => api.get('/settings').catch(() => ({})),
   });
 
+  const { data: dnsZones = [] } = useQuery({
+    queryKey: ['dns-zones'],
+    queryFn:  () => api.get('/dns/zones'),
+  });
+
   const [dns, setDns]     = useState({});
   const [google, setGoogle] = useState({
     google_client_id: '', google_client_secret: '', google_redirect_uri: '', google_workspace_domain: '',
@@ -403,6 +461,8 @@ export default function SettingsPage() {
         upstream_secondary: dnsSettings.upstream_secondary || '8.8.4.4',
         block_page_ip:      dnsSettings.block_page_ip      || '',
         cache_ttl:          dnsSettings.cache_ttl          || '300',
+        dhcp_auto_register:         dnsSettings.dhcp_auto_register         || 'false',
+        dhcp_auto_register_zone_id: dnsSettings.dhcp_auto_register_zone_id || '',
       });
     }
   }, [dnsSettings]);
@@ -598,6 +658,46 @@ export default function SettingsPage() {
             </div>
           </>
         )}
+      </Section>
+
+      {/* DHCP-lease DNS auto-registration */}
+      <Section title="DHCP → DNS Auto-Registration">
+        <p className="text-xs text-slate-500 mb-3">
+          When a device gets a DHCP lease with a hostname, automatically create/update an A record for it
+          in the zone below — the same thing Windows AD-integrated DNS does on lease, without needing
+          Active Directory. Checked every 5 minutes; records this creates are cleaned up automatically once
+          a lease expires or changes IP. Records you create by hand are never touched by this.
+        </p>
+        <Field label="Enable auto-registration">
+          <label className="flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={dns.dhcp_auto_register === 'true'}
+              onChange={e => setDns(d => ({ ...d, dhcp_auto_register: e.target.checked ? 'true' : 'false' }))}
+            />
+            <span className="text-sm text-slate-600">Enabled</span>
+          </label>
+        </Field>
+        <Field label="Target zone" hint="which zone auto-registered hostnames go into">
+          <select
+            className="input text-sm"
+            value={dns.dhcp_auto_register_zone_id || ''}
+            onChange={e => setDns(d => ({ ...d, dhcp_auto_register_zone_id: e.target.value }))}
+          >
+            <option value="">Select a zone…</option>
+            {dnsZones.map(z => <option key={z.id} value={z.id}>{z.name}</option>)}
+          </select>
+        </Field>
+        <div className="flex items-center gap-3 pt-4">
+          <button
+            className="btn-primary"
+            onClick={() => saveDns.mutate()}
+            disabled={saveDns.isPending}
+          >
+            {saveDns.isPending ? 'Saving…' : 'Save DNS Settings'}
+          </button>
+          {saved === 'dns' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+        </div>
       </Section>
 
       {/* Log retention */}

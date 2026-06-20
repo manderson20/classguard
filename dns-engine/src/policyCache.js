@@ -15,20 +15,37 @@ function deviceKey(ip)        { return `device:${ip}`; }
 
 /**
  * Look up the device record for a source IP.
- * Returns { studentId, policyId } or null if unknown.
+ * Returns { studentId, deviceId, policyId } or null if unknown.
+ *
+ * routes/extension.js writes this key as JSON {studentId, deviceId} on every
+ * /register and /heartbeat call. (It used to write a bare studentId string,
+ * which this function JSON.parse()'d — always throwing, silently caught,
+ * always returning null, so no DNS query was EVER attributed to a student
+ * via this path: confirmed live, 0 of several thousand dns_logs rows had a
+ * user_id. Fixed alongside switching the wire format to JSON so deviceId —
+ * the device's MAC-resolved devices.id, see extension.js — could ride along
+ * too.) Old plain-string keys (8h TTL) may still be live right after this
+ * deploys, so a bare string is treated as a legacy studentId-only value
+ * rather than failing the read.
  */
 async function getDevice(ip) {
   const raw = await redis.get(deviceKey(ip));
   if (!raw) return null;
-  try { return JSON.parse(raw); } catch { return null; }
+  try {
+    const parsed = JSON.parse(raw);
+    return { studentId: parsed.studentId, deviceId: parsed.deviceId ?? null, policyId: parsed.policyId ?? null };
+  } catch {
+    return { studentId: raw, deviceId: null, policyId: null }; // legacy plain-string value
+  }
 }
 
 /**
- * Register or refresh a device→student mapping in Redis.
- * Called by the backend when a device checks in.
+ * Register or refresh a device→student mapping in Redis. Not currently
+ * called (routes/extension.js writes the key directly), kept for parity —
+ * must stay in the same JSON format getDevice() reads.
  */
-async function setDevice(ip, studentId, policyId) {
-  await redis.set(deviceKey(ip), JSON.stringify({ studentId, policyId }), 'EX', DEVICE_TTL);
+async function setDevice(ip, studentId, deviceId = null) {
+  await redis.set(deviceKey(ip), JSON.stringify({ studentId, deviceId }), 'EX', DEVICE_TTL);
 }
 
 /**

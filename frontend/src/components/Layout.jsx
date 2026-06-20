@@ -27,6 +27,7 @@ import {
   mdiLogoutVariant,
   mdiFilterOutline,
   mdiEmailOutline,
+  mdiPhoneOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -81,6 +82,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/ipam',      icon: mdiIpNetworkOutline,         label: 'IPAM'          },
       { to: '/admin/dhcp',      icon: mdiServerOutline,            label: 'DHCP'          },
       { to: '/admin/network',   icon: mdiSitemap,                  label: 'Network Infra' },
+      { to: '/admin/phones',    icon: mdiPhoneOutline,             label: 'Phone System'  },
     ],
   },
   {

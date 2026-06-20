@@ -29,6 +29,17 @@ async function getClient() {
   if (!cfg.url || !cfg.token) {
     throw new Error('Snipe-IT is not configured. Add SNIPEIT_URL and SNIPEIT_TOKEN in Settings → Integrations.');
   }
+  // Snipe-IT Personal Access Tokens are long JWTs (Laravel Passport) —
+  // typically 200+ characters with two dots. A short token is almost
+  // certainly copied from the wrong place, so warn upfront rather than
+  // let it fail with a bare "Unauthorized" from the server.
+  if (cfg.token.length < 100 || cfg.token.split('.').length !== 3) {
+    throw new Error(
+      `Snipe-IT token looks too short/wrong-shaped to be a real Personal Access Token ` +
+      `(those are long JWTs, 200+ characters). Generate one from your Snipe-IT account menu → ` +
+      `"Manage API Keys" → "Create New Token", and copy the entire value.`
+    );
+  }
   return buildClient(cfg.url, cfg.token);
 }
 

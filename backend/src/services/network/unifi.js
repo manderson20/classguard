@@ -31,15 +31,25 @@ async function request(baseUrl, path, method, body, cookies) {
 
 async function login(baseUrl, username, password) {
   // Try UniFi OS endpoint first, fall back to legacy
+  const failures = [];
   for (const path of ['/api/auth/login', '/api/login']) {
     try {
       const res = await request(baseUrl, path, 'POST', { username, password });
       const setCookie = res.headers['set-cookie'] || [];
       const cookies   = setCookie.map(c => c.split(';')[0]).join('; ');
       if (cookies) return { cookies, isOs: path.includes('auth') };
-    } catch { /* try next */ }
+      failures.push(`${path}: no session cookie in response (HTTP ${res.status})`);
+    } catch (err) {
+      // Surface the real cause — a TLS/protocol mismatch (e.g. http:// against
+      // a controller's HTTPS-only management port) looks nothing like a bad
+      // password, and "check URL/username/password" alone hides that.
+      const detail = err.response
+        ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data)}`
+        : err.code || err.message;
+      failures.push(`${path}: ${detail}`);
+    }
   }
-  throw new Error('UniFi login failed — check URL, username, and password');
+  throw new Error(`UniFi login failed — ${failures.join('; ')}`);
 }
 
 async function logout(baseUrl, cookies, isOs) {

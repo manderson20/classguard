@@ -10,6 +10,7 @@ volumes:
   blocklists:
   screenshots:
   tls-certs:
+  extension-dist:
 
 services:
 
@@ -72,6 +73,30 @@ services:
       - classguard-net
 
   # ---------------------------------------------------------------------------
+  # Chrome extension builder — runs once and exits.
+  # Bakes this server's APP_URL + GOOGLE_CLIENT_ID into the extension build
+  # (chrome.identity.getAuthToken requires the OAuth client_id to be static in
+  # manifest.json, so the extension can't be a single universal binary the way
+  # the backend-URL discovery via chrome.storage.managed is) and zips dist/ to
+  # the extension-dist volume, where nginx serves it for the Settings page
+  # "Download Extension" button. Re-run after changing GOOGLE_CLIENT_ID/APP_URL:
+  #   docker compose build extension-builder && docker compose run --rm extension-builder
+  # ---------------------------------------------------------------------------
+  extension-builder:
+    build:
+      context:    ./chrome-extension
+      dockerfile: Dockerfile
+    container_name: classguard-extension-builder
+    restart: "no"
+    env_file: .env
+    environment:
+      BACKEND_URL: ${APP_URL:-https://classguard.example.org}
+    volumes:
+      - extension-dist:/output
+    networks:
+      - classguard-net
+
+  # ---------------------------------------------------------------------------
   # ClassGuard API + WebSocket server
   # ---------------------------------------------------------------------------
   api:
@@ -105,6 +130,9 @@ services:
       - tls-certs:/app/certs
     networks:
       - classguard-net
+    # NET_RAW — fping needs raw ICMP sockets for the IPAM presence-scan job (pingScan.js)
+    cap_add:
+      - NET_RAW
     healthcheck:
       test:         ["CMD-SHELL", "wget -qO- http://localhost:3001/health || exit 1"]
       interval:     15s
@@ -198,5 +226,6 @@ services:
       - "443:443"
     volumes:
       - tls-certs:/etc/nginx/certs
+      - extension-dist:/usr/share/nginx/html/downloads:ro
     networks:
       - classguard-net

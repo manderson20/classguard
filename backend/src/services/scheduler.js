@@ -5,7 +5,12 @@ const config = require('../config');
 const { syncAll } = require('./blocklistSync');
 const { syncNetworkClientsToIpam } = require('./ipamSync');
 const { syncAll: syncCategories, classifyRecentDomains } = require('./categoryImport');
-const acmeTls = require('./acmeTls');
+const acmeTls   = require('./acmeTls');
+const pingScan  = require('./pingScan');
+const dhcpDnsAutoRegister = require('./dhcpDnsAutoRegister');
+const dhcpKeaSync = require('./dhcpKeaSync');
+const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
+const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -44,20 +49,22 @@ async function drainDnsLog() {
     // Use unnest() arrays — single round-trip regardless of row count,
     // and avoids the 65535-parameter limit of $1..$N style inserts.
     const userIds      = records.map(r => r.studentId   || null);
+    const deviceIds    = records.map(r => r.deviceId    || null);
     const domains      = records.map(r => r.domain      || '');
     const actions      = records.map(r => r.action      || 'allowed');
     const blockReasons = records.map(r => r.blockReason || null);
+    const sourceIps    = records.map(r => r.sourceIp     || null);
     const queriedAts   = records.map(r =>
       r.timestamp ? new Date(parseInt(r.timestamp, 10)) : new Date()
     );
 
     await query(
-      `INSERT INTO dns_logs (user_id, domain, action, block_reason, queried_at)
+      `INSERT INTO dns_logs (user_id, device_id, domain, action, block_reason, source_ip, queried_at)
        SELECT * FROM unnest(
-         $1::uuid[], $2::text[], $3::text[], $4::text[], $5::timestamptz[]
+         $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[], $6::inet[], $7::timestamptz[]
        )
        ON CONFLICT DO NOTHING`,
-      [userIds, domains, actions, blockReasons, queriedAts]
+      [userIds, deviceIds, domains, actions, blockReasons, sourceIps, queriedAts]
     );
 
     cursor = entries[entries.length - 1][0];
@@ -169,6 +176,13 @@ function startScheduler() {
     syncNetworkClientsToIpam().catch(err => console.error('[scheduler] ipam-sync error:', err.message));
   });
 
+  // Mosyle/Google MDM device → IPAM sync — every 15 minutes; only links a
+  // device when one of its known IPs matches a documented on-prem subnet
+  // (offsite devices on home networks are correctly skipped, not errored).
+  cron.schedule('*/15 * * * *', () => {
+    integrationDeviceIpamSync.run().catch(err => console.error('[scheduler] integration-device-ipam-sync error:', err.message));
+  });
+
   // Category list sync — weekly Sunday 3am (UT1 + Shallalist)
   cron.schedule('0 3 * * 0', () => {
     console.log('[scheduler] starting weekly category list sync');
@@ -183,6 +197,31 @@ function startScheduler() {
   // TLS certificate renewal check — daily 5am, renews within 30 days of expiry
   cron.schedule('0 5 * * *', () => {
     acmeTls.renewIfNeeded().catch(err => console.error('[scheduler] TLS renewal error:', err.message));
+  });
+
+  // Presence (ping) scan — every 10 minutes, subnets with scan_enabled=true
+  cron.schedule('*/10 * * * *', () => {
+    pingScan.scanAllSubnets().catch(err => console.error('[scheduler] ping-scan error:', err.message));
+  });
+
+  // DHCP lease → DNS auto-registration — every 5 minutes; no-op unless
+  // explicitly enabled in Settings (dns.dhcp_auto_register)
+  cron.schedule('*/5 * * * *', () => {
+    dhcpDnsAutoRegister.run().catch(err => console.error('[scheduler] dhcp-dns-autoregister error:', err.message));
+  });
+
+  // Re-push subnets/reservations from Postgres into Kea — every 10 minutes.
+  // Kea's command-API pushes are runtime-only and don't survive a container
+  // restart, so this keeps Kea self-healing instead of relying on an admin
+  // remembering to click "Sync to Kea".
+  cron.schedule('*/10 * * * *', () => {
+    dhcpKeaSync.run().catch(err => console.error('[scheduler] dhcp-kea-sync error:', err.message));
+  });
+
+  // DHCP active lease -> IPAM address status sync — every 2 minutes, so
+  // IPAM reflects who currently holds a dynamically-leased IP.
+  cron.schedule('*/2 * * * *', () => {
+    dhcpLeaseIpamSync.run().catch(err => console.error('[scheduler] dhcp-lease-ipam-sync error:', err.message));
   });
 }
 

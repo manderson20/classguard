@@ -35,10 +35,18 @@ async function keaCommand(command, service, args = {}) {
 }
 
 // ---------------------------------------------------------------------------
-// Convert a dhcp_subnets DB row to Kea subnet4 object
+// Convert a dhcp_subnets DB row (+ its reservations) to a Kea subnet4 object.
 // options: array of dhcp_options rows (global merged with per-subnet)
+//
+// Deliberately NOT using subnet4-add/-update/-del or reservation-add/-del —
+// those require the subnet_cmds/host_cmds hook libraries, which are ISC
+// commercial-only ("Kea Premium") and not available to us. Free Kea fully
+// supports subnets and host reservations as plain config-file structures —
+// just not as incremental runtime commands — so the whole subnet4 array
+// (reservations embedded per-subnet) gets rebuilt and pushed via config-set
+// instead, which is a core command available without any hooks.
 // ---------------------------------------------------------------------------
-function dbRowToKeaSubnet(row, options = []) {
+function dbRowToKeaSubnet(row, options = [], reservations = []) {
   const subnet4 = {
     id:               row.kea_subnet_id,
     subnet:           row.subnet,
@@ -70,59 +78,46 @@ function dbRowToKeaSubnet(row, options = []) {
     seen.add(opt.option_name);
   }
 
+  if (reservations.length) {
+    subnet4.reservations = reservations.map(r => ({
+      'hw-address': r.mac_address,
+      'ip-address': r.ip_address,
+      ...(r.hostname ? { hostname: r.hostname } : {}),
+    }));
+  }
+
   return subnet4;
 }
 
 // ---------------------------------------------------------------------------
-// Sync a subnet to Kea (update → fallback to add)
-// options: combined dhcp_options rows (global + per-subnet, caller resolves)
+// Fetch Kea's full current running config (so we only replace subnet4,
+// not clobber hooks-libraries/lease-database/control-socket/etc).
 // ---------------------------------------------------------------------------
-async function syncSubnet(row, options = []) {
-  const subnet4 = dbRowToKeaSubnet(row, options);
-  try {
-    await keaCommand('subnet4-update', 'dhcp4', { subnet4: [subnet4] });
-  } catch {
-    await keaCommand('subnet4-add', 'dhcp4', { subnet4: [subnet4] });
-  }
+async function getRunningConfig() {
+  const res = await keaCommand('config-get', 'dhcp4', {});
+  return res.arguments;
 }
 
 // ---------------------------------------------------------------------------
-// Delete a subnet from Kea
+// Replace the entire subnet4 list (each entry carries its own reservations)
+// in one shot via config-set, then config-write to persist to disk.
+// config-write is best-effort — it only survives until the next container
+// recreate anyway, which is why scheduler.js also re-runs this periodically.
 // ---------------------------------------------------------------------------
-async function deleteSubnet(keaSubnetId) {
-  await keaCommand('subnet4-del', 'dhcp4', { id: keaSubnetId });
-}
-
-// ---------------------------------------------------------------------------
-// Add a DHCP reservation to Kea
-// ---------------------------------------------------------------------------
-async function syncReservation(row) {
-  await keaCommand('reservation-add', 'dhcp4', {
-    reservation: {
-      'subnet-id':  row.kea_subnet_id,
-      'hw-address': row.mac_address,
-      'ip-address': row.ip_address,
-      ...(row.hostname ? { hostname: row.hostname } : {}),
-    },
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Delete a DHCP reservation from Kea
-// ---------------------------------------------------------------------------
-async function deleteReservation(macAddress, keaSubnetId) {
-  await keaCommand('reservation-del', 'dhcp4', {
-    'subnet-id':  keaSubnetId,
-    'identifier-type': 'hw-address',
-    'identifier': macAddress,
-  });
+async function applySubnets(subnet4) {
+  const current = await getRunningConfig();
+  await keaCommand('config-set', 'dhcp4', { Dhcp4: { ...current.Dhcp4, subnet4 } });
+  try { await keaCommand('config-write', 'dhcp4', {}); } catch { /* best-effort */ }
 }
 
 // ---------------------------------------------------------------------------
 // Leases
 // ---------------------------------------------------------------------------
 async function getLeases() {
-  const res = await keaCommand('lease4-get-all', 'dhcp4');
+  // lease4-get-all requires the 'subnets' key to be present to mean "all
+  // subnets" — omitting it entirely (the previous behavior here) errors with
+  // "'subnets' parameter not specified" instead of defaulting to all.
+  const res = await keaCommand('lease4-get-all', 'dhcp4', { subnets: [] });
   return res.arguments?.leases ?? [];
 }
 
@@ -183,10 +178,9 @@ async function getHAStatus() {
 
 module.exports = {
   keaCommand,
-  syncSubnet,
-  deleteSubnet,
-  syncReservation,
-  deleteReservation,
+  dbRowToKeaSubnet,
+  getRunningConfig,
+  applySubnets,
   getLeases,
   getLease,
   deleteLease,

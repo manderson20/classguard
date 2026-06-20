@@ -17,23 +17,29 @@ const auth = [authenticate, requireMinRole('admin')];
 
 // GET /api/v1/integrations/status  — which integrations are configured
 router.get('/status', ...auth, async (req, res) => {
-  const { rows } = await pool.query(
-    `SELECT key, value FROM settings
-     WHERE key IN (
-       'zammad_url','zammad_token',
-       'mosyle_access_token',
-       'snipeit_url','snipeit_token',
-       'phpipam_url','phpipam_app_id',
-       'last_mosyle_sync','last_snipeit_sync','last_zammad_sync','last_google_sync',
-       'google_client_id','google_client_secret'
-     )`
-  );
+  const [{ rows }, { rows: counts }] = await Promise.all([
+    pool.query(
+      `SELECT key, value FROM settings
+       WHERE key IN (
+         'zammad_url','zammad_token',
+         'mosyle_access_token',
+         'snipeit_url','snipeit_token',
+         'phpipam_url','phpipam_app_id',
+         'last_mosyle_sync','last_snipeit_sync','last_zammad_sync','last_google_sync',
+         'last_mosyle_error','last_snipeit_error','last_zammad_error','last_google_error',
+         'google_client_id','google_client_secret'
+       )`
+    ),
+    pool.query(`SELECT source, COUNT(*) AS count FROM integration_devices GROUP BY source`),
+  ]);
   const cfg = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  const deviceCount = Object.fromEntries(counts.map(r => [r.source, parseInt(r.count, 10)]));
+
   res.json({
-    zammad:   { configured: !!(cfg.zammad_url && cfg.zammad_token),    lastSync: cfg.last_zammad_sync  || null },
-    mosyle:   { configured: !!cfg.mosyle_access_token,                 lastSync: cfg.last_mosyle_sync  || null },
-    snipeit:  { configured: !!(cfg.snipeit_url && cfg.snipeit_token),  lastSync: cfg.last_snipeit_sync || null },
-    google:   { configured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || (cfg.google_client_id && cfg.google_client_secret)), lastSync: cfg.last_google_sync || null },
+    zammad:   { configured: !!(cfg.zammad_url && cfg.zammad_token),    lastSync: cfg.last_zammad_sync  || null, lastError: cfg.last_zammad_error  || null },
+    mosyle:   { configured: !!cfg.mosyle_access_token,                 lastSync: cfg.last_mosyle_sync  || null, lastError: cfg.last_mosyle_error  || null, deviceCount: deviceCount.mosyle  ?? 0 },
+    snipeit:  { configured: !!(cfg.snipeit_url && cfg.snipeit_token),  lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0 },
+    google:   { configured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || (cfg.google_client_id && cfg.google_client_secret)), lastSync: cfg.last_google_sync || null, lastError: cfg.last_google_error || null, deviceCount: deviceCount.google_admin ?? 0 },
     phpipam:  { configured: !!(cfg.phpipam_url && cfg.phpipam_app_id) },
   });
 });
@@ -101,27 +107,52 @@ router.get('/devices/:id', ...auth, async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // Sync endpoints (all async — respond immediately)
+//
+// These run after the response is sent, so the only way an admin can learn
+// whether a sync actually succeeded is by checking GET /status afterward —
+// previously a failure only went to console.error and was invisible in the
+// UI (it looked identical to "succeeded with 0 devices"). recordSyncOutcome
+// persists a last_<key>_error setting on failure and clears it on success,
+// which GET /status now returns as lastError per integration.
 // ---------------------------------------------------------------------------
+
+async function recordSyncOutcome(key, promise) {
+  try {
+    await promise;
+    await pool.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ($1,'',NOW())
+       ON CONFLICT (key) DO UPDATE SET value='', updated_at=NOW()`,
+      [`last_${key}_error`]
+    );
+  } catch (err) {
+    console.error(`[integrations] ${key} sync:`, err.message);
+    await pool.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ($1,$2,NOW())
+       ON CONFLICT (key) DO UPDATE SET value=$2, updated_at=NOW()`,
+      [`last_${key}_error`, err.message]
+    ).catch(() => {});
+  }
+}
 
 router.post('/sync/mosyle', ...auth, async (req, res) => {
   res.json({ status: 'started' });
-  mosyle.syncDevices().catch(err => console.error('[integrations] Mosyle sync:', err.message));
+  recordSyncOutcome('mosyle', mosyle.syncDevices());
 });
 
 router.post('/sync/snipeit', ...auth, async (req, res) => {
   res.json({ status: 'started' });
-  snipeit.syncAssets().catch(err => console.error('[integrations] Snipe-IT sync:', err.message));
+  recordSyncOutcome('snipeit', snipeit.syncAssets());
 });
 
 router.post('/sync/google', ...auth, async (req, res) => {
   res.json({ status: 'started' });
-  google.syncAll(req.user.id).catch(err => console.error('[integrations] Google sync:', err.message));
+  recordSyncOutcome('google', google.syncAll(req.user.id));
 });
 
 // POST /api/v1/integrations/sync/google-devices  — sync Chromebook/device inventory
 router.post('/sync/google-devices', ...auth, async (req, res) => {
   res.json({ status: 'started' });
-  syncGoogleDevices(req.user.id).catch(err => console.error('[integrations] Google devices:', err.message));
+  recordSyncOutcome('google', syncGoogleDevices(req.user.id));
 });
 
 async function syncGoogleDevices(actorId) {
@@ -153,20 +184,31 @@ async function syncGoogleDevices(actorId) {
   } while (pageToken);
 
   for (const d of devices) {
+    // lastKnownNetwork holds the device's most recent LAN (ipAddress) and
+    // WAN/public (wanIpAddress) addresses — a Chromebook taken home reports
+    // its home router's public IP here, not anything on our network. Both
+    // get stored; services/integrationDeviceIpamSync.js decides which (if
+    // any) actually fall inside a documented IPAM subnet before registering
+    // anything — see the "offsite devices" discussion this came from.
+    const net = (d.lastKnownNetwork || [])[0] || {};
+    const ips = [...new Set([net.ipAddress, net.wanIpAddress].filter(Boolean))];
+
     await pool.query(
       `INSERT INTO integration_devices
          (source, external_id, serial_number, mac_addresses, device_name, device_model,
-          os_type, os_version, assigned_email, status, last_seen, raw_data, synced_at)
-       VALUES ('google_admin',$1,$2,$3,$4,$5,'ChromeOS',$6,$7,$8,$9,$10,NOW())
+          os_type, os_version, assigned_email, ip_addresses, status, last_seen, raw_data, synced_at)
+       VALUES ('google_admin',$1,$2,$3,$4,$5,'ChromeOS',$6,$7,$8,$9,$10,$11,NOW())
        ON CONFLICT (source, external_id) DO UPDATE SET
          serial_number = EXCLUDED.serial_number, mac_addresses = EXCLUDED.mac_addresses,
          device_name = EXCLUDED.device_name, os_version = EXCLUDED.os_version,
-         assigned_email = EXCLUDED.assigned_email, status = EXCLUDED.status,
+         assigned_email = EXCLUDED.assigned_email, ip_addresses = EXCLUDED.ip_addresses,
+         status = EXCLUDED.status,
          last_seen = EXCLUDED.last_seen, raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
       [d.deviceId, d.serialNumber,
        `{${[d.macAddress, d.ethernetMacAddress].filter(Boolean).join(',')}}`,
        d.annotatedAssetId || d.deviceId, d.model,
        d.osVersion, d.lastEnrollmentTime ? d.annotatedUser || null : null,
+       `{${ips.join(',')}}`,
        d.status, d.lastSync ? new Date(d.lastSync) : null, JSON.stringify(d)]
     );
   }
@@ -216,13 +258,11 @@ router.post('/tickets/:id/note', ...auth, async (req, res) => {
 
 router.post('/sync/tickets', ...auth, async (req, res) => {
   res.json({ status: 'started' });
-  zammad.syncTickets().then(count => {
-    pool.query(
-      `INSERT INTO settings (key,value,updated_at) VALUES ('last_zammad_sync',$1,NOW())
-       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
-      [new Date().toISOString()]
-    );
-  }).catch(err => console.error('[integrations] Zammad sync:', err.message));
+  recordSyncOutcome('zammad', zammad.syncTickets().then(count => pool.query(
+    `INSERT INTO settings (key,value,updated_at) VALUES ('last_zammad_sync',$1,NOW())
+     ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
+    [new Date().toISOString()]
+  ).then(() => count)));
 });
 
 // ---------------------------------------------------------------------------
@@ -237,23 +277,15 @@ router.post('/phpipam/import', ...auth, async (req, res) => {
 });
 
 // POST /api/v1/integrations/phpipam/test  — test connection (call after saving settings)
+// Note: never respond 401 here — that status code makes the frontend's fetch
+// wrapper treat it as "your ClassGuard session expired" and force a logout/
+// redirect, masking whatever PHPiPAM-side error actually occurred.
 router.post('/phpipam/test', ...auth, async (req, res) => {
   try {
-    const cfg   = await phpipam.getConfig();
-    if (!cfg.url) return res.status(400).json({ error: 'PHPiPAM not configured' });
-    const axios = require('axios');
-    const r     = await axios.post(`${cfg.url.replace(/\/$/, '')}/api/${cfg.appId}/user/`, {},
-      { auth: { username: cfg.username, password: cfg.password }, timeout: 8000 });
-    if (r.data?.data?.token) {
-      // Revoke immediately
-      await axios.delete(`${cfg.url.replace(/\/$/, '')}/api/${cfg.appId}/user/`,
-        { headers: { Authorization: `Token ${r.data.data.token}` } }).catch(() => {});
-      res.json({ ok: true, message: 'PHPiPAM connection successful' });
-    } else {
-      res.status(401).json({ error: 'Authentication failed' });
-    }
+    await phpipam.testConnection();
+    res.json({ ok: true, message: 'PHPiPAM connection successful' });
   } catch (err) {
-    res.status(502).json({ error: err.message });
+    res.status(400).json({ error: err.message });
   }
 });
 

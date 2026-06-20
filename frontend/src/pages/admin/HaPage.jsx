@@ -173,11 +173,12 @@ function TlsSection() {
           <Field label="ACME contact email" hint="Let's Encrypt expiry notices">
             <input className={INPUT} value={cfg.acme_email || ''} onChange={e => set('acme_email', e.target.value)} placeholder="it@district.org" />
           </Field>
-          <Field label="DNS provider">
+          <Field label="Validation method">
             <select className={INPUT + ' bg-white'} value={cfg.provider || 'manual'} onChange={e => set('provider', e.target.value)}>
-              <option value="manual">Manual — I'll add the TXT record myself</option>
-              <option value="cloudflare">Cloudflare</option>
-              <option value="route53">AWS Route 53</option>
+              <option value="manual">Manual DNS — I'll add the TXT record myself</option>
+              <option value="cloudflare">Cloudflare DNS</option>
+              <option value="route53">AWS Route 53 DNS</option>
+              <option value="http01">Port 80/443 — no DNS provider needed</option>
             </select>
           </Field>
           <Field label="Enable TLS">
@@ -213,12 +214,23 @@ function TlsSection() {
           </div>
         )}
 
+        {cfg.provider === 'http01' && (
+          <div className="mb-4 pt-4 border-t border-slate-100">
+            <p className="text-xs text-slate-500">
+              Let's Encrypt connects to <strong>this server on port 80</strong> directly to verify domain ownership —
+              no DNS provider credentials needed. Your router/firewall must forward ports 80 and 443 from the
+              internet to this server's IP, and the domain above must already resolve to that public address.
+              Renews automatically, same as Cloudflare/Route 53.
+            </p>
+          </div>
+        )}
+
         <div className="flex items-center justify-between mt-4 pt-4 border-t border-slate-100">
           <button onClick={() => save.mutate()} disabled={save.isPending} className="btn-secondary text-sm">
             {save.isPending ? 'Saving…' : 'Save Settings'}
           </button>
 
-          {(cfg.provider === 'cloudflare' || cfg.provider === 'route53') && (
+          {(cfg.provider === 'cloudflare' || cfg.provider === 'route53' || cfg.provider === 'http01') && (
             <button onClick={() => issue.mutate()} disabled={issue.isPending || !cfg.domain} className="btn-primary text-sm">
               {issue.isPending ? 'Issuing…' : tls.cert_pem_set ? 'Renew Certificate' : 'Issue Certificate'}
             </button>

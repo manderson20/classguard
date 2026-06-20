@@ -186,8 +186,13 @@ router.post('/join', async (req, res) => {
   try {
     await client.query('BEGIN');
 
+    // Atomically claim the token via UPDATE...RETURNING rather than SELECT then
+    // UPDATE — under concurrent /join calls with the same token, Postgres
+    // serializes the UPDATE so only one request can ever see used_at IS NULL.
     const { rows: inv } = await client.query(
-      `SELECT * FROM ha_invite_tokens WHERE token = $1 AND used_at IS NULL AND expires_at > NOW()`,
+      `UPDATE ha_invite_tokens SET used_at = NOW()
+       WHERE token = $1 AND used_at IS NULL AND expires_at > NOW()
+       RETURNING *`,
       [token]
     );
     if (!inv.length) {
@@ -210,7 +215,7 @@ router.post('/join', async (req, res) => {
     );
 
     await client.query(
-      `UPDATE ha_invite_tokens SET used_at = NOW(), used_by_node = $1 WHERE id = $2`,
+      `UPDATE ha_invite_tokens SET used_by_node = $1 WHERE id = $2`,
       [nodeRows[0].id, invite.id]
     );
 

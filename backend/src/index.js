@@ -3,6 +3,7 @@ const http    = require('http');
 const express = require('express');
 const helmet  = require('helmet');
 const cors    = require('cors');
+const jwt     = require('jsonwebtoken');
 const { rateLimit } = require('express-rate-limit');
 const { Server }    = require('socket.io');
 const { createAdapter } = require('@socket.io/redis-adapter');
@@ -15,6 +16,12 @@ const { startHeartbeat } = require('./routes/ha');
 
 const app    = express();
 const server = http.createServer(app);
+
+// Trust the nginx reverse proxy (one hop) so req.ip reflects the real client
+// from X-Forwarded-For — without this, every request behind nginx resolves
+// to the same address, which collapses rate limiting into one shared bucket
+// across every client instead of one bucket per client.
+app.set('trust proxy', 1);
 
 // ---------------------------------------------------------------------------
 // Security headers
@@ -30,19 +37,52 @@ app.use(cors({
 }));
 
 // ---------------------------------------------------------------------------
-// Rate limiting — 100 requests per 15 minutes on all /api routes
+// Rate limiting — this only needs to stop *unauthenticated* abuse (anonymous
+// probing, brute force) — once a request carries a JWT that actually
+// verifies, the limiter does nothing useful by throttling it too: the route
+// itself already re-checks the token, and an admin with several dashboard
+// tabs open generates far more than a "normal" request volume legitimately.
+// So: a real (signature-verified) Bearer token skips this limiter entirely;
+// anonymous traffic still gets a generous backstop. Login/auth keeps its
+// own separate, much stricter limiter since that's the actual brute-force
+// surface (see routes/auth.js) and by definition has no token yet.
 // ---------------------------------------------------------------------------
+function hasValidToken(req) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith('Bearer ')) return false;
+  try {
+    jwt.verify(header.slice(7), config.jwt.secret);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 app.use('/api/', rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 100,
+  max: 3000,
   standardHeaders: true,
   legacyHeaders: false,
+  skip: hasValidToken,
 }));
+
+// ---------------------------------------------------------------------------
+// ACME HTTP-01 challenge — Let's Encrypt's validator fetches this directly
+// over plain HTTP, unauthenticated, at the bare (non-/api) path. nginx proxies
+// it straight through (see frontend/nginx.conf). See services/acmeTls.js.
+// ---------------------------------------------------------------------------
+app.get('/.well-known/acme-challenge/:token', (req, res) => {
+  const keyAuth = require('./services/acmeTls').getHttp01KeyAuth(req.params.token);
+  if (!keyAuth) return res.status(404).end();
+  res.type('text/plain').send(keyAuth);
+});
 
 // ---------------------------------------------------------------------------
 // Body parsing
 // ---------------------------------------------------------------------------
-app.use(express.json({ limit: '2mb' }));
+// 20mb to comfortably fit a JSON-escaped PHPiPAM mysqldump upload (see
+// routes/ipam.js POST /import/phpipam-dump) — everything else stays well under this.
+app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ---------------------------------------------------------------------------
@@ -77,6 +117,8 @@ app.use('/api/v1/roster',        require('./routes/roster'));
 app.use('/api/v1/radius',        require('./routes/radius'));
 app.use('/api/v1/tls',           require('./routes/tls'));
 app.use('/api/v1/analytics',     require('./routes/analytics'));
+app.use('/api/v1/phones',        require('./routes/phones'));
+app.use('/api/v1/phones',        require('./routes/phoneChanges'));
 app.use('/metrics',              require('./routes/metrics'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
