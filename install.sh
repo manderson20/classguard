@@ -33,6 +33,12 @@ info "Working directory: $REPO_DIR"
 # ---------------------------------------------------------------------------
 cd "$REPO_DIR"
 if [[ -d .git ]]; then
+  # This script always runs as root, but the repo is typically checked out
+  # by whichever user cloned it — git refuses to touch a repo it doesn't
+  # "own" unless that path is explicitly trusted, so grant it here rather
+  # than make every admin hit this the first time the watcher (or they)
+  # re-run install.sh as root.
+  git config --global --add safe.directory "$REPO_DIR"
   if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
     warn "Uncommitted local changes in $REPO_DIR — skipping git pull. Commit/stash them and re-run to update."
   else
