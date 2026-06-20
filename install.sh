@@ -37,8 +37,10 @@ if [[ -d .git ]]; then
   # by whichever user cloned it — git refuses to touch a repo it doesn't
   # "own" unless that path is explicitly trusted, so grant it here rather
   # than make every admin hit this the first time the watcher (or they)
-  # re-run install.sh as root.
-  git config --global --add safe.directory "$REPO_DIR"
+  # re-run install.sh as root. --system (not --global) since systemd's
+  # update-watcher service runs root with no $HOME set, so a --global
+  # write to ~/.gitconfig would be unreadable to git anyway.
+  git config --system --add safe.directory "$REPO_DIR"
   if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
     warn "Uncommitted local changes in $REPO_DIR — skipping git pull. Commit/stash them and re-run to update."
   else
