@@ -295,10 +295,15 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
   }
   const cleanUrl = primary_url.trim().replace(/\/+$/, '');
   try {
+    // NODE_ID (not process.env.HOSTNAME) is what's actually unique here —
+    // every ClassGuard install's api container has the same Docker-level
+    // hostname (hardcoded in docker-compose.yml), so a second node's join
+    // would otherwise collide with the primary's own row on nodes'
+    // hostname unique constraint, regardless of node_id differing.
     const { data } = await axios.post(`${cleanUrl}/api/v1/ha/join`, {
       token,
       node_id:  config.node.id,
-      hostname: process.env.HOSTNAME || config.node.id,
+      hostname: config.node.id,
       api_url:  config.appUrl,
       request_replica: !!request_replica,
     }, { timeout: 8000 });
