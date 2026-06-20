@@ -11,6 +11,7 @@ const redis               = require('../redis');
 const { authenticate }    = require('../middleware/auth');
 const { requireMinRole }  = require('../middleware/roles');
 const { resolvePolicy }   = require('../services/policyResolver');
+const { teacherOwnsStudent } = require('../services/teacherRoster');
 const events              = require('../events');
 
 // Screenshot storage directory (inside the Docker app-logs volume or local path)
@@ -19,19 +20,6 @@ fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 const router     = Router();
 const oauthClient = new OAuth2Client(config.google.clientId);
-
-// Admins/superadmins aren't scoped to a roster, only teachers are — these
-// remote-device commands are privileged enough that a teacher should only
-// ever be able to target a student actually on one of their own rosters.
-async function teacherOwnsStudent(teacherId, studentId) {
-  const { rows } = await query(
-    `SELECT 1 FROM class_members cm
-     JOIN classes c ON c.id = cm.class_id
-     WHERE cm.student_id = $1 AND c.teacher_id = $2 LIMIT 1`,
-    [studentId, teacherId]
-  );
-  return rows.length > 0;
-}
 
 // ---------------------------------------------------------------------------
 // POST /api/v1/extension/auth

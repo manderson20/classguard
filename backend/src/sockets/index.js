@@ -117,6 +117,15 @@ const setupSockets = (io) => {
   events.on('teacher:close_tab_request', ({ studentId }) => {
     if (studentId) io.to(`student:${studentId}`).emit('tab:close');
   });
+
+  // Chat — every authenticated socket (student or staff) already joins its
+  // own private room on connect (see above), so this same room works for
+  // delivering to a teacher's own browser session, not just the extension.
+  events.on('chat:new_message', ({ threadId, message, recipientIds }) => {
+    for (const id of recipientIds || []) {
+      io.to(`student:${id}`).emit('chat:message', { threadId, message });
+    }
+  });
 };
 
 module.exports = setupSockets;

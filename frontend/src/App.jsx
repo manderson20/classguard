@@ -43,6 +43,7 @@ import NetworkPage     from './pages/admin/NetworkPage';
 import RosterPage          from './pages/admin/RosterPage';
 import RadiusPage          from './pages/admin/RadiusPage';
 import ScreenshotsPage     from './pages/admin/ScreenshotsPage';
+import ChatAuditPage       from './pages/admin/ChatAuditPage';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
@@ -112,6 +113,7 @@ export default function App() {
           <Route path="/admin/roster"                 element={<RosterPage />} />
           <Route path="/admin/radius"                 element={<RadiusPage />} />
           <Route path="/admin/screenshots"            element={<ScreenshotsPage />} />
+          <Route path="/admin/chat"                   element={<ChatAuditPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
         </Route>
       </Route>

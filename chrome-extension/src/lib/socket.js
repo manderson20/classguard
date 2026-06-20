@@ -11,6 +11,7 @@ let _socket = null;
 export async function connectSocket({
   jwt, onPolicyUpdated, onScreenshotRequest,
   onLockRequest, onUnlockRequest, onOpenTabRequest, onCloseTabRequest,
+  onChatMessage,
 }) {
   if (_socket && _socket.connected) return;
   if (_socket) _socket.disconnect();
@@ -47,6 +48,11 @@ export async function connectSocket({
   });
   _socket.on('tab:close', () => {
     if (typeof onCloseTabRequest === 'function') onCloseTabRequest();
+  });
+
+  // New chat message addressed to this user (teacher or student)
+  _socket.on('chat:message', (data) => {
+    if (typeof onChatMessage === 'function') onChatMessage(data);
   });
 }
 

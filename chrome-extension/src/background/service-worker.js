@@ -57,6 +57,7 @@ async function init() {
       onUnlockRequest:   () => unlockScreen(),
       onOpenTabRequest:  (data) => openTab(data?.url),
       onCloseTabRequest: () => closeTab(),
+      onChatMessage:     (data) => broadcastChatMessage(data),
     });
   } else {
     await authenticate();
@@ -94,6 +95,7 @@ async function authenticate() {
       onUnlockRequest:   () => unlockScreen(),
       onOpenTabRequest:  (data) => openTab(data?.url),
       onCloseTabRequest: () => closeTab(),
+      onChatMessage:     (data) => broadcastChatMessage(data),
     });
 
     await apiFetch('/extension/register', {
@@ -234,6 +236,7 @@ async function onAlarm(alarm) {
           onUnlockRequest:   () => unlockScreen(),
           onOpenTabRequest:  (data) => openTab(data?.url),
           onCloseTabRequest: () => closeTab(),
+          onChatMessage:     (data) => broadcastChatMessage(data),
         });
       }
     }
@@ -326,6 +329,17 @@ async function openTab(url) {
 async function closeTab() {
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
+}
+
+// ---------------------------------------------------------------------------
+// Chat — the floating widget lives in every tab's content script, so a new
+// message needs to reach all of them, same broadcast pattern as lockScreen().
+// ---------------------------------------------------------------------------
+async function broadcastChatMessage(data) {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    chrome.tabs.sendMessage(tab.id, { type: 'CG_CHAT_MESSAGE', ...data }).catch(() => {});
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -467,6 +481,54 @@ async function handleMessage(msg, sender) {
         return data;
       } catch (e) {
         return { valid: false, error: e.message };
+      }
+    }
+
+    // Chat — content script never calls the backend directly (same rule as
+    // every other extension API call), it proxies through here so the JWT
+    // stays in the background context.
+    case 'CG_CHAT_GET_THREADS': {
+      const jwt = await getStoredJWT();
+      if (!jwt) return { threads: [] };
+      try {
+        return { threads: await apiFetch('/chat/threads', { jwt }) };
+      } catch (e) {
+        return { threads: [], error: e.message };
+      }
+    }
+
+    case 'CG_CHAT_GET_MESSAGES': {
+      const { threadId } = msg;
+      const jwt = await getStoredJWT();
+      if (!jwt || !threadId) return { messages: [] };
+      try {
+        return { messages: await apiFetch(`/chat/threads/${threadId}/messages`, { jwt }) };
+      } catch (e) {
+        return { messages: [], error: e.message };
+      }
+    }
+
+    case 'CG_CHAT_SEND_MESSAGE': {
+      const { threadId, body } = msg;
+      const jwt = await getStoredJWT();
+      if (!jwt || !threadId || !body) return { error: 'Missing threadId or body' };
+      try {
+        return await apiFetch(`/chat/threads/${threadId}/messages`, {
+          method: 'POST', jwt, body: { body },
+        });
+      } catch (e) {
+        return { error: e.message };
+      }
+    }
+
+    case 'CG_CHAT_MARK_READ': {
+      const { threadId } = msg;
+      const jwt = await getStoredJWT();
+      if (!jwt || !threadId) return { ok: false };
+      try {
+        return await apiFetch(`/chat/threads/${threadId}/read`, { method: 'PATCH', jwt });
+      } catch (e) {
+        return { ok: false, error: e.message };
       }
     }
 
