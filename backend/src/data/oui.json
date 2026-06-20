@@ -1,0 +1,13 @@
+{
+  "_comment": "Curated seed list, NOT the full IEEE OUI registry — see backend/src/services/macVendor.js for how to load the complete list from oui.txt.",
+  "00000C": "Cisco Systems",
+  "000B86": "Aruba Networks",
+  "0050F2": "Microsoft",
+  "005056": "VMware",
+  "000C29": "VMware",
+  "080027": "Oracle VirtualBox",
+  "525400": "QEMU/KVM virtual NIC",
+  "B827EB": "Raspberry Pi Foundation",
+  "DCA632": "Raspberry Pi Trading",
+  "E45F01": "Raspberry Pi Trading"
+}

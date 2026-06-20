@@ -25,6 +25,18 @@ const { pool } = require('../db');
 
 const CERT_DIR = process.env.TLS_CERT_DIR || '/app/certs';
 
+// ---------------------------------------------------------------------------
+// HTTP-01 challenge tokens — in-memory only. Issuance is one synchronous
+// flow (order → serve token → Let's Encrypt fetches it → finalize), so there's
+// no need to persist these across a restart; nginx proxies the well-known
+// path straight to this process while a challenge is live.
+// ---------------------------------------------------------------------------
+const http01Tokens = new Map();
+
+function getHttp01KeyAuth(token) {
+  return http01Tokens.get(token) || null;
+}
+
 async function getConfig() {
   const { rows } = await pool.query('SELECT * FROM tls_config LIMIT 1');
   return rows[0] || {};
@@ -162,10 +174,20 @@ async function getClient(cfg) {
     accountKey = (await acme.crypto.createPrivateKey()).toString();
     await persist({ account_key_pem: accountKey });
   }
-  return new acme.Client({
+  const client = new acme.Client({
     directoryUrl: acme.directory.letsencrypt.production,
     accountKey,
   });
+  // Each new acme.Client instance starts with no known account URL, even when
+  // reusing a key that's already registered — createAccount() binds it. This
+  // is safe to call every time: Let's Encrypt treats a key that's already
+  // registered as "already exists" and just returns the existing account
+  // instead of erroring, which is exactly what acme-client expects here.
+  await client.createAccount({
+    termsOfServiceAgreed: true,
+    ...(cfg.acme_email ? { contact: [`mailto:${cfg.acme_email}`] } : {}),
+  });
+  return client;
 }
 
 async function finishIssuance(certPem, keyPem) {
@@ -199,8 +221,13 @@ async function issueAutomatic() {
       csr,
       email: cfg.acme_email || undefined,
       termsOfServiceAgreed: true,
-      challengePriority: ['dns-01'],
+      challengePriority: cfg.provider === 'http01' ? ['http-01'] : ['dns-01'],
       challengeCreateFn: async (authz, challenge) => {
+        if (cfg.provider === 'http01') {
+          const keyAuth = await client.getChallengeKeyAuthorization(challenge);
+          http01Tokens.set(challenge.token, keyAuth);
+          return;
+        }
         const recordName  = `_acme-challenge.${authz.identifier.value}`;
         const recordValue = await client.getChallengeKeyAuthorization(challenge);
         if (cfg.provider === 'cloudflare') {
@@ -213,7 +240,11 @@ async function issueAutomatic() {
           throw new Error(`issueAutomatic() does not support provider "${cfg.provider}"`);
         }
       },
-      challengeRemoveFn: async () => {
+      challengeRemoveFn: async (authz, challenge) => {
+        if (cfg.provider === 'http01') {
+          http01Tokens.delete(challenge.token);
+          return;
+        }
         if (!pendingZone) return;
         if (cfg.provider === 'cloudflare') {
           await cloudflareDeleteTxt(cfg, pendingZone.zoneId, pendingZone.recordId);
@@ -284,8 +315,9 @@ async function completeManualChallenge() {
 }
 
 // ---------------------------------------------------------------------------
-// Renewal check — call from a daily cron. Only auto-renews Cloudflare/Route53;
-// manual-provider certs need an admin to repeat the DNS step, so we just flag it.
+// Renewal check — call from a daily cron. Auto-renews everything except
+// "manual" (DNS-01 with no provider API) since that needs an admin to repeat
+// the DNS step by hand — we just flag it instead.
 // ---------------------------------------------------------------------------
 async function renewIfNeeded() {
   const cfg = await getConfig();
@@ -306,5 +338,5 @@ async function renewIfNeeded() {
 module.exports = {
   getConfig, saveConfig,
   issueAutomatic, startManualChallenge, completeManualChallenge,
-  renewIfNeeded, CERT_DIR,
+  renewIfNeeded, CERT_DIR, getHttp01KeyAuth,
 };

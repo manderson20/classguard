@@ -703,12 +703,141 @@ function OptionsTab({ subnets }) {
 }
 
 // ---------------------------------------------------------------------------
+// Import a Windows DHCP scope — Address Pool / Scope Options / Reservations /
+// Leases / Policies exports from the Windows DHCP MMC console (right-click
+// scope or a tab → "Export List"). Preview (server rolls back, doesn't touch
+// Kea) then explicit commit, which also pushes the scope live to Kea.
+// ---------------------------------------------------------------------------
+function readFile(file) {
+  return new Promise(resolve => {
+    if (!file) return resolve(null);
+    const reader = new FileReader();
+    reader.onload = e => resolve(e.target.result);
+    reader.readAsText(file);
+  });
+}
+
+function FilePicker({ label, required, file, onChange }) {
+  return (
+    <label className="flex items-center justify-between border border-slate-200 rounded-lg px-3 py-2 cursor-pointer hover:border-primary-400 transition-colors">
+      <span className="text-sm text-slate-600">
+        {label} {required && <span className="text-red-500">*</span>}
+      </span>
+      <span className="text-xs text-slate-400 truncate max-w-[180px]">{file ? file.name : 'Choose file…'}</span>
+      <input type="file" accept=".txt,.csv" className="hidden" onChange={e => onChange(e.target.files?.[0] || null)} />
+    </label>
+  );
+}
+
+function ImportWindowsScopeModal({ onClose, onCommitted }) {
+  const [scopeName, setScopeName] = useState('');
+  const [files, setFiles] = useState({ pool: null, options: null, reservations: null, leases: null, policies: null });
+  const [preview, setPreview] = useState(null);
+  const [committed, setCommitted] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function send(commit) {
+    setBusy(true);
+    setError('');
+    try {
+      const [poolText, optionsText, reservationsText, leasesText, policiesText] = await Promise.all(
+        ['pool', 'options', 'reservations', 'leases', 'policies'].map(k => readFile(files[k]))
+      );
+      const res = await api.post('/dhcp/import-windows-scope', {
+        scopeName, poolText, optionsText, reservationsText, leasesText, policiesText, commit,
+      });
+      if (commit) { setCommitted(res); onCommitted(); } else { setPreview(res); }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const c = (committed || preview)?.counts;
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-xl max-h-[90vh] overflow-y-auto">
+        <h2 className="text-lg font-bold text-slate-900 mb-1">Import Windows DHCP Scope</h2>
+        <p className="text-xs text-slate-500 mb-4">
+          From the Windows DHCP console: right-click the scope or each tab (Address Pool, Scope Options,
+          Reservations, Leases, Policies) → Export List. Upload one scope's files at a time — only the
+          Address Pool file is required. Windows doesn't export the scope's exact subnet mask in these
+          files, so the subnet is inferred from the gateway/pool range — double-check it after import.
+        </p>
+
+        {!committed && (
+          <div className="flex flex-col gap-3">
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">Scope name</label>
+              <input className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-full" value={scopeName}
+                onChange={e => setScopeName(e.target.value)} placeholder="Elementary Data" />
+            </div>
+            <FilePicker label="Address Pool" required file={files.pool} onChange={f => setFiles(p => ({ ...p, pool: f }))} />
+            <FilePicker label="Scope Options" file={files.options} onChange={f => setFiles(p => ({ ...p, options: f }))} />
+            <FilePicker label="Reservations" file={files.reservations} onChange={f => setFiles(p => ({ ...p, reservations: f }))} />
+            <FilePicker label="Leases" file={files.leases} onChange={f => setFiles(p => ({ ...p, leases: f }))} />
+            <FilePicker label="Policies" file={files.policies} onChange={f => setFiles(p => ({ ...p, policies: f }))} />
+          </div>
+        )}
+
+        {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2 mt-3">{error}</div>}
+
+        {c && (
+          <div className={`rounded-lg p-4 border mt-3 ${committed ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
+            <p className="text-sm font-semibold text-slate-800 mb-2">
+              {committed ? 'Import complete — scope is now live in Kea' : 'Preview — nothing has been saved or pushed to Kea yet'}
+            </p>
+            <div className="text-sm text-slate-700">
+              <div>Inferred subnet: <strong className="font-mono">{(committed || preview).subnet}</strong></div>
+              <div>Reservations imported: <strong>{c.reservations}</strong>{c.reservationsSkipped > 0 && <span className="text-slate-400"> ({c.reservationsSkipped} skipped — no MAC on file)</span>}</div>
+            </div>
+            {(preview || committed).warnings?.length > 0 && (
+              <ul className="mt-2 space-y-0.5 max-h-24 overflow-y-auto">
+                {(preview || committed).warnings.slice(0, 8).map((w, i) => <li key={i} className="text-xs text-amber-600 font-mono">{w}</li>)}
+              </ul>
+            )}
+            {(preview || committed).notes?.length > 0 && (
+              <div className="mt-2">
+                <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Not auto-configured (saved as notes on the subnet)</p>
+                <ul className="space-y-0.5 max-h-24 overflow-y-auto">
+                  {(preview || committed).notes.map((n, i) => <li key={i} className="text-xs text-slate-500">{n}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 mt-4">
+          <button onClick={onClose} className="btn-secondary text-sm">{committed ? 'Close' : 'Cancel'}</button>
+          {!committed && (
+            <button onClick={() => send(false)} disabled={!scopeName.trim() || !files.pool || busy} className="btn-secondary text-sm">
+              {busy ? 'Previewing…' : 'Preview'}
+            </button>
+          )}
+          {!committed && preview && (
+            <button
+              onClick={() => { if (confirm('This will create the subnet/reservations shown above AND push them live to Kea immediately. Continue?')) send(true); }}
+              disabled={busy} className="btn-primary text-sm">
+              {busy ? 'Importing…' : 'Confirm Import (goes live in Kea)'}
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
 const TABS = ['Subnets', 'Reservations', 'Active Leases', 'Options'];
 
 export default function DhcpManagement() {
   const [tab, setTab] = useState('Subnets');
+  const [showImport, setShowImport] = useState(false);
   const qc = useQueryClient();
 
   const { data: subnets = [] } = useQuery({
@@ -728,11 +857,21 @@ export default function DhcpManagement() {
           <h1 className="text-2xl font-bold text-slate-900">DHCP Management</h1>
           <p className="text-slate-500 text-sm mt-0.5">ISC Kea integration — subnets, reservations, and active leases</p>
         </div>
-        <button onClick={() => syncKea.mutate()} disabled={syncKea.isPending}
-          className="btn-secondary text-sm">
-          {syncKea.isPending ? 'Syncing…' : 'Sync to Kea'}
-        </button>
+        <div className="flex gap-2">
+          <button onClick={() => setShowImport(true)} className="btn-secondary text-sm">Import Windows Scope</button>
+          <button onClick={() => syncKea.mutate()} disabled={syncKea.isPending}
+            className="btn-secondary text-sm">
+            {syncKea.isPending ? 'Syncing…' : 'Sync to Kea'}
+          </button>
+        </div>
       </div>
+
+      {showImport && (
+        <ImportWindowsScopeModal
+          onClose={() => setShowImport(false)}
+          onCommitted={() => qc.invalidateQueries({ queryKey: ['dhcp-subnets'] })}
+        />
+      )}
 
       <HaStatus />
 

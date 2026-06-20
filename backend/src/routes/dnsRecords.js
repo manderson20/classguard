@@ -6,9 +6,15 @@ const { requireMinRole } = require('../middleware/roles');
 const {
   rebuildCache, upsertRecordCache, syncZone, getFqdn,
 } = require('../services/localDnsCache');
+const windowsDnsImport = require('../services/windowsDnsImport');
 
 const router    = express.Router();
 const adminOnly = [authenticate, requireMinRole('admin')];
+
+// priority/weight/port are smallint columns and only apply to MX/SRV records —
+// the form sends '' for them on every other record type, which Postgres
+// rejects outright ("invalid input syntax for type smallint"). Treat blank as NULL.
+const toIntOrNull = v => (v === '' || v === undefined || v === null) ? null : parseInt(v, 10);
 
 // ---------------------------------------------------------------------------
 // GET /dns/zones
@@ -113,7 +119,7 @@ router.post('/zones/:id/records', ...adminOnly, async (req, res) => {
     `INSERT INTO dns_zone_records (zone_id, name, type, value, ttl, priority, weight, port)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
     [zone.id, name.trim(), type.toUpperCase(), value.trim(), ttl,
-     priority ?? null, weight ?? null, port ?? null]
+     toIntOrNull(priority), toIntOrNull(weight), toIntOrNull(port)]
   );
   await upsertRecordCache(record, zone.name);
   res.status(201).json({ ...record, fqdn: getFqdn(zone.name, record.name) });
@@ -151,7 +157,7 @@ router.put('/records/:id', ...adminOnly, async (req, res) => {
      WHERE id = $9 RETURNING *`,
     [
       name?.trim() ?? null, type?.toUpperCase() ?? null, value?.trim() ?? null,
-      ttl ?? null, priority ?? null, weight ?? null, port ?? null,
+      toIntOrNull(ttl), toIntOrNull(priority), toIntOrNull(weight), toIntOrNull(port),
       is_active ?? null, req.params.id,
     ]
   );
@@ -173,6 +179,42 @@ router.delete('/records/:id', ...adminOnly, async (req, res) => {
   await query('DELETE FROM dns_zone_records WHERE id = $1', [req.params.id]);
   await upsertRecordCache({ ...record, is_active: false }, record.zone_name);
   res.json({ deleted: record });
+});
+
+// ---------------------------------------------------------------------------
+// POST /dns/records/bulk-delete
+// Body: { ids: [uuid, ...] } — used for cleaning up old/imported records.
+// ---------------------------------------------------------------------------
+router.post('/records/bulk-delete', ...adminOnly, async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids array is required' });
+  }
+
+  const { rows: deleted } = await query(
+    `DELETE FROM dns_zone_records WHERE id = ANY($1::uuid[]) RETURNING id, zone_id`,
+    [ids]
+  );
+  if (deleted.length > 0) await rebuildCache();
+  res.json({ deleted: deleted.length });
+});
+
+// ---------------------------------------------------------------------------
+// POST /dns/zones/import-windows
+// Imports a Windows DNS Server "Export List" zone file. Body: { text, zoneName, commit }
+// commit=false (preview) runs the same inserts inside a transaction and rolls
+// back, so the response reflects exactly what a real import would do.
+// ---------------------------------------------------------------------------
+router.post('/zones/import-windows', ...adminOnly, async (req, res) => {
+  const { text, zoneName, commit } = req.body;
+  if (!text || !zoneName) return res.status(400).json({ error: 'text and zoneName are required' });
+  try {
+    const result = await windowsDnsImport.run(text, zoneName.trim().toLowerCase(), !!commit);
+    if (result.committed) await rebuildCache();
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // ---------------------------------------------------------------------------

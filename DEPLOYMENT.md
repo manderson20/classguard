@@ -213,6 +213,26 @@ curl https://classguard.school.org/api/v1/sync/status \
 
 ## 6. Google Admin — force-installing the Chrome extension
 
+### Build the extension package
+
+The extension's manifest needs this server's Google OAuth client ID baked in
+at build time (`chrome.identity.getAuthToken` requires it to be static, not
+loaded at runtime). Build it once after `GOOGLE_CLIENT_ID`/`APP_URL` are set
+in `.env`:
+
+```bash
+docker compose build extension-builder
+docker compose run --rm extension-builder
+```
+
+This writes `classguard-extension.zip` to a shared volume that the frontend
+container serves at `https://classguard.school.org/downloads/classguard-extension.zip`.
+Admin → Settings → Extension tab has a **Download Extension** button that
+fetches the same file. Re-run the two commands above any time
+`GOOGLE_CLIENT_ID` or `APP_URL` changes — the server's URL itself does *not*
+require a rebuild, since the extension discovers it at runtime via
+`chrome.storage.managed` (see "Upload to Google Admin" below).
+
 Use `infrastructure/google-admin/forced-extension-policy.json`.
 
 ### Before uploading

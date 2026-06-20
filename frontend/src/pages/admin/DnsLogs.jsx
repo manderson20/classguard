@@ -1,7 +1,38 @@
-import { useState } from 'react';
+import { useState, Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../lib/api';
+
+function ResolveRow({ domain }) {
+  const { data, isLoading, error } = useQuery({
+    queryKey: ['dns-resolve', domain],
+    queryFn:  () => api.get(`/dns/resolve?domain=${encodeURIComponent(domain)}`),
+    staleTime: 30_000,
+  });
+
+  return (
+    <tr className="bg-slate-50">
+      <td colSpan={5} className="px-4 py-2.5 text-xs">
+        {isLoading ? (
+          <span className="text-slate-400">Looking up {domain} via 1.1.1.1 / 8.8.8.8…</span>
+        ) : error ? (
+          <span className="text-red-500">Lookup failed: {error.message}</span>
+        ) : data.error && data.a.length === 0 && data.aaaa.length === 0 ? (
+          <span className="text-amber-600">{domain}: {data.error}</span>
+        ) : (
+          <span className="text-slate-600">
+            <strong className="font-mono">{domain}</strong> currently resolves to:{' '}
+            {data.cname.length > 0 && <span className="font-mono text-slate-500">CNAME {data.cname.join(', ')} → </span>}
+            {[...data.a, ...data.aaaa].map(ip => (
+              <span key={ip} className="font-mono bg-white border border-slate-200 rounded px-1.5 py-0.5 mr-1">{ip}</span>
+            ))}
+            <span className="text-slate-400 ml-2">(live public lookup — not ClassGuard's own DNS)</span>
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
 
 const ACTION_COLORS = {
   allowed: 'badge-green',
@@ -26,6 +57,7 @@ export default function DnsLogs() {
     to:         toLocalInput(Date.now()),
   });
   const [page, setPage] = useState(1);
+  const [lookupKey, setLookupKey] = useState(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['dns-logs', filters, page],
@@ -112,29 +144,52 @@ export default function DnsLogs() {
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Time</th>
-              <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Student</th>
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">User / Device</th>
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Domain</th>
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Type</th>
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Action</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
-            {results.map((row, i) => (
-              <tr key={`${row.id ?? i}`} className="hover:bg-slate-50">
-                <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">
-                  {new Date(row.queried_at).toLocaleString()}
-                </td>
-                <td className="px-4 py-2.5 max-w-[160px]">
-                  <div className="text-xs truncate">{row.student_name || row.user_id?.slice(0, 8) || '—'}</div>
-                  {row.student_email && <div className="text-xs text-slate-400 truncate">{row.student_email}</div>}
-                </td>
-                <td className="px-4 py-2.5 font-mono text-xs text-slate-700 max-w-xs truncate">{row.domain}</td>
-                <td className="px-4 py-2.5 text-xs text-slate-400">{row.query_type || 'A'}</td>
-                <td className="px-4 py-2.5">
-                  <span className={ACTION_COLORS[row.action] || 'badge-slate'}>{row.action}</span>
-                </td>
-              </tr>
-            ))}
+            {results.map((row, i) => {
+              const key = row.id ?? i;
+              return (
+              <Fragment key={key}>
+                <tr className="hover:bg-slate-50">
+                  <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">
+                    {new Date(row.queried_at).toLocaleString()}
+                  </td>
+                  <td className="px-4 py-2.5 max-w-[160px]">
+                    {row.user_id ? (
+                      <>
+                        <div className="text-xs truncate">{row.student_name || row.user_id.slice(0, 8)}</div>
+                        {row.student_email && <div className="text-xs text-slate-400 truncate">{row.student_email}</div>}
+                      </>
+                    ) : (
+                      <>
+                        <div className="text-xs truncate">{row.device_name || row.source_ip || '—'}</div>
+                        {row.device_name && row.source_ip && <div className="text-xs text-slate-400 font-mono truncate">{row.source_ip}</div>}
+                      </>
+                    )}
+                  </td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-slate-700 max-w-xs truncate">
+                    <button
+                      onClick={() => setLookupKey(lookupKey === key ? null : key)}
+                      className="hover:underline hover:text-primary-600"
+                      title="Look up what this domain resolves to right now"
+                    >
+                      {row.domain}
+                    </button>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-slate-400">{row.query_type || 'A'}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={ACTION_COLORS[row.action] || 'badge-slate'}>{row.action}</span>
+                  </td>
+                </tr>
+                {lookupKey === key && <ResolveRow domain={row.domain} />}
+              </Fragment>
+              );
+            })}
             {!isLoading && results.length === 0 && (
               <tr>
                 <td colSpan={5} className="px-4 py-10 text-center text-slate-400 text-sm">

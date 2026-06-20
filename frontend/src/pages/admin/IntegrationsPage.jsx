@@ -24,6 +24,15 @@ function StatusDot({ ok }) {
   return <span className={`inline-block w-2 h-2 rounded-full ${ok ? 'bg-green-400' : 'bg-slate-300'}`}/>;
 }
 
+function ErrorBanner({ message }) {
+  if (!message) return null;
+  return (
+    <p className="text-xs text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+      Last sync failed: {message}
+    </p>
+  );
+}
+
 const INPUT = 'border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full';
 
 function Field({ label, children }) {
@@ -52,10 +61,20 @@ function Modal({ title, onClose, children }) {
 // Sync button
 // ---------------------------------------------------------------------------
 function SyncButton({ label, endpoint }) {
+  const qc = useQueryClient();
   const [state, setState] = useState('idle');
   const run = async () => {
     setState('running');
-    try { await api.post(endpoint); setState('ok'); setTimeout(()=>setState('idle'), 3000); }
+    try {
+      await api.post(endpoint); // server responds immediately, then syncs in the background
+      setState('ok');
+      // Re-check status a couple of times to pick up the real outcome
+      // (success/failure + device count) once the background sync finishes.
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['integrations-status'] }), 2500);
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['integrations-status'] }), 6000);
+      setTimeout(() => qc.invalidateQueries({ queryKey: ['int-devices'] }), 6000);
+      setTimeout(()=>setState('idle'), 3000);
+    }
     catch { setState('err'); setTimeout(()=>setState('idle'), 4000); }
   };
   return (
@@ -106,6 +125,7 @@ function ZammadSection({ status }) {
           {configured && <button onClick={()=>{setForm({title:'',customer_email:'',description:''});setModal('create')}} className="btn-primary text-xs">+ New Ticket</button>}
         </div>
       </div>
+      <ErrorBanner message={status?.zammad?.lastError}/>
       {configured && (
         <div className="overflow-x-auto rounded-lg border border-slate-200">
           <table className="w-full text-sm">
@@ -220,6 +240,7 @@ function GoogleSection({ status }) {
           </div>
         )}
       </div>
+      <ErrorBanner message={status?.google?.lastError}/>
       {configured && <DevicesTable source="google_admin"/>}
     </div>
   );
@@ -250,6 +271,7 @@ function MosyleSection({ status }) {
           {configured && <SyncButton label="Sync Apple devices" endpoint="/integrations/sync/mosyle"/>}
         </div>
       </div>
+      <ErrorBanner message={status?.mosyle?.lastError}/>
       {configured && <DevicesTable source="mosyle"/>}
       {modal && (
         <Modal title="Mosyle Settings" onClose={()=>setModal(null)}>
@@ -289,6 +311,7 @@ function SnipeitSection({ status }) {
           {configured && <SyncButton label="Sync inventory" endpoint="/integrations/sync/snipeit"/>}
         </div>
       </div>
+      <ErrorBanner message={status?.snipeit?.lastError}/>
       {configured && <DevicesTable source="snipeit"/>}
       {modal && (
         <Modal title="Snipe-IT Settings" onClose={()=>setModal(null)}>
@@ -313,14 +336,17 @@ function PhpipamSection() {
   const [step, setStep]     = useState('config');
   const [log, setLog]       = useState([]);
   const [running, setRunning] = useState(false);
-  const [form, setForm]     = useState({ phpipam_url:'', phpipam_app_id:'', phpipam_username:'', phpipam_password:'' });
+  const [form, setForm]     = useState({
+    phpipam_url:'', phpipam_app_id:'', phpipam_username:'', phpipam_password:'',
+    phpipam_verify_ssl:'true', phpipam_auth_mode:'user_token', phpipam_app_code:'',
+  });
 
   const test = async () => {
     try {
       await api.put('/settings', form);
       const res = await api.post('/integrations/phpipam/test');
       alert(res.message || 'Connection successful');
-    } catch(e) { alert('Failed: ' + (e.message||'unknown')); }
+    } catch(e) { alert('Failed: ' + (e.message || 'unknown')); }
   };
 
   const run = async () => {
@@ -349,9 +375,31 @@ function PhpipamSection() {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-sm text-slate-600">Import sections, VRFs, VLANs, subnets, and IP assignments from PHPiPAM.</p>
-      {[['PHPiPAM URL','phpipam_url','url'],['App ID','phpipam_app_id','text'],['Username','phpipam_username','text'],['Password','phpipam_password','password']].map(([l,k,t])=>(
+      {[['PHPiPAM URL','phpipam_url','url'],['App ID','phpipam_app_id','text']].map(([l,k,t])=>(
         <Field key={k} label={l}><input type={t} className={INPUT} value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}/></Field>
       ))}
+      <Field label="Auth Method" hint="Must match the App security mode set for this app in PHPiPAM (Administration → API)">
+        <select className={INPUT} value={form.phpipam_auth_mode}
+          onChange={e=>setForm(f=>({...f,phpipam_auth_mode:e.target.value}))}>
+          <option value="user_token">User token (username + password)</option>
+          <option value="app_code">App code (static token)</option>
+        </select>
+      </Field>
+      {form.phpipam_auth_mode === 'app_code' ? (
+        <Field label="App Code" hint="The App Code shown for this app in PHPiPAM, not your account password">
+          <input type="password" className={INPUT} value={form.phpipam_app_code}
+            onChange={e=>setForm(f=>({...f,phpipam_app_code:e.target.value}))}/>
+        </Field>
+      ) : (
+        <>
+          <Field label="Username"><input className={INPUT} value={form.phpipam_username} onChange={e=>setForm(f=>({...f,phpipam_username:e.target.value}))}/></Field>
+          <Field label="Password"><input type="password" className={INPUT} value={form.phpipam_password} onChange={e=>setForm(f=>({...f,phpipam_password:e.target.value}))}/></Field>
+        </>
+      )}
+      <Field label="Verify SSL certificate" hint="Turn off if your PHPiPAM uses a self-signed cert on the LAN">
+        <input type="checkbox" checked={form.phpipam_verify_ssl==='true'}
+          onChange={e=>setForm(f=>({...f,phpipam_verify_ssl: e.target.checked ? 'true' : 'false'}))}/>
+      </Field>
       <div className="flex gap-2 mt-2">
         <button onClick={test} className="btn-secondary text-sm">Test Connection</button>
         <button onClick={run} disabled={running} className="btn-primary text-sm">Start Import</button>
@@ -430,13 +478,18 @@ export default function IntegrationsPage() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {integrations.map(i=>(
             <Card key={i.id} title={i.label} icon={i.icon}
-              subtitle={status[i.id]?.last_sync ? `Last sync: ${new Date(status[i.id].last_sync).toLocaleString()}` : 'Never synced'}>
-              <div className="flex items-center gap-2">
-                <StatusDot ok={status[i.id]?.configured}/>
-                <span className="text-sm text-slate-600">{status[i.id]?.configured ? 'Configured' : 'Not configured'}</span>
-                {status[i.id]?.device_count !== undefined && (
-                  <span className="ml-auto text-xs text-slate-400">{status[i.id].device_count} devices</span>
-                )}
+              subtitle={status[i.id]?.lastSync ? `Last sync: ${new Date(status[i.id].lastSync).toLocaleString()}` : 'Never synced'}>
+              <div className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <StatusDot ok={status[i.id]?.configured && !status[i.id]?.lastError}/>
+                  <span className="text-sm text-slate-600">
+                    {!status[i.id]?.configured ? 'Not configured' : status[i.id]?.lastError ? 'Sync failing' : 'Configured'}
+                  </span>
+                  {status[i.id]?.deviceCount !== undefined && (
+                    <span className="ml-auto text-xs text-slate-400">{status[i.id].deviceCount} devices</span>
+                  )}
+                </div>
+                <ErrorBanner message={status[i.id]?.lastError}/>
               </div>
             </Card>
           ))}

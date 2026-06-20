@@ -16,7 +16,8 @@ const ALLOWED_KEYS = new Set([
   'zammad_url', 'zammad_token',
   'mosyle_access_token',
   'snipeit_url', 'snipeit_token',
-  'phpipam_url', 'phpipam_app_id', 'phpipam_username', 'phpipam_password',
+  'phpipam_url', 'phpipam_app_id', 'phpipam_username', 'phpipam_password', 'phpipam_verify_ssl',
+  'phpipam_auth_mode', 'phpipam_app_code',
   'last_mosyle_sync', 'last_snipeit_sync', 'last_zammad_sync',
   // AD/LDAP
   'ldap_url', 'ldap_bind_dn', 'ldap_bind_password', 'ldap_base_dn', 'ldap_user_filter',

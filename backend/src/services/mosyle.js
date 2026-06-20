@@ -11,13 +11,27 @@ async function getConfig() {
   return { token: process.env.MOSYLE_ACCESS_TOKEN || cfg.mosyle_access_token || null };
 }
 
-async function apiRequest(endpoint, body) {
+// Since Feb 2024 Mosyle requires the access token to be a JWT sent via
+// "Authorization: Bearer", not the old accesstoken form-param style this
+// used to use. A token with no dots isn't JWT-shaped at all — almost
+// certainly copied from the wrong place (e.g. an old Manager API key) —
+// so fail fast with a specific message instead of a generic 401 from Mosyle.
+function assertJwtShaped(token) {
+  if (token.split('.').length !== 3) {
+    throw new Error(
+      'Mosyle access token doesn\'t look like a JWT. Since Feb 2024 Mosyle requires a JWT access ' +
+      'token generated from Organization → API Integration → Add new token in the Mosyle Business console.'
+    );
+  }
+}
+
+async function apiRequest(endpoint, { operation, options = {} }) {
   const cfg = await getConfig();
   if (!cfg.token) throw new Error('Mosyle is not configured. Add MOSYLE_ACCESS_TOKEN in Settings → Integrations.');
+  assertJwtShaped(cfg.token);
 
-  const params = new URLSearchParams({ accesstoken: cfg.token, ...body });
-  const res    = await axios.post(`${MOSYLE_API}/${endpoint}`, params.toString(), {
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+  const res = await axios.post(`${MOSYLE_API}/${endpoint}`, { operation, options }, {
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.token}` },
     timeout: 15_000,
   });
 
@@ -34,15 +48,17 @@ async function listDevices({ page = 0, type = 'ios' } = {}) {
   // type: ios | mac | tvos | appletv
   const data = await apiRequest('listdevices', {
     operation: 'list',
-    page,
-    options: JSON.stringify({ os: type }),
+    options: { os: type, page },
   });
   return data.response?.[0]?.devices || data.response || [];
 }
 
+// Deliberately doesn't swallow per-type errors: an auth/server failure on
+// one type used to be indistinguishable from "this school has 0 Macs", which
+// made syncDevices() silently report success with 0 devices on a bad token.
 async function listAllDevices() {
   const types   = ['ios', 'mac'];
-  const results = await Promise.all(types.map(t => listDevices({ type: t }).catch(() => [])));
+  const results = await Promise.all(types.map(t => listDevices({ type: t })));
   return results.flat();
 }
 

@@ -60,17 +60,19 @@ function hostsInCidr(cidr, version = 4) {
   } catch { return 0; }
 }
 
-function UtilBar({ used, total, compact = false }) {
+function UtilBar({ used, total, compact = false, threshold = 90 }) {
   if (!total) return <span className="text-xs text-slate-400">{used || 0}</span>;
-  const pct = Math.min(100, Math.round((used / total) * 100));
-  const barColor = pct > 85 ? 'bg-red-500' : pct > 65 ? 'bg-amber-500' : 'bg-primary-500';
+  const pct      = Math.min(100, Math.round((used / total) * 100));
+  const overAlert = pct >= threshold;
+  const barColor = overAlert ? 'bg-red-500' : pct >= threshold - 20 ? 'bg-amber-500' : 'bg-primary-500';
   if (compact) {
     return (
-      <div className="flex items-center gap-2 min-w-[100px]">
+      <div className="flex items-center gap-2 min-w-[100px]" title={overAlert ? `Over ${threshold}% alert threshold` : undefined}>
         <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
           <div className={`h-full ${barColor} rounded-full`} style={{ width: `${pct}%` }} />
         </div>
         <span className="text-xs text-slate-500 tabular-nums">{used}/{total}</span>
+        {overAlert && <span className="text-amber-500 text-xs" title={`Over ${threshold}% alert threshold`}>⚠</span>}
       </div>
     );
   }
@@ -78,7 +80,7 @@ function UtilBar({ used, total, compact = false }) {
     <div>
       <div className="flex justify-between text-xs text-slate-500 mb-1">
         <span>{used} used / {total} hosts</span>
-        <span>{pct}%</span>
+        <span className={overAlert ? 'text-red-600 font-semibold' : ''}>{pct}%{overAlert ? ` — over ${threshold}% threshold` : ''}</span>
       </div>
       <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
         <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${pct}%` }} />
@@ -94,6 +96,25 @@ const STATUS_COLOR = {
   offline:  'bg-amber-100 text-amber-800',
   dhcp:     'bg-cyan-100 text-cyan-800',
 };
+
+// address_status — distinct from the presence/inventory `status` above:
+// where the address's assignment comes from (admin-documented, a fixed
+// DHCP reservation, or a currently-active dynamic lease).
+const ADDRESS_STATUS_COLOR = {
+  static:   'bg-slate-100 text-slate-600',
+  reserved: 'bg-purple-100 text-purple-800',
+  leased:   'bg-cyan-100 text-cyan-800',
+};
+const ADDRESS_STATUS_LABEL = { static: 'Static', reserved: 'Reserved', leased: 'Leased' };
+
+function leaseRelativeTime(expiresAt) {
+  if (!expiresAt) return null;
+  const ms = new Date(expiresAt) - Date.now();
+  if (ms <= 0) return 'expired';
+  const m = Math.floor(ms / 60_000);
+  if (m < 60) return `${m}m left`;
+  return `${Math.floor(m / 60)}h ${m % 60}m left`;
+}
 
 // ---------------------------------------------------------------------------
 // Tag chip input
@@ -427,6 +448,26 @@ function SubnetIpView({ subnet, onBack }) {
     onSuccess: invalidate,
   });
 
+  const scanNow = useMutation({
+    mutationFn: () => api.post(`/ipam/ipam-subnets/${subnet.id}/scan`),
+    onSuccess: (r) => { invalidate(); alert(r.skipped || `Scanned ${r.scanned} address(es), ${r.alive} responded.`); },
+    onError: (e) => alert('Scan failed: ' + (e.message || 'unknown')),
+  });
+
+  const reserveDhcp = useMutation({
+    mutationFn: addr => api.post(`/ipam/ipam-subnets/${subnet.id}/addresses/${addr.id}/reserve-dhcp`, {}),
+    onSuccess: invalidate,
+    onError: (e) => alert('Reserve failed: ' + (e.message || 'unknown')),
+  });
+
+  const unreserveDhcp = useMutation({
+    mutationFn: addr => api.delete(`/ipam/ipam-subnets/${subnet.id}/addresses/${addr.id}/reserve-dhcp`),
+    onSuccess: invalidate,
+    onError: (e) => alert('Remove reservation failed: ' + (e.message || 'unknown')),
+  });
+
+  const dhcpLinked = subnet.dhcp_enabled && subnet.dhcp_subnet_id;
+
   const util    = data.utilization || {};
   const total   = hostsInCidr(subnet.subnet, subnet.ip_version);
   const usedPct = util.total ? Math.min(100, Math.round((util.used / util.total) * 100)) : 0;
@@ -464,6 +505,11 @@ function SubnetIpView({ subnet, onBack }) {
             {subnet.vrf_name     && <span>VRF: <strong className="text-slate-700">{subnet.vrf_name}</strong></span>}
             {subnet.vlan_name    && <span>VLAN <strong className="text-slate-700">{subnet.vlan_id} — {subnet.vlan_name}</strong></span>}
             {subnet.gateway      && <span>GW: <span className="font-mono text-slate-700">{subnet.gateway}</span></span>}
+            {dhcpLinked && (
+              <span className="bg-cyan-100 text-cyan-800 px-2 py-0.5 rounded-full font-medium">
+                DHCP scope linked — pool {subnet.dhcp_pool_start} – {subnet.dhcp_pool_end}
+              </span>
+            )}
           </div>
         </div>
         <div className="flex gap-2 flex-shrink-0">
@@ -481,6 +527,9 @@ function SubnetIpView({ subnet, onBack }) {
             className="btn-secondary text-sm">
             Export CSV
           </button>
+          <button onClick={() => scanNow.mutate()} disabled={scanNow.isPending} className="btn-secondary text-sm">
+            {scanNow.isPending ? 'Scanning…' : 'Scan Now'}
+          </button>
           <button onClick={openAdd} className="btn-primary text-sm">+ Add IP</button>
         </div>
       </div>
@@ -488,7 +537,7 @@ function SubnetIpView({ subnet, onBack }) {
       {/* Utilization bar */}
       {total && (
         <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-          <UtilBar used={util.used || 0} total={util.total || total} />
+          <UtilBar used={util.used || 0} total={util.total || total} threshold={subnet.alert_threshold_pct || 90} />
           <div className="flex gap-5 mt-3 text-xs">
             {[
               { label: 'Used',     value: counts.used,     color: 'text-green-700'  },
@@ -526,7 +575,7 @@ function SubnetIpView({ subnet, onBack }) {
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search IP, hostname, MAC, owner…"
+          placeholder="Search IP, hostname, MAC, owner, tag…"
           className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs w-56 ml-auto focus:outline-none focus:ring-1 focus:ring-primary-500"
         />
       </div>
@@ -536,13 +585,13 @@ function SubnetIpView({ subnet, onBack }) {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
             <tr>
-              {['IP Address','Hostname','MAC','Owner','Device','Status','Last Seen',''].map(h =>
+              {['IP Address','Hostname','MAC','Owner','Device','Tags','Status','Assignment','Last Seen',''].map(h =>
                 <th key={h} className="px-3 py-2 text-left">{h}</th>)}
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {isLoading && (
-              <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-400">Loading…</td></tr>
+              <tr><td colSpan={10} className="px-3 py-8 text-center text-sm text-slate-400">Loading…</td></tr>
             )}
             {!isLoading && data.addresses.map(addr => (
               <tr key={addr.id}
@@ -552,26 +601,68 @@ function SubnetIpView({ subnet, onBack }) {
                   {addr.is_gateway && <span className="ml-1 text-[10px] text-blue-600 font-semibold">GW</span>}
                 </td>
                 <td className="px-3 py-2 text-slate-700">{addr.hostname || '—'}</td>
-                <td className="px-3 py-2 font-mono text-xs text-slate-500">{addr.mac_address || '—'}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">
+                  {addr.mac_address || '—'}
+                  {addr.mac_vendor && <div className="text-[10px] text-slate-400 font-sans">{addr.mac_vendor}</div>}
+                </td>
                 <td className="px-3 py-2 text-xs text-slate-600 max-w-[140px] truncate">{addr.owner || '—'}</td>
                 <td className="px-3 py-2 text-xs text-slate-500 capitalize">{addr.device_type || '—'}</td>
+                <td className="px-3 py-2">
+                  <div className="flex flex-wrap gap-1 max-w-[140px]">
+                    {(addr.tags || []).map(t => (
+                      <span key={t} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full">{t}</span>
+                    ))}
+                    {!addr.tags?.length && '—'}
+                  </div>
+                </td>
                 <td className="px-3 py-2">
                   <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLOR[addr.status] || 'bg-slate-100 text-slate-600'}`}>
                     {addr.status}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-xs text-slate-400">
+                <td className="px-3 py-2">
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${ADDRESS_STATUS_COLOR[addr.address_status] || 'bg-slate-100 text-slate-600'}`}>
+                    {ADDRESS_STATUS_LABEL[addr.address_status] || addr.address_status}
+                  </span>
+                  {addr.address_status === 'leased' && (
+                    <div className="text-[10px] text-slate-400 mt-0.5">{leaseRelativeTime(addr.lease_expires_at)}</div>
+                  )}
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">
+                  <span
+                    className={`inline-block w-1.5 h-1.5 rounded-full mr-1 ${
+                      addr.ping_status === 'online' ? 'bg-green-500' : addr.ping_status === 'offline' ? 'bg-slate-300' : 'bg-slate-200'
+                    }`}
+                    title={addr.ping_status ? `Last presence scan: ${addr.ping_status}` : 'Not yet scanned'}
+                  />
                   {addr.last_seen ? new Date(addr.last_seen).toLocaleDateString() : '—'}
                 </td>
                 <td className="px-3 py-2 text-right whitespace-nowrap">
                   <button onClick={() => openEdit(addr)} className="text-xs text-primary-600 hover:underline mr-2">Edit</button>
+                  {dhcpLinked && addr.address_status === 'reserved' && (
+                    <button
+                      onClick={() => { if (confirm(`Remove the DHCP reservation for ${addr.ip}? It will become a regular DHCP-assignable address again.`)) unreserveDhcp.mutate(addr); }}
+                      className="text-xs text-amber-600 hover:underline mr-2">
+                      Un-reserve
+                    </button>
+                  )}
+                  {dhcpLinked && addr.address_status !== 'reserved' && (
+                    <button
+                      onClick={() => {
+                        if (!addr.mac_address) { alert('Add a MAC address to this IP before reserving it for DHCP.'); return; }
+                        reserveDhcp.mutate(addr);
+                      }}
+                      className="text-xs text-purple-600 hover:underline mr-2">
+                      Reserve
+                    </button>
+                  )}
                   <button onClick={() => { if (confirm(`Delete ${addr.ip}?`)) delIp.mutate(addr.id); }}
                     className="text-xs text-red-500 hover:underline">Del</button>
                 </td>
               </tr>
             ))}
             {!isLoading && !data.addresses.length && (
-              <tr><td colSpan={8} className="px-3 py-10 text-center text-sm text-slate-400">
+              <tr><td colSpan={10} className="px-3 py-10 text-center text-sm text-slate-400">
                 No IPs documented in this subnet — click <strong>+ Add IP</strong> to start
               </td></tr>
             )}
@@ -798,6 +889,134 @@ function ImportModal({ onClose, onDone }) {
 }
 
 // ---------------------------------------------------------------------------
+// PHPiPAM mysqldump import — preview (server runs the real INSERTs in a
+// transaction and rolls back) before a separate, explicit commit step.
+// ---------------------------------------------------------------------------
+function PhpipamDumpImportModal({ onClose, onCommitted }) {
+  const [file, setFile]       = useState(null);
+  const [sqlText, setSqlText] = useState(null);
+  const [preview, setPreview] = useState(null);
+  const [busy, setBusy]       = useState(false);
+  const [error, setError]     = useState('');
+  const [committed, setCommitted] = useState(null);
+
+  function onFile(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setPreview(null);
+    setError('');
+    setCommitted(null);
+    const reader = new FileReader();
+    reader.onload = ev => setSqlText(ev.target.result);
+    reader.readAsText(f);
+  }
+
+  async function runPreview() {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.post('/ipam/import/phpipam-dump?commit=false', { sql: sqlText });
+      setPreview(res);
+    } catch (e) {
+      setError(e.message || 'Preview failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doCommit() {
+    if (!confirm('This will create the sections, VLANs, subnets, and addresses shown in the preview. Continue?')) return;
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.post('/ipam/import/phpipam-dump?commit=true', { sql: sqlText });
+      setCommitted(res);
+      onCommitted();
+    } catch (e) {
+      setError(e.message || 'Import failed');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const c = (committed || preview)?.counts;
+
+  return (
+    <Modal title="Import PHPiPAM Database Dump" onClose={onClose} wide>
+      <div className="flex flex-col gap-4">
+        <p className="text-sm text-slate-600">
+          Upload a PHPiPAM <code className="bg-slate-100 px-1 rounded font-mono">mysqldump</code> .sql export.
+          Sections, VLANs, subnets, and IP addresses are mapped directly from the dump's tables — no manual
+          CSV editing needed. PHPiPAM "folder" subnets (organizational labels with no real CIDR) are skipped;
+          their real child subnets attach to the section directly instead.
+        </p>
+
+        {!committed && (
+          <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-8 cursor-pointer hover:border-primary-400 transition-colors">
+            <span className="text-sm font-medium text-slate-600">
+              {file ? file.name : 'Click to upload PHPiPAM .sql dump'}
+            </span>
+            <input type="file" accept=".sql,.txt" className="hidden" onChange={onFile} />
+          </label>
+        )}
+
+        {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
+
+        {c && (
+          <div className={`rounded-lg p-4 border ${committed ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
+            <p className="text-sm font-semibold text-slate-800 mb-2">
+              {committed ? 'Import complete' : 'Preview — nothing has been saved yet'}
+            </p>
+            <div className="grid grid-cols-2 gap-2 text-sm text-slate-700">
+              <div>Sections: <strong>{c.sections}</strong></div>
+              <div>VLANs: <strong>{c.vlans}</strong>{c.vlansSkippedDuplicate > 0 && <span className="text-slate-400"> ({c.vlansSkippedDuplicate} merged)</span>}</div>
+              <div>Subnets: <strong>{c.subnets}</strong>{c.subnetsSkippedFolder > 0 && <span className="text-slate-400"> ({c.subnetsSkippedFolder} folders skipped)</span>}</div>
+              <div>Addresses: <strong>{c.addresses}</strong>{c.addressesSkipped > 0 && <span className="text-slate-400"> ({c.addressesSkipped} skipped)</span>}</div>
+            </div>
+            {(preview || committed).warnings?.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs font-semibold text-amber-700 mb-1">{(preview || committed).warnings.length} note(s):</p>
+                <ul className="space-y-0.5 max-h-32 overflow-y-auto">
+                  {(preview || committed).warnings.slice(0, 10).map((w, i) => (
+                    <li key={i} className="text-xs text-amber-600 font-mono">{w}</li>
+                  ))}
+                  {(preview || committed).warnings.length > 10 && (
+                    <li className="text-xs text-amber-400">…and {(preview || committed).warnings.length - 10} more</li>
+                  )}
+                </ul>
+              </div>
+            )}
+            {!committed && preview.sample.subnets.length > 0 && (
+              <div className="mt-3">
+                <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Sample subnets</p>
+                <ul className="text-xs font-mono text-slate-600 space-y-0.5">
+                  {preview.sample.subnets.map((s, i) => <li key={i}>{s.subnet} {s.description && `— ${s.description}`}</li>)}
+                </ul>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className="btn-secondary text-sm">{committed ? 'Close' : 'Cancel'}</button>
+        {!committed && (
+          <button onClick={runPreview} disabled={!sqlText || busy} className="btn-secondary text-sm">
+            {busy ? 'Previewing…' : 'Preview'}
+          </button>
+        )}
+        {!committed && preview && (
+          <button onClick={doCommit} disabled={busy} className="btn-primary text-sm">
+            {busy ? 'Importing…' : 'Confirm Import'}
+          </button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Tree building helpers
 // ---------------------------------------------------------------------------
 function buildTree(flat) {
@@ -970,6 +1189,7 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
   const [form, setForm]             = useState(EMPTY_SUBNET);
   const [ipvFilter, setIpv]         = useState('');
   const [importOpen, setImport]     = useState(false);
+  const [dumpImportOpen, setDumpImportOpen] = useState(false);
   const [splitTarget, setSplit]     = useState(null);
   const [collapsed, setCollapsed]   = useState(new Set()); // nodes NOT in set are expanded
   const [syncResult, setSyncResult] = useState(null);
@@ -1043,6 +1263,7 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
         <div className="flex gap-2 ml-auto flex-wrap">
           <button className="btn-secondary text-sm" onClick={exportSubnets}>Export CSV</button>
           <button className="btn-secondary text-sm" onClick={() => setImport(true)}>Import CSV</button>
+          <button className="btn-secondary text-sm" onClick={() => setDumpImportOpen(true)}>Import PHPiPAM Dump</button>
           <button
             className="btn-secondary text-sm"
             onClick={() => syncControllers.mutate()}
@@ -1108,7 +1329,7 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
                   <td className="px-3 py-2 text-slate-500 text-xs">{s.vlan_name ? `${s.vlan_id} ${s.vlan_name}` : '—'}</td>
                   <td className="px-3 py-2 font-mono text-xs text-slate-600">{s.gateway || '—'}</td>
                   <td className="px-3 py-2 min-w-[120px]">
-                    <UtilBar used={parseInt(s.ip_count) || 0} total={total} compact />
+                    <UtilBar used={parseInt(s.ip_count) || 0} total={total} compact threshold={s.alert_threshold_pct || 90} />
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap text-right space-x-3">
                     <button onClick={() => onSelect(s)} className="text-xs text-primary-600 hover:underline">IPs</button>
@@ -1190,6 +1411,19 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
           <Field label="Tags">
             <TagInput value={form.tags || []} onChange={v => setF('tags', v)} />
           </Field>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Alert threshold" hint="Warn when utilization reaches this %">
+              <input type="number" min="1" max="100" className={INPUT}
+                value={form.alert_threshold_pct ?? 90}
+                onChange={e => setF('alert_threshold_pct', e.target.value ? parseInt(e.target.value, 10) : 90)} />
+            </Field>
+            <Field label="Presence scanning" hint="Periodic ping sweep for this subnet">
+              <label className="flex items-center gap-2 mt-1.5 cursor-pointer select-none">
+                <input type="checkbox" checked={form.scan_enabled !== false} onChange={e => setF('scan_enabled', e.target.checked)} />
+                <span className="text-sm text-slate-600">Enabled</span>
+              </label>
+            </Field>
+          </div>
           <Field label="Notes">
             <textarea className={INPUT + ' resize-none mt-3'} rows={2} value={form.notes || ''} onChange={e => setF('notes', e.target.value)}/>
           </Field>
@@ -1248,6 +1482,17 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
 
       {auditTarget && (
         <AuditModal subnet={auditTarget} onClose={() => setAuditTarget(null)} />
+      )}
+
+      {dumpImportOpen && (
+        <PhpipamDumpImportModal
+          onClose={() => setDumpImportOpen(false)}
+          onCommitted={() => {
+            qc.invalidateQueries({ queryKey: ['ipam-subnets'] });
+            qc.invalidateQueries({ queryKey: ['vlans'] });
+            qc.invalidateQueries({ queryKey: ['ipam-sections'] });
+          }}
+        />
       )}
     </>
   );
@@ -1710,7 +1955,10 @@ function SearchTab({ onGoToSubnet }) {
                   <td className="px-3 py-2 font-mono text-slate-800">{r.ip}</td>
                   <td className="px-3 py-2 text-slate-700">{r.hostname || '—'}</td>
                   <td className="px-3 py-2 text-xs text-slate-600">{r.owner || '—'}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-500">{r.mac_address || '—'}</td>
+                  <td className="px-3 py-2 font-mono text-xs text-slate-500">
+                    {r.mac_address || '—'}
+                    {r.mac_vendor && <div className="text-[10px] text-slate-400 font-sans">{r.mac_vendor}</div>}
+                  </td>
                   <td className="px-3 py-2 text-xs text-slate-500 capitalize">{r.device_type || '—'}</td>
                   <td className="px-3 py-2">
                     <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-600'}`}>
@@ -1750,9 +1998,177 @@ function SearchTab({ onGoToSubnet }) {
 }
 
 // ---------------------------------------------------------------------------
+// Multicast groups tab — e.g. VoIP paging zones spanning multiple closets
+// ---------------------------------------------------------------------------
+const MULTICAST_APPS = ['voip_paging', 'video', 'iot', 'other'];
+const MULTICAST_APP_LABEL = { voip_paging: 'VoIP Paging', video: 'Video', iot: 'IoT', other: 'Other' };
+const EMPTY_MULTICAST = { group_address: '', name: '', description: '', vlan_id: null, location_id: null, application: 'other', port: '', is_active: true, notes: '' };
+
+function MulticastTab({ vlans }) {
+  const qc = useQueryClient();
+  const [modal, setModal] = useState(null);
+  const [form, setForm]   = useState(EMPTY_MULTICAST);
+  const [error, setError] = useState('');
+
+  const { data: groups = [] }    = useQuery({ queryKey: ['multicast-groups'], queryFn: () => api.get('/ipam/multicast') });
+  const { data: locations = [] } = useQuery({ queryKey: ['ipam-locations'],   queryFn: () => api.get('/ipam/locations') });
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body = { ...form, port: form.port ? parseInt(form.port, 10) : null };
+      return modal === 'add' ? api.post('/ipam/multicast', body) : api.put(`/ipam/multicast/${modal.id}`, body);
+    },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ['multicast-groups'] }); setModal(null); setError(''); },
+    onError: e => setError(e.message || 'Failed to save'),
+  });
+  const del = useMutation({
+    mutationFn: id => api.delete(`/ipam/multicast/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['multicast-groups'] }),
+  });
+
+  const openAdd  = () => { setForm(EMPTY_MULTICAST); setError(''); setModal('add'); };
+  const openEdit = g => { setForm({ ...g, port: g.port || '' }); setError(''); setModal(g); };
+
+  return (
+    <>
+      <div className="flex justify-end mb-3">
+        <button className="btn-primary text-sm" onClick={openAdd}>+ Add Multicast Group</button>
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>{['Group Address', 'Name', 'Application', 'VLAN', 'Location', 'Port', 'Active', ''].map(h =>
+              <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {groups.map(g => (
+              <tr key={g.id} className="hover:bg-slate-50">
+                <td className="px-3 py-2 font-mono text-slate-800">{g.group_address}</td>
+                <td className="px-3 py-2 text-slate-700">{g.name}</td>
+                <td className="px-3 py-2 text-xs text-slate-600">{MULTICAST_APP_LABEL[g.application] || g.application}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{g.vlan_tag ? `${g.vlan_tag} — ${g.vlan_name || ''}` : '—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{g.location_name || '—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{g.port || '—'}</td>
+                <td className="px-3 py-2">
+                  <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${g.is_active ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                    {g.is_active ? 'Active' : 'Inactive'}
+                  </span>
+                </td>
+                <td className="px-3 py-2 text-right space-x-3 whitespace-nowrap">
+                  <button onClick={() => openEdit(g)} className="text-xs text-primary-600 hover:underline">Edit</button>
+                  <button onClick={() => { if (confirm(`Delete multicast group ${g.name}?`)) del.mutate(g.id); }} className="text-xs text-red-500 hover:underline">Del</button>
+                </td>
+              </tr>
+            ))}
+            {!groups.length && <tr><td colSpan={8} className="text-center text-slate-400 py-8">No multicast groups yet — used for things like VoIP paging zones.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {modal && (
+        <Modal title={modal === 'add' ? 'Add Multicast Group' : 'Edit Multicast Group'} onClose={() => setModal(null)}>
+          <div className="flex flex-col gap-3">
+            {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
+            <Field label="Group Address" hint="Must be in 224.0.0.0/4 (IPv4 multicast)">
+              <input className={INPUT} value={form.group_address} placeholder="239.1.1.10"
+                onChange={e => setForm(f => ({ ...f, group_address: e.target.value }))} />
+            </Field>
+            <Field label="Name"><input className={INPUT} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} /></Field>
+            <Field label="Application">
+              <select className={SELECT} value={form.application} onChange={e => setForm(f => ({ ...f, application: e.target.value }))}>
+                {MULTICAST_APPS.map(a => <option key={a} value={a}>{MULTICAST_APP_LABEL[a]}</option>)}
+              </select>
+            </Field>
+            <Field label="VLAN">
+              <select className={SELECT} value={form.vlan_id || ''} onChange={e => setForm(f => ({ ...f, vlan_id: e.target.value || null }))}>
+                <option value="">None</option>
+                {vlans.map(v => <option key={v.id} value={v.id}>{v.vlan_id} — {v.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Location">
+              <select className={SELECT} value={form.location_id || ''} onChange={e => setForm(f => ({ ...f, location_id: e.target.value || null }))}>
+                <option value="">None</option>
+                {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Port" hint="Optional"><input className={INPUT} value={form.port} onChange={e => setForm(f => ({ ...f, port: e.target.value }))} /></Field>
+            <Field label="Description"><input className={INPUT} value={form.description || ''} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} /></Field>
+            <Field label="Active">
+              <input type="checkbox" checked={form.is_active} onChange={e => setForm(f => ({ ...f, is_active: e.target.checked }))} />
+            </Field>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={() => setModal(null)} className="btn-secondary text-sm">Cancel</button>
+            <button onClick={() => save.mutate()} disabled={save.isPending} className="btn-primary text-sm">
+              {save.isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Activity tab — global change log across all IPAM tables
+// ---------------------------------------------------------------------------
+const AUDIT_TABLES = {
+  '': 'All', ipam_subnets: 'Subnets', ip_addresses: 'Addresses', vlans: 'VLANs', vrfs: 'VRFs',
+  ipam_sections: 'Sections', bgp_prefixes: 'BGP', nat_rules: 'NAT', locations: 'Locations', multicast_groups: 'Multicast',
+};
+
+function ActivityTab() {
+  const [tableFilter, setTableFilter] = useState('');
+  const [limit, setLimit] = useState(50);
+  const actionColor = { INSERT: 'bg-green-100 text-green-700', UPDATE: 'bg-blue-100 text-blue-700', DELETE: 'bg-red-100 text-red-700' };
+
+  const { data: logs = [], isLoading } = useQuery({
+    queryKey: ['ipam-audit-global', tableFilter, limit],
+    queryFn: () => api.get(`/ipam/audit?limit=${limit}${tableFilter ? `&table_name=${tableFilter}` : ''}`),
+  });
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center gap-2">
+        <select className={SELECT + ' w-48'} value={tableFilter} onChange={e => { setTableFilter(e.target.value); setLimit(50); }}>
+          {Object.entries(AUDIT_TABLES).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <span className="text-xs text-slate-400">{logs.length} entries</span>
+      </div>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-xs">
+          <thead className="bg-slate-50 text-slate-500 font-semibold uppercase">
+            <tr>{['When', 'Table', 'Action', 'By', 'Summary'].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {isLoading && <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">Loading…</td></tr>}
+            {!isLoading && logs.map(l => (
+              <tr key={l.id} className="hover:bg-slate-50">
+                <td className="px-3 py-2 text-slate-500 whitespace-nowrap">{new Date(l.changed_at).toLocaleString()}</td>
+                <td className="px-3 py-2 text-slate-500">{AUDIT_TABLES[l.table_name] || l.table_name}</td>
+                <td className="px-3 py-2">
+                  <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${actionColor[l.action] || 'bg-slate-100 text-slate-600'}`}>{l.action}</span>
+                </td>
+                <td className="px-3 py-2 text-slate-600">{l.changed_by_name || '—'}</td>
+                <td className="px-3 py-2 text-slate-600">{l.summary || '—'}</td>
+              </tr>
+            ))}
+            {!isLoading && !logs.length && <tr><td colSpan={5} className="px-3 py-8 text-center text-slate-400">No activity recorded yet</td></tr>}
+          </tbody>
+        </table>
+      </div>
+      {logs.length >= limit && (
+        <div className="text-center">
+          <button onClick={() => setLimit(l => l + 50)} className="text-xs text-primary-600 hover:underline">Load more</button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Subnets', 'VLANs', 'VRFs', 'Sections', 'BGP', 'NAT', 'Locations', 'Search', 'Calculator'];
+const TABS = ['Subnets', 'VLANs', 'VRFs', 'Sections', 'BGP', 'NAT', 'Locations', 'Multicast', 'Search', 'Calculator', 'Activity'];
 
 export default function IpamFullPage() {
   const [tab, setTab]                   = useState('Subnets');
@@ -1806,8 +2222,10 @@ export default function IpamFullPage() {
           {tab === 'BGP'        && <BgpTab vrfs={vrfs} />}
           {tab === 'NAT'        && <NatTab />}
           {tab === 'Locations'  && <LocationsTab />}
+          {tab === 'Multicast'  && <MulticastTab vlans={vlans} />}
           {tab === 'Search'     && <SearchTab onGoToSubnet={goToSubnet} />}
           {tab === 'Calculator' && <CidrCalculator />}
+          {tab === 'Activity'   && <ActivityTab />}
         </>
       )}
     </div>

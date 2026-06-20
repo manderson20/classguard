@@ -85,26 +85,74 @@ router.post('/auth', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Device identity helpers — the extension itself can't read the host's MAC
+// address (no web API exposes that), but the same machine's MAC is already
+// known on our side via DHCP (ip_addresses.mac_address, kept current by
+// dhcpLeaseIpamSync.js for leases and dhcpIpamSync.js for reservations). So
+// rather than trust IP alone — which changes every time a laptop moves
+// between buildings/subnets — we resolve "which physical device is at this
+// IP right now" via DHCP and key the devices table on that MAC
+// (device_identifier), falling back to a per-student best-guess row only
+// when no DHCP record exists yet for the IP (e.g. a brand new lease DHCP
+// hasn't synced into IPAM yet, or a network we don't manage DHCP for).
+// ---------------------------------------------------------------------------
+async function resolveMacForIp(ip) {
+  const { rows } = await query(
+    `SELECT mac_address FROM ip_addresses WHERE ip = $1 AND mac_address IS NOT NULL`,
+    [ip]
+  );
+  return rows[0]?.mac_address || null;
+}
+
+// Registers/refreshes the device→student mapping and returns the resolved
+// devices.id (or null if no MAC could be resolved for this IP yet).
+async function registerDevice(studentId, ip) {
+  const mac = await resolveMacForIp(ip).catch(() => null);
+
+  if (mac) {
+    const { rows } = await query(
+      `INSERT INTO devices (device_identifier, current_user_id, last_ip, last_seen_at)
+       VALUES ($1,$2,$3,NOW())
+       ON CONFLICT (device_identifier) DO UPDATE SET
+         current_user_id = EXCLUDED.current_user_id,
+         last_ip          = EXCLUDED.last_ip,
+         last_seen_at      = NOW()
+       RETURNING id`,
+      [mac, studentId, ip]
+    );
+    return rows[0]?.id || null;
+  }
+
+  // No DHCP record for this IP (yet) — best-effort fallback so the audit
+  // trail and "last seen" data isn't lost, just not MAC-identified. Scoped to
+  // the same (student, ip) pair so a transient DHCP lookup miss for an
+  // already-MAC-identified device never spawns a duplicate unidentified row.
+  const { rowCount } = await query(
+    `UPDATE devices SET last_seen_at = NOW() WHERE current_user_id = $1 AND device_identifier IS NULL AND last_ip = $2`,
+    [studentId, ip]
+  );
+  if (rowCount === 0) {
+    await query(
+      `INSERT INTO devices (current_user_id, last_ip, last_seen_at) VALUES ($1,$2,NOW())`,
+      [studentId, ip]
+    );
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/v1/extension/register
 // Registers the device's IP address → student mapping so the DNS engine can
-// look up the student's policy from an IP address.
+// look up the student's policy from an IP address, and (when DHCP knows the
+// MAC at this IP) which physical device — see registerDevice() above.
 // ---------------------------------------------------------------------------
 router.post('/register', authenticate, async (req, res) => {
   const studentId = req.user.userId;
   const ip        = req.ip || req.socket.remoteAddress;
 
+  const deviceId = await registerDevice(studentId, ip).catch(() => null);
   // Store in Redis so the DNS engine can find it; TTL = 8h (matches JWT)
-  await redis.set(`device:${ip}`, studentId, 'EX', 8 * 60 * 60);
-
-  // Persist to devices table for audit purposes
-  await query(
-    `INSERT INTO devices (user_id, ip_address, last_seen_at)
-     VALUES ($1,$2,NOW())
-     ON CONFLICT (user_id) DO UPDATE SET
-       ip_address   = EXCLUDED.ip_address,
-       last_seen_at = NOW()`,
-    [studentId, ip]
-  ).catch(() => {}); // non-fatal if table schema differs
+  await redis.set(`device:${ip}`, JSON.stringify({ studentId, deviceId }), 'EX', 8 * 60 * 60);
 
   res.json({ ok: true, ip });
 });
@@ -119,15 +167,9 @@ router.post('/heartbeat', authenticate, async (req, res) => {
   const studentId = req.user.userId;
   const ip        = req.ip || req.socket.remoteAddress;
 
+  const deviceId = await registerDevice(studentId, ip).catch(() => null);
   // Refresh IP → student mapping
-  await redis.set(`device:${ip}`, studentId, 'EX', 8 * 60 * 60);
-
-  // Update last_seen in devices table
-  await query(
-    `UPDATE devices SET last_seen_at = NOW(), ip_address = $1
-     WHERE user_id = $2`,
-    [ip, studentId]
-  ).catch(() => {});
+  await redis.set(`device:${ip}`, JSON.stringify({ studentId, deviceId }), 'EX', 8 * 60 * 60);
 
   res.json({ ok: true });
 });

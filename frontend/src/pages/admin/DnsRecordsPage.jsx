@@ -58,6 +58,96 @@ function Field({ label, children, hint }) {
 }
 
 // ---------------------------------------------------------------------------
+// Import a Windows DNS Server zone export ("DNS Manager" → zone → Export List)
+// Preview (server rolls back) then explicit commit, same pattern used for
+// the PHPiPAM and Phone System spreadsheet importers.
+// ---------------------------------------------------------------------------
+function ImportWindowsZoneModal({ onClose }) {
+  const qc = useQueryClient();
+  const [file, setFile] = useState(null);
+  const [text, setText] = useState(null);
+  const [zoneName, setZoneName] = useState('');
+  const [preview, setPreview] = useState(null);
+  const [committed, setCommitted] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  function onFile(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setPreview(null);
+    setError('');
+    const reader = new FileReader();
+    reader.onload = ev => setText(ev.target.result);
+    reader.readAsText(f);
+  }
+
+  async function send(commit) {
+    setBusy(true);
+    setError('');
+    try {
+      const res = await api.post('/dns/zones/import-windows', { text, zoneName, commit });
+      if (commit) { setCommitted(res); qc.invalidateQueries(['dns-zones']); } else { setPreview(res); }
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const c = (committed || preview)?.counts;
+
+  return (
+    <Modal title="Import Windows DNS Zone" onClose={onClose} wide>
+      <div className="flex flex-col gap-4">
+        <p className="text-xs text-slate-500">
+          From a Windows machine: DNS Manager → right-click the zone → Export List. Imports Host (A/AAAA),
+          CNAME, NS, MX, SRV, PTR, and TXT records — the zone-level SOA isn't imported.
+        </p>
+        {!committed && (
+          <>
+            <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-6 cursor-pointer hover:border-primary-400 transition-colors">
+              <span className="text-sm font-medium text-slate-600">{file ? file.name : 'Click to upload the exported .txt file'}</span>
+              <input type="file" accept=".txt,.csv" className="hidden" onChange={onFile} />
+            </label>
+            <Field label="Zone name" hint="find-or-create — e.g. yourdistrict.org">
+              <input className={INPUT} value={zoneName} onChange={e => setZoneName(e.target.value)} placeholder="yourdistrict.org" />
+            </Field>
+          </>
+        )}
+        {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
+        {c && (
+          <div className={`rounded-lg p-4 border ${committed ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
+            <p className="text-sm font-semibold text-slate-800 mb-2">{committed ? 'Import complete' : 'Preview — nothing has been saved yet'}</p>
+            <div className="text-sm text-slate-700">
+              {Object.entries(c.byType).map(([t, n]) => <span key={t} className="inline-block mr-3">{t}: <strong>{n}</strong></span>)}
+              <div className="mt-1">Total: <strong>{c.records}</strong></div>
+            </div>
+            {(preview || committed).warnings?.length > 0 && (
+              <ul className="mt-2 space-y-0.5 max-h-28 overflow-y-auto">
+                {(preview || committed).warnings.slice(0, 10).map((w, i) => <li key={i} className="text-xs text-amber-600 font-mono">{w}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="flex justify-end gap-2 mt-4">
+        <button onClick={onClose} className={BTN_GHOST}>{committed ? 'Close' : 'Cancel'}</button>
+        {!committed && <button onClick={() => send(false)} disabled={!text || !zoneName.trim() || busy} className={BTN_GHOST + ' border border-slate-200'}>{busy ? 'Previewing…' : 'Preview'}</button>}
+        {!committed && preview && (
+          <button
+            onClick={() => { if (confirm('This will create/update the DNS records shown in the preview. Continue?')) send(true); }}
+            disabled={busy} className={BTN_PRIMARY}>
+            {busy ? 'Importing…' : 'Confirm Import'}
+          </button>
+        )}
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Zone form modal
 // ---------------------------------------------------------------------------
 function ZoneModal({ zone, onClose }) {
@@ -252,6 +342,8 @@ function RecordsPanel({ zone }) {
   const [showAdd,    setShowAdd]    = useState(false);
   const [typeFilter, setTypeFilter] = useState('');
   const [search,     setSearch]     = useState('');
+  const [selected,   setSelected]   = useState(() => new Set());
+  const [showBulkDelete, setShowBulkDelete] = useState(false);
 
   const { data: records = [], isLoading } = useQuery({
     queryKey: ['dns-records', zone.id],
@@ -263,6 +355,15 @@ function RecordsPanel({ zone }) {
     onSuccess:  () => qc.invalidateQueries(['dns-records', zone.id]),
   });
 
+  const bulkDelete = useMutation({
+    mutationFn: ids => api.post('/dns/records/bulk-delete', { ids }),
+    onSuccess:  () => {
+      setSelected(new Set());
+      setShowBulkDelete(false);
+      qc.invalidateQueries(['dns-records', zone.id]);
+    },
+  });
+
   const filtered = records.filter(r => {
     if (typeFilter && r.type !== typeFilter) return false;
     if (search) {
@@ -271,6 +372,21 @@ function RecordsPanel({ zone }) {
     }
     return true;
   });
+
+  const allFilteredSelected = filtered.length > 0 && filtered.every(r => selected.has(r.id));
+  const toggleAll = () => {
+    setSelected(prev => {
+      if (allFilteredSelected) return new Set();
+      return new Set(filtered.map(r => r.id));
+    });
+  };
+  const toggleOne = id => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  };
 
   const handleExport = async () => {
     const token = localStorage.getItem('cg_token');
@@ -310,14 +426,25 @@ function RecordsPanel({ zone }) {
           </div>
         </div>
 
-        <div className="flex gap-2 mt-3">
-          <input className={INPUT + ' max-w-56'} placeholder="Search name or value…"
-            value={search} onChange={e => setSearch(e.target.value)} />
-          <select className={SELECT + ' w-28'} value={typeFilter}
-            onChange={e => setTypeFilter(e.target.value)}>
-            <option value="">All types</option>
-            {RECORD_TYPES.map(t => <option key={t}>{t}</option>)}
-          </select>
+        <div className="flex items-center justify-between mt-3">
+          <div className="flex gap-2">
+            <input className={INPUT + ' max-w-56'} placeholder="Search name or value…"
+              value={search} onChange={e => setSearch(e.target.value)} />
+            <select className={SELECT + ' w-28'} value={typeFilter}
+              onChange={e => setTypeFilter(e.target.value)}>
+              <option value="">All types</option>
+              {RECORD_TYPES.map(t => <option key={t}>{t}</option>)}
+            </select>
+          </div>
+          {selected.size > 0 && (
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-500">{selected.size} selected</span>
+              <button onClick={() => setShowBulkDelete(true)}
+                className="text-xs font-medium text-red-600 hover:underline">
+                Delete selected
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -333,6 +460,10 @@ function RecordsPanel({ zone }) {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
               <tr>
+                <th className="px-4 py-2 w-8">
+                  <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll}
+                    className="w-4 h-4 rounded cursor-pointer" />
+                </th>
                 {['Name','Type','Value','TTL','Pri',''].map(h => (
                   <th key={h} className="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">{h}</th>
                 ))}
@@ -340,7 +471,11 @@ function RecordsPanel({ zone }) {
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filtered.map(r => (
-                <tr key={r.id} className={`hover:bg-slate-50 ${!r.is_active ? 'opacity-40' : ''}`}>
+                <tr key={r.id} className={`hover:bg-slate-50 ${!r.is_active ? 'opacity-40' : ''} ${selected.has(r.id) ? 'bg-primary-50' : ''}`}>
+                  <td className="px-4 py-2">
+                    <input type="checkbox" checked={selected.has(r.id)} onChange={() => toggleOne(r.id)}
+                      className="w-4 h-4 rounded cursor-pointer" />
+                  </td>
                   <td className="px-4 py-2 font-mono text-sm text-slate-800 max-w-[180px] truncate">
                     {r.name}
                   </td>
@@ -367,6 +502,54 @@ function RecordsPanel({ zone }) {
 
       {showAdd    && <RecordModal zone={zone} onClose={() => setShowAdd(false)} />}
       {editRecord && <RecordModal record={editRecord} zone={zone} onClose={() => setEditRecord(null)} />}
+      {showBulkDelete && (
+        <BulkDeleteModal
+          count={selected.size}
+          busy={bulkDelete.isPending}
+          error={bulkDelete.error?.message}
+          onCancel={() => setShowBulkDelete(false)}
+          onConfirm={() => bulkDelete.mutate([...selected])}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Bulk delete confirmation — typing "DELETE" is required before the button
+// activates, so a mass-delete can't happen from a single accidental click.
+// ---------------------------------------------------------------------------
+function BulkDeleteModal({ count, busy, error, onCancel, onConfirm }) {
+  const [confirmText, setConfirmText] = useState('');
+  const ready = confirmText === 'DELETE';
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl max-w-sm w-full p-5">
+        <h3 className="font-bold text-slate-900 mb-2">Delete {count} record{count !== 1 ? 's' : ''}?</h3>
+        <p className="text-sm text-slate-500 mb-4">
+          This permanently deletes the selected record{count !== 1 ? 's' : ''} and cannot be undone.
+          Type <strong className="font-mono text-slate-700">DELETE</strong> below to confirm.
+        </p>
+        <input
+          autoFocus
+          className={INPUT + ' mb-4 font-mono'}
+          placeholder="DELETE"
+          value={confirmText}
+          onChange={e => setConfirmText(e.target.value)}
+        />
+        {error && <p className="text-red-600 text-sm mb-3">{error}</p>}
+        <div className="flex justify-end gap-2">
+          <button onClick={onCancel} className={BTN_GHOST + ' text-sm'}>Cancel</button>
+          <button
+            onClick={onConfirm}
+            disabled={!ready || busy}
+            className="text-sm px-3 py-1.5 rounded-lg font-medium bg-red-600 text-white disabled:bg-red-300 disabled:cursor-not-allowed hover:bg-red-700"
+          >
+            {busy ? 'Deleting…' : `Delete ${count} record${count !== 1 ? 's' : ''}`}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -378,6 +561,7 @@ export default function DnsRecordsPage() {
   const qc = useQueryClient();
   const [selectedZone, setSelectedZone] = useState(null);
   const [showAddZone,  setShowAddZone]  = useState(false);
+  const [showImport,   setShowImport]   = useState(false);
   const [editZone,     setEditZone]     = useState(null);
 
   const { data: zones = [], isLoading } = useQuery({
@@ -446,6 +630,10 @@ export default function DnsRecordsPage() {
             className={BTN_PRIMARY + ' w-full text-xs'}>
             + Add Zone
           </button>
+          <button onClick={() => setShowImport(true)}
+            className={BTN_GHOST + ' w-full text-xs border border-slate-200'}>
+            Import Windows Zone
+          </button>
           <button
             onClick={() => rebuildCache.mutate()}
             disabled={rebuildCache.isPending}
@@ -498,6 +686,7 @@ export default function DnsRecordsPage() {
       </div>
 
       {showAddZone && <ZoneModal onClose={() => setShowAddZone(false)} />}
+      {showImport && <ImportWindowsZoneModal onClose={() => setShowImport(false)} />}
       {editZone    && <ZoneModal zone={editZone} onClose={() => { setEditZone(null); qc.invalidateQueries(['dns-zones']); }} />}
     </div>
   );

@@ -25,6 +25,7 @@ function isInAllowList(domain, allowList) {
 async function resolveQuery(name, typeNum, sourceIp) {
   const domain    = name.toLowerCase().replace(/\.$/, '');
   let   studentId = null;
+  let   deviceId  = null;
   let   policyId  = null;
 
   // --- 0. Local authoritative records (managed in ClassGuard) -------------
@@ -33,7 +34,7 @@ async function resolveQuery(name, typeNum, sourceIp) {
   const localAnswers = await localRecords.lookupLocal(domain, typeNum).catch(() => null);
   if (localAnswers !== null) {
     // null = not our zone; empty array = our zone but no record (NXDOMAIN)
-    logQuery({ domain, action: 'local', sourceIp, studentId: null, policyId: null, blockReason: null });
+    logQuery({ domain, action: 'local', sourceIp, studentId: null, deviceId: null, policyId: null, blockReason: null });
     return { action: 'allowed', answers: localAnswers };
   }
 
@@ -48,9 +49,10 @@ async function resolveQuery(name, typeNum, sourceIp) {
   }
 
   // --- 2. Device lookup ---------------------------------------------------
-  const device = await policyCache.getDevice(sourceIp);
+  const device = await policyCache.getDevice(sourceIp).catch(() => null);
   if (device) {
     studentId = device.studentId;
+    deviceId  = device.deviceId;
     policyId  = device.policyId;
   }
 
@@ -59,10 +61,10 @@ async function resolveQuery(name, typeNum, sourceIp) {
   // Subnet policies are set in ClassGuard for specific VLANs/subnets.
   let policy;
   if (studentId) {
-    policy = await policyCache.getPolicy(studentId);
+    policy = await policyCache.getPolicy(studentId).catch(() => null);
   } else {
     const subnetPolicy = await policyCache.getSubnetPolicy(sourceIp).catch(() => null);
-    policy = subnetPolicy || await policyCache.getPolicy(null);
+    policy = subnetPolicy || await policyCache.getPolicy(null).catch(() => null);
   }
   const mode   = policy?.mode || 'standard';
 
@@ -75,31 +77,31 @@ async function resolveQuery(name, typeNum, sourceIp) {
   const globalAllowList = await policyCache.getGlobalAllowlist().catch(() => []);
   if (isInAllowList(domain, globalAllowList)) {
     const answers = await forwardToUpstream(domain, typeNum);
-    logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+    logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
     return { action: 'allowed', answers };
   }
 
   // --- 5. Explicit allow-list check (per-policy) --------------------------
   if (isInAllowList(domain, allowList)) {
     const answers = await forwardToUpstream(domain, typeNum);
-    logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+    logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
     return { action: 'allowed', answers };
   }
 
   // --- 6. Mode-based restrictions -----------------------------------------
   if (mode === 'penalty_box') {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'penalty_box' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'penalty_box' });
     return { action: 'blocked', answers: [], blockReason: 'penalty_box' };
   }
 
   if (mode === 'lesson') {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'lesson_mode' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'lesson_mode' });
     return { action: 'blocked', answers: [], blockReason: 'lesson_mode' };
   }
 
   if (mode === 'open') {
     const answers = await forwardToUpstream(domain, typeNum);
-    logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+    logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
     return { action: 'allowed', answers };
   }
 
@@ -111,32 +113,47 @@ async function resolveQuery(name, typeNum, sourceIp) {
     const hasOverride = await policyCache.getOverrideForIp(sourceIp, domain).catch(() => false);
     if (hasOverride) {
       const answers = await forwardToUpstream(domain, typeNum);
-      logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+      logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
       return { action: 'allowed', answers };
     }
   }
 
   // --- 7. Blocklist check (standard mode) ---------------------------------
-  const blocked = await blocklist.isBlocked(domain);
+  // Fails CLOSED: if Redis can't be reached to check the blocklist, we cannot
+  // verify safety, so the query is blocked rather than let through unchecked.
+  let blocked;
+  try {
+    blocked = await blocklist.isBlocked(domain);
+  } catch {
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'safety_check_unavailable' });
+    return { action: 'blocked', answers: [], blockReason: 'safety_check_unavailable' };
+  }
   if (blocked) {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: 'blocklist' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'blocklist' });
     return { action: 'blocked', answers: [], blockReason: 'blocklist' };
   }
 
   // --- 7.5. Category check ------------------------------------------------
   // One Redis HGET (pipelined across parent domains) — sub-millisecond.
-  const category       = await categoryLookup.getCategoryForDomain(domain).catch(() => null);
+  // Fails CLOSED, same rationale as the blocklist check above.
+  let category;
+  try {
+    category = await categoryLookup.getCategoryForDomain(domain);
+  } catch {
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'safety_check_unavailable' });
+    return { action: 'blocked', answers: [], blockReason: 'safety_check_unavailable' };
+  }
   const blockedCats    = policy?.blockedCategories || [];
   const allowedCatSet  = new Set(policy?.allowedCategories || []);
 
   if (category && blockedCats.includes(category)) {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, policyId, blockReason: `category:${category}` });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: `category:${category}` });
     return { action: 'blocked', answers: [], blockReason: `category:${category}` };
   }
 
   // --- 8. Allowed — forward to upstream -----------------------------------
   const answers = await forwardToUpstream(domain, typeNum);
-  logQuery({ domain, action: 'allowed', sourceIp, studentId, policyId, blockReason: null });
+  logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
   return { action: 'allowed', answers };
 }
 

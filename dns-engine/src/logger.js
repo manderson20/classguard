@@ -61,6 +61,7 @@ async function flushToRedis() {
           'action',      e.action,
           'sourceIp',    e.sourceIp,
           'studentId',   e.studentId,
+          'deviceId',    e.deviceId,
           'policyId',    e.policyId,
           'blockReason', e.blockReason,
           'timestamp',   e.timestamp,
@@ -83,12 +84,13 @@ setInterval(() => {
  * logQuery — synchronous ring buffer enqueue. Zero I/O on the hot DNS path.
  * Called without `await` from resolver.js so resolution never waits for logging.
  */
-function logQuery({ domain, action, sourceIp, studentId, policyId, blockReason }) {
+function logQuery({ domain, action, sourceIp, studentId, deviceId, policyId, blockReason }) {
   enqueue({
     domain:      domain      || '',
     action:      action      || 'allowed',
     sourceIp:    sourceIp    || '',
     studentId:   studentId   || '',
+    deviceId:    deviceId    || '',
     policyId:    policyId    || '',
     blockReason: blockReason || '',
     timestamp:   Date.now().toString(),

@@ -4,6 +4,11 @@ const { pool }            = require('../db');
 const { authenticate }    = require('../middleware/auth');
 const { requireMinRole }  = require('../middleware/roles');
 const kea = require('../services/kea');
+const windowsDhcpImport = require('../services/windowsDhcpImport');
+const dhcpKeaSync = require('../services/dhcpKeaSync');
+const dhcpIpamSync = require('../services/dhcpIpamSync');
+const dhcpReservations = require('../services/dhcpReservations');
+const dhcpLeaseIpamSync = require('../services/dhcpLeaseIpamSync');
 
 const auth  = [authenticate, requireMinRole('admin')];
 
@@ -83,8 +88,11 @@ router.post('/subnets', ...auth, async (req, res) => {
     );
 
     const row = rows[0];
-    try { await kea.syncSubnet(row); } catch (kerr) {
-      console.warn('[dhcp] Kea syncSubnet failed:', kerr.message);
+    try { await dhcpKeaSync.run(); } catch (kerr) {
+      console.warn('[dhcp] Kea sync failed:', kerr.message);
+    }
+    try { await dhcpIpamSync.syncSubnetToIpam(row); } catch (ierr) {
+      console.warn('[dhcp] IPAM syncSubnet failed:', ierr.message);
     }
 
     res.status(201).json(row);
@@ -124,8 +132,11 @@ router.put('/subnets/:id', ...auth, async (req, res) => {
     if (!rows.length) return res.status(404).json({ error: 'Subnet not found' });
 
     const row = rows[0];
-    try { await kea.syncSubnet(row); } catch (kerr) {
-      console.warn('[dhcp] Kea syncSubnet failed:', kerr.message);
+    try { await dhcpKeaSync.run(); } catch (kerr) {
+      console.warn('[dhcp] Kea sync failed:', kerr.message);
+    }
+    try { await dhcpIpamSync.syncSubnetToIpam(row); } catch (ierr) {
+      console.warn('[dhcp] IPAM syncSubnet failed:', ierr.message);
     }
 
     res.json(row);
@@ -141,13 +152,13 @@ router.delete('/subnets/:id', ...auth, async (req, res) => {
     const { rows } = await pool.query('SELECT * FROM dhcp_subnets WHERE id = $1', [req.params.id]);
     if (!rows.length) return res.status(404).json({ error: 'Subnet not found' });
 
-    const { kea_subnet_id } = rows[0];
-
-    try { await kea.deleteSubnet(kea_subnet_id); } catch (kerr) {
-      console.warn('[dhcp] Kea deleteSubnet failed:', kerr.message);
+    await pool.query('DELETE FROM dhcp_subnets WHERE id = $1', [req.params.id]);
+    // Run after the delete — the rebuild reads current DB state, so the
+    // removed subnet needs to already be gone before Kea's config is rebuilt.
+    try { await dhcpKeaSync.run(); } catch (kerr) {
+      console.warn('[dhcp] Kea sync failed:', kerr.message);
     }
 
-    await pool.query('DELETE FROM dhcp_subnets WHERE id = $1', [req.params.id]);
     res.json({ deleted: true });
   } catch (err) {
     console.error('[dhcp] DELETE /subnets/:id:', err);
@@ -166,7 +177,7 @@ router.get('/subnets/:id/reservations', ...auth, async (req, res) => {
       `SELECT r.*, u.full_name AS student_name, u.email AS student_email
        FROM dhcp_reservations r
        LEFT JOIN devices d ON d.id = r.device_id
-       LEFT JOIN users u   ON u.id = d.user_id
+       LEFT JOIN users u   ON u.id = d.current_user_id
        WHERE r.subnet_id = $1
        ORDER BY r.ip_address`,
       [req.params.id]
@@ -186,39 +197,15 @@ router.post('/reservations', ...auth, async (req, res) => {
     return res.status(400).json({ error: 'subnet_id, mac_address, ip_address required' });
   }
 
-  const mac = mac_address.toLowerCase().replace(/[^0-9a-f]/g, match => match === ':' ? ':' : '');
-
   try {
-    const subnetRow = await pool.query('SELECT * FROM dhcp_subnets WHERE id = $1', [subnet_id]);
-    if (!subnetRow.rows.length) return res.status(404).json({ error: 'Subnet not found' });
-
-    const subnet = subnetRow.rows[0];
-    const inPool = await ipInPool(ip_address, subnet.pool_start, subnet.pool_end);
-    if (!inPool) {
-      return res.status(400).json({
-        error: `IP ${ip_address} is not within pool ${subnet.pool_start}–${subnet.pool_end}`,
-      });
-    }
-
-    const { rows } = await pool.query(
-      `INSERT INTO dhcp_reservations
-         (subnet_id, mac_address, ip_address, hostname, device_id, notes, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7)
-       RETURNING *`,
-      [subnet_id, mac, ip_address, hostname ?? null, device_id ?? null, notes ?? null, req.user.id]
-    );
-
-    const row = rows[0];
-    try {
-      await kea.syncReservation({ ...row, kea_subnet_id: subnet.kea_subnet_id });
-    } catch (kerr) {
-      console.warn('[dhcp] Kea syncReservation failed:', kerr.message);
-    }
-
+    const row = await dhcpReservations.createReservation({
+      subnetId: subnet_id, macAddress: mac_address, ipAddress: ip_address,
+      hostname, deviceId: device_id, notes, userId: req.user.id,
+    });
     res.status(201).json(row);
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('[dhcp] POST /reservations:', err);
-    if (err.code === '23505') return res.status(409).json({ error: 'Reservation already exists for that MAC or IP in this subnet' });
     res.status(500).json({ error: 'Failed to create reservation' });
   }
 });
@@ -236,14 +223,6 @@ router.put('/reservations/:id', ...auth, async (req, res) => {
     if (!existing.length) return res.status(404).json({ error: 'Reservation not found' });
 
     const old = existing[0];
-
-    // Delete old reservation from Kea before updating
-    try {
-      await kea.deleteReservation(old.mac_address, old.kea_subnet_id);
-    } catch (kerr) {
-      console.warn('[dhcp] Kea deleteReservation (pre-update) failed:', kerr.message);
-    }
-
     const { mac_address, ip_address, hostname, notes } = req.body;
 
     if (ip_address) {
@@ -269,10 +248,15 @@ router.put('/reservations/:id', ...auth, async (req, res) => {
     );
 
     const updated = rows[0];
+    try { await dhcpKeaSync.run(); } catch (kerr) {
+      console.warn('[dhcp] Kea sync failed:', kerr.message);
+    }
     try {
-      await kea.syncReservation({ ...updated, kea_subnet_id: old.kea_subnet_id });
-    } catch (kerr) {
-      console.warn('[dhcp] Kea syncReservation (post-update) failed:', kerr.message);
+      // IP changed — the old ip_addresses row is now stale at the old address.
+      if (updated.ip_address !== old.ip_address) await dhcpIpamSync.removeReservationFromIpam(updated.id);
+      await dhcpIpamSync.syncReservationToIpam(updated);
+    } catch (ierr) {
+      console.warn('[dhcp] IPAM syncReservation failed:', ierr.message);
     }
 
     res.json(updated);
@@ -285,23 +269,10 @@ router.put('/reservations/:id', ...auth, async (req, res) => {
 // DELETE /api/v1/dhcp/reservations/:id
 router.delete('/reservations/:id', ...auth, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `SELECT r.mac_address, s.kea_subnet_id
-       FROM dhcp_reservations r
-       JOIN dhcp_subnets s ON s.id = r.subnet_id
-       WHERE r.id = $1`,
-      [req.params.id]
-    );
-    if (!rows.length) return res.status(404).json({ error: 'Reservation not found' });
-
-    const { mac_address, kea_subnet_id } = rows[0];
-    try { await kea.deleteReservation(mac_address, kea_subnet_id); } catch (kerr) {
-      console.warn('[dhcp] Kea deleteReservation failed:', kerr.message);
-    }
-
-    await pool.query('DELETE FROM dhcp_reservations WHERE id = $1', [req.params.id]);
+    await dhcpReservations.deleteReservation(req.params.id);
     res.json({ deleted: true });
   } catch (err) {
+    if (err.status) return res.status(err.status).json({ error: err.message });
     console.error('[dhcp] DELETE /reservations/:id:', err);
     res.status(500).json({ error: 'Failed to delete reservation' });
   }
@@ -321,10 +292,10 @@ router.get('/leases', ...auth, async (req, res) => {
     let deviceMap = {};
     if (macs.length) {
       const { rows } = await pool.query(
-        `SELECT d.identifier AS mac, u.full_name, u.email
+        `SELECT d.device_identifier AS mac, u.full_name, u.email
          FROM devices d
-         LEFT JOIN users u ON u.id = d.user_id
-         WHERE d.identifier = ANY($1::text[])`,
+         LEFT JOIN users u ON u.id = d.current_user_id
+         WHERE d.device_identifier = ANY($1::text[])`,
         [macs]
       );
       deviceMap = Object.fromEntries(rows.map(r => [r.mac, r]));
@@ -403,38 +374,20 @@ router.get('/ha-status', ...auth, async (req, res) => {
 router.post('/sync-kea', ...auth, async (req, res) => {
   res.json({ status: 'started', message: 'Kea sync initiated' });
 
-  (async () => {
-    try {
-      const { rows: subnets } = await pool.query('SELECT * FROM dhcp_subnets WHERE is_active = true');
-      const { rows: globalOpts } = await pool.query(
-        `SELECT * FROM dhcp_options WHERE scope='global' AND is_active=true`
-      );
+  dhcpKeaSync.run()
+    .then(({ subnets, reservations }) => console.log(`[dhcp] Kea sync complete — ${subnets} subnets, ${reservations} reservations`))
+    .catch(err => console.error('[dhcp] sync-kea failed:', err));
+});
 
-      for (const subnet of subnets) {
-        const { rows: subnetOpts } = await pool.query(
-          `SELECT * FROM dhcp_options WHERE scope='subnet' AND dhcp_subnet_id=$1 AND is_active=true`,
-          [subnet.id]
-        );
-        // Subnet-specific options override globals for the same option_name
-        const subnetNames = new Set(subnetOpts.map(o => o.option_name));
-        const merged = [...subnetOpts, ...globalOpts.filter(o => !subnetNames.has(o.option_name))];
-        await kea.syncSubnet(subnet, merged).catch(e => console.warn('[dhcp] syncSubnet:', e.message));
-      }
-
-      const { rows: reservations } = await pool.query(
-        `SELECT r.*, s.kea_subnet_id
-         FROM dhcp_reservations r
-         JOIN dhcp_subnets s ON s.id = r.subnet_id`
-      );
-      for (const r of reservations) {
-        await kea.syncReservation(r).catch(e => console.warn('[dhcp] syncReservation:', e.message));
-      }
-
-      console.log(`[dhcp] Kea sync complete — ${subnets.length} subnets, ${reservations.length} reservations`);
-    } catch (err) {
-      console.error('[dhcp] sync-kea failed:', err);
-    }
-  })();
+// POST /api/v1/dhcp/sync-leases-ipam — on-demand run of the same lease→IPAM
+// reconciliation the scheduler runs every 2 minutes (see services/scheduler.js)
+router.post('/sync-leases-ipam', ...auth, async (req, res) => {
+  try {
+    const result = await dhcpLeaseIpamSync.run();
+    res.json(result);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -538,6 +491,26 @@ router.delete('/subnets/:id/options/:optId', ...auth, async (req, res) => {
   );
   if (!rows[0]) return res.status(404).json({ error: 'Option not found' });
   res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// POST /dhcp/import-windows-scope
+// Imports one Windows DHCP scope from its exported tab-separated files
+// (Address Pool, Scope Options, Reservations, Leases, Policies — all
+// optional except Pool). commit=false previews inside a rolled-back
+// transaction; commit=true also pushes the subnet/reservations live to Kea.
+// ---------------------------------------------------------------------------
+router.post('/import-windows-scope', ...auth, async (req, res) => {
+  const { scopeName, poolText, optionsText, reservationsText, leasesText, policiesText, commit } = req.body;
+  try {
+    const result = await windowsDhcpImport.run(
+      { scopeName, poolText, optionsText, reservationsText, leasesText, policiesText },
+      !!commit
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 module.exports = router;

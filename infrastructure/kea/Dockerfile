@@ -8,6 +8,7 @@ RUN apt-get update && apt-get install -y curl gnupg ca-certificates && \
       isc-kea-dhcp4 \
       isc-kea-ctrl-agent \
       isc-kea-admin \
+      isc-kea-hooks \
       postgresql-client \
       gettext-base \
     && rm -rf /var/lib/apt/lists/*

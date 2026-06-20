@@ -1,5 +1,6 @@
 const express = require('express');
 const crypto  = require('crypto');
+const { rateLimit } = require('express-rate-limit');
 const { OAuth2Client } = require('google-auth-library');
 const jwt    = require('jsonwebtoken');
 const config = require('../config');
@@ -7,6 +8,17 @@ const { query, pool } = require('../db');
 const { authenticate } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Brute-force guard on credential-checking endpoints specifically — the
+// general /api/ limiter (index.js) is sized for dashboard polling, not for
+// stopping password guessing, so login/google get their own tighter one.
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many login attempts — try again in a few minutes' },
+});
 
 // ---------------------------------------------------------------------------
 // Password helpers (Node built-in crypto — no extra dependency)
@@ -134,7 +146,7 @@ router.post('/setup', async (req, res) => {
 // POST /api/v1/auth/login
 // Local email + password login (for accounts created via setup or by an admin).
 // ---------------------------------------------------------------------------
-router.post('/login', async (req, res) => {
+router.post('/login', loginLimiter, async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) {
     return res.status(400).json({ error: 'email and password required' });
@@ -163,7 +175,7 @@ router.post('/login', async (req, res) => {
 // POST /api/v1/auth/google
 // Exchange Google OAuth code for a JWT.
 // ---------------------------------------------------------------------------
-router.post('/google', async (req, res) => {
+router.post('/google', loginLimiter, async (req, res) => {
   const { code } = req.body;
   if (!code) return res.status(400).json({ error: 'Authorization code required' });
 
