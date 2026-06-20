@@ -12,6 +12,30 @@ set -euo pipefail
 REPO_DIR="/opt/classguard"
 cd "$REPO_DIR"
 
+# --- Promotion check (standby -> primary) -----------------------------
+# config.node.role is read from NODE_ROLE at process startup, so a Postgres
+# promotion (POST /ha/promote) alone isn't enough — this node's .env and
+# container set need updating too (Kea included; it was deliberately never
+# started on a standby). Checked every tick alongside the update check
+# below, same trust boundary (localhost only).
+PROMOTE_PENDING=$(curl -sf http://localhost:3001/api/v1/ha/promote-status | jq -r '.pending') || PROMOTE_PENDING=false
+if [ "$PROMOTE_PENDING" = "true" ]; then
+  logger "ClassGuard update-watcher: promotion to primary requested, updating .env and restarting"
+  if grep -q '^NODE_ROLE=' .env; then
+    sed -i 's/^NODE_ROLE=.*/NODE_ROLE=primary/' .env
+  else
+    echo 'NODE_ROLE=primary' >> .env
+  fi
+  if grep -q '^RUN_CRON_JOBS=' .env; then
+    sed -i 's/^RUN_CRON_JOBS=.*/RUN_CRON_JOBS=true/' .env
+  else
+    echo 'RUN_CRON_JOBS=true' >> .env
+  fi
+  docker compose up -d
+  curl -sf -X POST http://localhost:3001/api/v1/ha/promote-complete || true
+  logger "ClassGuard update-watcher: promotion complete"
+fi
+
 RESPONSE=$(curl -sf http://localhost:3001/api/v1/ha/update-status) || exit 0
 PENDING=$(echo "$RESPONSE" | jq -r '.pending')
 [ "$PENDING" = "null" ] && exit 0
