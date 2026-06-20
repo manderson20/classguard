@@ -99,6 +99,7 @@ const webConfig = {
             const manifest = JSON.parse(content.toString());
             manifest.version            = require('./package.json').version;
             manifest.oauth2.client_id   = GOOGLE_CLIENT;
+            manifest.update_url         = `${BACKEND_URL}/downloads/update.xml`;
             return JSON.stringify(manifest, null, 2);
           },
         },
