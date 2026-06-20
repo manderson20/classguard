@@ -234,7 +234,16 @@ router.post('/join', async (req, res) => {
       }
       let primaryHost;
       try { primaryHost = new URL(config.appUrl).hostname; } catch { primaryHost = config.appUrl; }
-      replication = { host: primaryHost, port: 5432, user: 'replicator', password };
+      // appDbPassword is this primary's actual `classguard` Postgres role
+      // password — pg_basebackup replicates that role (and its password)
+      // verbatim, so once the joining node becomes a standby, ITS OWN
+      // previously-generated DB_PASSWORD in its own .env stops working.
+      // Handed back so the joining node's setup script can sync its .env
+      // to match before it ever tries to connect.
+      replication = {
+        host: primaryHost, port: 5432, user: 'replicator', password,
+        appDbPassword: process.env.DB_PASSWORD,
+      };
     }
 
     await client.query('COMMIT');
@@ -255,7 +264,7 @@ router.post('/join', async (req, res) => {
 // needing shell access to run a docker-compose command with env vars.
 // ---------------------------------------------------------------------------
 router.post('/join-cluster', ...superauth, async (req, res) => {
-  const { primary_url, token, request_replica } = req.body;
+  const { primary_url, token, request_replica, request_active_standby } = req.body;
   if (!primary_url || !token) {
     return res.status(400).json({ error: 'primary_url and token are required' });
   }
@@ -279,15 +288,20 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
       ).catch(() => {});
     }
 
-    // We can't safely run docker/volume commands from inside this container
-    // (that needs Docker-socket access, a real security tradeoff we don't
-    // make implicitly) — so instead of doing the pg_basebackup ourselves,
-    // hand back a ready-to-run script with the credentials already filled
-    // in. One paste on this server replaces the manual multi-step dance.
+    // We can't safely run docker/volume commands, or write this host's .env,
+    // from inside this container (that needs Docker-socket/filesystem access,
+    // a real security tradeoff we don't make implicitly) — so instead of
+    // doing the pg_basebackup ourselves, hand back a ready-to-run script
+    // with the credentials already filled in. One paste on this server
+    // replaces the manual multi-step dance — including the .env role/cron
+    // flags and DB password resync that pg_basebackup silently requires
+    // (it replicates the actual Postgres role password, so this node's own
+    // previously-generated DB_PASSWORD stops working the moment it becomes
+    // a standby), found by hand the first time this was done for real.
     let setupScript = null;
     if (data?.replication) {
-      const { host, port, user, password } = data.replication;
-      setupScript = [
+      const { host, port, user, password, appDbPassword } = data.replication;
+      const lines = [
         'cd /opt/classguard',
         'docker compose down',
         'docker volume rm classguard_postgres-data',
@@ -297,8 +311,25 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
         `  -e PGPASSWORD='${password}' \\`,
         '  timescale/timescaledb:latest-pg15 \\',
         `  pg_basebackup -h ${host} -p ${port} -U ${user} -D /var/lib/postgresql/data -Fp -Xs -P -R`,
-        'docker compose up -d postgres',
-      ].join('\n');
+      ];
+      if (appDbPassword) {
+        lines.push(
+          `sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${appDbPassword}/" .env`,
+          `sed -i "s#^DATABASE_URL=.*#DATABASE_URL=postgresql://classguard:${appDbPassword}@postgres:5432/classguard#" .env`,
+        );
+      }
+      if (request_active_standby) {
+        lines.push(
+          'sed -i "s/^NODE_ROLE=.*/NODE_ROLE=standby/" .env',
+          'sed -i "s/^RUN_CRON_JOBS=.*/RUN_CRON_JOBS=false/" .env',
+          'sed -i "s/^NODE_ID=.*/NODE_ID=$(hostname)/" .env',
+          'docker compose build api dns frontend migrate',
+          'docker compose up -d redis api dns frontend',
+        );
+      } else {
+        lines.push('docker compose up -d postgres');
+      }
+      setupScript = lines.join('\n');
     }
 
     res.json({ joined: true, primary_url: cleanUrl, node: data.node, setup_script: setupScript });
