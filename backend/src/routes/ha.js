@@ -219,19 +219,44 @@ router.post('/join', async (req, res) => {
       [nodeRows[0].id, invite.id]
     );
 
-    // Optionally provision a Postgres replication credential for the joining
-    // node in the same transaction. The role's password is rotated on every
-    // call (not just created once) so each join gets a fresh credential and
-    // a stale one from a previous attempt stops working.
+    // Optionally provision Postgres replication for the joining node in the
+    // same transaction.
     let replication = null;
     if (request_replica) {
-      const password = crypto.randomBytes(18).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 24);
+      // `replicator` is one shared role used by every standby, not one per
+      // node — rotating its password on every /join (the original design)
+      // broke every OTHER already-connected standby's primary_conninfo the
+      // moment a second node joined. Create once, reuse forever; never
+      // rotate implicitly. Stored in settings (replicates like any other
+      // row) so it's retrievable later instead of write-only via ALTER ROLE.
+      let { rows: [secretRow] } = await client.query(`SELECT value FROM settings WHERE key = 'replicator_password'`);
+      let password = secretRow?.value;
+      if (!password) {
+        password = crypto.randomBytes(18).toString('base64').replace(/[^A-Za-z0-9]/g, '').slice(0, 24);
+        await client.query(
+          `INSERT INTO settings (key, value) VALUES ('replicator_password', $1) ON CONFLICT (key) DO NOTHING`,
+          [password]
+        );
+        // Re-read in case of a race with a concurrent first join — the
+        // loser here must use the winner's stored value, not its own.
+        ({ rows: [secretRow] } = await client.query(`SELECT value FROM settings WHERE key = 'replicator_password'`));
+        password = secretRow.value;
+      }
+
       const { rows: roleRows } = await client.query(`SELECT 1 FROM pg_roles WHERE rolname = 'replicator'`);
-      if (roleRows.length) {
-        await client.query(`ALTER ROLE replicator WITH PASSWORD '${password}'`);
-      } else {
+      if (!roleRows.length) {
         await client.query(`CREATE ROLE replicator WITH REPLICATION LOGIN PASSWORD '${password}'`);
       }
+
+      // A dedicated replication slot per node retains WAL for that specific
+      // standby through a transient disconnect, instead of it being
+      // recycled and forcing a full re-basebackup on reconnect.
+      const slotName = `cg_${node_id}`.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 63);
+      const { rows: slotRows } = await client.query(`SELECT 1 FROM pg_replication_slots WHERE slot_name = $1`, [slotName]);
+      if (!slotRows.length) {
+        await client.query(`SELECT pg_create_physical_replication_slot($1)`, [slotName]);
+      }
+
       let primaryHost;
       try { primaryHost = new URL(config.appUrl).hostname; } catch { primaryHost = config.appUrl; }
       // appDbPassword is this primary's actual `classguard` Postgres role
@@ -241,7 +266,7 @@ router.post('/join', async (req, res) => {
       // Handed back so the joining node's setup script can sync its .env
       // to match before it ever tries to connect.
       replication = {
-        host: primaryHost, port: 5432, user: 'replicator', password,
+        host: primaryHost, port: 5432, user: 'replicator', password, slot: slotName,
         appDbPassword: process.env.DB_PASSWORD,
       };
     }
@@ -300,7 +325,7 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
     // a standby), found by hand the first time this was done for real.
     let setupScript = null;
     if (data?.replication) {
-      const { host, port, user, password, appDbPassword } = data.replication;
+      const { host, port, user, password, slot, appDbPassword } = data.replication;
       const lines = [
         'cd /opt/classguard',
         'docker compose down',
@@ -310,7 +335,7 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
         '  -v classguard_postgres-data:/var/lib/postgresql/data \\',
         `  -e PGPASSWORD='${password}' \\`,
         '  timescale/timescaledb:latest-pg15 \\',
-        `  pg_basebackup -h ${host} -p ${port} -U ${user} -D /var/lib/postgresql/data -Fp -Xs -P -R`,
+        `  pg_basebackup -h ${host} -p ${port} -U ${user} -D /var/lib/postgresql/data -Fp -Xs -P -R${slot ? ` -S ${slot}` : ''}`,
       ];
       if (appDbPassword) {
         lines.push(
