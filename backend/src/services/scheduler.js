@@ -1,4 +1,5 @@
 const cron   = require('node-cron');
+const axios  = require('axios');
 const redis  = require('../redis');
 const { query } = require('../db');
 const config = require('../config');
@@ -33,6 +34,74 @@ function parseStreamEntry(fields) {
   return obj;
 }
 
+// Use unnest() arrays — single round-trip regardless of row count, and
+// avoids the 65535-parameter limit of $1..$N style inserts. Shared by the
+// local drain below and routes/dns.js's /internal/dns-logs/bulk, which a
+// standby node forwards into when its own Postgres is a read-only replica.
+async function insertDnsLogBatch(records) {
+  const userIds      = records.map(r => r.studentId   || null);
+  const deviceIds    = records.map(r => r.deviceId    || null);
+  const domains      = records.map(r => r.domain      || '');
+  const actions      = records.map(r => r.action      || 'allowed');
+  const blockReasons = records.map(r => r.blockReason || null);
+  const sourceIps    = records.map(r => r.sourceIp     || null);
+  const queriedAts   = records.map(r =>
+    r.timestamp ? new Date(parseInt(r.timestamp, 10)) : new Date()
+  );
+
+  await query(
+    `INSERT INTO dns_logs (user_id, device_id, domain, action, block_reason, source_ip, queried_at)
+     SELECT * FROM unnest(
+       $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[], $6::inet[], $7::timestamptz[]
+     )
+     ON CONFLICT DO NOTHING`,
+    [userIds, deviceIds, domains, actions, blockReasons, sourceIps, queriedAts]
+  );
+}
+
+// Lazily mirrors this node's own INTERNAL_SECRET into the (replicated)
+// settings table — only ever called on the primary, since that's the only
+// node that can write. A standby reads this same row back from its local
+// read-only replica to authenticate calls it forwards to the primary,
+// with zero manual credential-sharing step between the two servers.
+let secretSeeded = false;
+async function ensureInternalSecretSeeded() {
+  if (secretSeeded || config.node.role !== 'primary') return;
+  await query(
+    `INSERT INTO settings (key, value) VALUES ('internal_secret', $1)
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+    [process.env.INTERNAL_SECRET || '']
+  ).catch(() => {});
+  secretSeeded = true;
+}
+
+// On a standby, this node's own local Postgres is a read-only streaming
+// replica — writing dns_logs here would fail every time. Forward the batch
+// to whichever node the (replicated) `nodes` table says is currently
+// primary instead, so query history from a standby that's actively serving
+// DNS still lands in one shared table rather than being silently dropped.
+async function insertOrForwardDnsLogs(records) {
+  await ensureInternalSecretSeeded();
+
+  const { rows: [{ in_recovery }] } = await query('SELECT pg_is_in_recovery() AS in_recovery');
+  if (!in_recovery) {
+    return insertDnsLogBatch(records);
+  }
+
+  const { rows: [primary] } = await query(
+    `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+  );
+  const { rows: [secretRow] } = await query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
+  if (!primary?.api_url || !secretRow?.value) {
+    throw new Error('cannot forward dns logs to primary — node/secret not found in replicated data yet');
+  }
+
+  await axios.post(`${primary.api_url}/api/v1/internal/dns-logs/bulk`, { records }, {
+    headers: { 'x-internal-secret': secretRow.value },
+    timeout: 8000,
+  });
+}
+
 async function drainDnsLog() {
   let cursor = (await redis.get(CURSOR_KEY)) || '0';
   let total  = 0;
@@ -47,26 +116,7 @@ async function drainDnsLog() {
 
     const records = entries.map(([id, fields]) => ({ id, ...parseStreamEntry(fields) }));
 
-    // Use unnest() arrays — single round-trip regardless of row count,
-    // and avoids the 65535-parameter limit of $1..$N style inserts.
-    const userIds      = records.map(r => r.studentId   || null);
-    const deviceIds    = records.map(r => r.deviceId    || null);
-    const domains      = records.map(r => r.domain      || '');
-    const actions      = records.map(r => r.action      || 'allowed');
-    const blockReasons = records.map(r => r.blockReason || null);
-    const sourceIps    = records.map(r => r.sourceIp     || null);
-    const queriedAts   = records.map(r =>
-      r.timestamp ? new Date(parseInt(r.timestamp, 10)) : new Date()
-    );
-
-    await query(
-      `INSERT INTO dns_logs (user_id, device_id, domain, action, block_reason, source_ip, queried_at)
-       SELECT * FROM unnest(
-         $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[], $6::inet[], $7::timestamptz[]
-       )
-       ON CONFLICT DO NOTHING`,
-      [userIds, deviceIds, domains, actions, blockReasons, sourceIps, queriedAts]
-    );
+    await insertOrForwardDnsLogs(records);
 
     cursor = entries[entries.length - 1][0];
     total += entries.length;
@@ -139,17 +189,21 @@ async function syncGoogleWorkspace() {
 // ---------------------------------------------------------------------------
 
 function startScheduler() {
+  // DNS log drain runs on every node regardless of RUN_CRON_JOBS — a standby
+  // actively serving DNS still has its own Redis stream of queries it
+  // personally resolved, and those need draining (and, on a standby, forwarding
+  // to the primary — see insertOrForwardDnsLogs) or they're silently lost.
+  // Harmless no-op on a node that isn't serving DNS; the stream is just empty.
+  cron.schedule('*/5 * * * * *', () => {
+    drainDnsLog().catch(err => console.error('[scheduler] dns-log drain error:', err.message));
+  });
+
   if (!config.node.runCronJobs) {
-    console.log('[scheduler] cron jobs disabled on this node (RUN_CRON_JOBS=false)');
+    console.log('[scheduler] other cron jobs disabled on this node (RUN_CRON_JOBS=false)');
     return;
   }
 
   console.log('[scheduler] starting background jobs');
-
-  // DNS log drain — every 5 seconds (handles 269M+/month without backlog)
-  cron.schedule('*/5 * * * * *', () => {
-    drainDnsLog().catch(err => console.error('[scheduler] dns-log drain error:', err.message));
-  });
 
   // Penalty box expiry — every 5 minutes
   cron.schedule('*/5 * * * *', () => {
@@ -234,4 +288,4 @@ function startScheduler() {
   });
 }
 
-module.exports = { startScheduler, drainDnsLog, expirePenaltyBox, syncGoogleWorkspace };
+module.exports = { startScheduler, drainDnsLog, expirePenaltyBox, syncGoogleWorkspace, insertDnsLogBatch };
