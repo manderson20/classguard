@@ -201,7 +201,7 @@ for i in $(seq 1 40); do
   sleep 3
 done
 
-SERVER_IP=$(grep '^APP_URL=' .env | sed 's|http://||;s|https://||' | cut -d/ -f1) || true
+SERVER_IP=$(grep '^APP_URL=' .env | cut -d= -f2- | sed 's|http://||;s|https://||' | cut -d/ -f1) || true
 SERVER_IP="${SERVER_IP:-this-server}"
 
 # ---------------------------------------------------------------------------

@@ -13,11 +13,17 @@ envsubst '${DB_PASSWORD}' < /etc/kea/kea-ctrl-agent.conf > /tmp/kea-conf/kea-ctr
 mkdir -p /var/run/kea
 rm -f /var/run/kea/*.pid /var/run/kea/*.sock
 
-# Initialize Kea schema in PostgreSQL (idempotent — safe to re-run)
+# Initialize Kea schema in PostgreSQL (idempotent — safe to re-run).
+# Kea gets its own dedicated database (classguard_kea, created by postgres's
+# init script — see infrastructure/postgres/init-kea-db.sh) rather than
+# sharing the app's "classguard" database: kea-admin db-init requires an
+# EMPTY database to run, and the app's migrations always populate dozens of
+# tables before Kea ever starts, so db-init would abort every time and Kea
+# would never get its lease tables created.
 kea-admin db-init pgsql \
   -u classguard \
   -p "${DB_PASSWORD}" \
-  -n classguard \
+  -n classguard_kea \
   -h postgres 2>/dev/null || true
 
 # Start Kea Control Agent in the background
