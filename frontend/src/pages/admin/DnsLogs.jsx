@@ -1,7 +1,83 @@
 import { useState, Fragment } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../lib/api';
+
+function AllowDomainModal({ domain, onClose }) {
+  const { data: policies = [], isLoading } = useQuery({
+    queryKey: ['policies-list'],
+    queryFn:  () => api.get('/policies'),
+  });
+  const [selected, setSelected] = useState(() => new Set());
+  const [done, setDone] = useState(false);
+
+  const toggle = id => setSelected(s => {
+    const next = new Set(s);
+    next.has(id) ? next.delete(id) : next.add(id);
+    return next;
+  });
+
+  const apply = useMutation({
+    mutationFn: () => Promise.all(
+      [...selected].map(id => api.post(`/policies/${id}/rules`, { domain, rule_type: 'allow' }))
+    ),
+    onSuccess: () => setDone(true),
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
+        {done ? (
+          <>
+            <h2 className="font-semibold text-slate-900 mb-2">Done</h2>
+            <p className="text-sm text-slate-500 mb-5">
+              <span className="font-mono">{domain}</span> added to the allow list for {selected.size} polic{selected.size === 1 ? 'y' : 'ies'}.
+            </p>
+            <div className="flex justify-end">
+              <button className="btn-primary" onClick={onClose}>Close</button>
+            </div>
+          </>
+        ) : (
+          <>
+            <h2 className="font-semibold text-slate-900 mb-1">Allow this domain</h2>
+            <p className="text-sm text-slate-500 mb-4 font-mono break-all">{domain}</p>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Apply to</p>
+            {isLoading ? (
+              <p className="text-sm text-slate-400">Loading policies…</p>
+            ) : (
+              <div className="max-h-60 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100 mb-4">
+                {policies.map(p => (
+                  <label key={p.id} className="flex items-center gap-2 px-3 py-2 text-sm cursor-pointer hover:bg-slate-50">
+                    <input type="checkbox" className="w-4 h-4 rounded" checked={selected.has(p.id)} onChange={() => toggle(p.id)} />
+                    <span className="flex-1 truncate">{p.name}</span>
+                    {p.is_default && <span className="text-xs bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">default</span>}
+                    {p.is_network_policy && <span className="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">network floor</span>}
+                  </label>
+                ))}
+                {policies.length === 0 && (
+                  <p className="text-sm text-slate-400 px-3 py-4 text-center">No policies found</p>
+                )}
+              </div>
+            )}
+            {apply.isError && (
+              <p className="text-sm text-red-600 mb-3">{apply.error.message}</p>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button className="btn-secondary" onClick={onClose}>Cancel</button>
+              <button
+                className="btn-primary"
+                onClick={() => apply.mutate()}
+                disabled={selected.size === 0 || apply.isPending}
+              >
+                {apply.isPending ? 'Adding…' : `Add to ${selected.size || ''} polic${selected.size === 1 ? 'y' : 'ies'}`}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
 
 function ResolveRow({ domain }) {
   const { data, isLoading, error } = useQuery({
@@ -58,6 +134,7 @@ export default function DnsLogs() {
   });
   const [page, setPage] = useState(1);
   const [lookupKey, setLookupKey] = useState(null);
+  const [allowDomain, setAllowDomain] = useState(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['dns-logs', filters, page],
@@ -183,7 +260,18 @@ export default function DnsLogs() {
                   </td>
                   <td className="px-4 py-2.5 text-xs text-slate-400">{row.query_type || 'A'}</td>
                   <td className="px-4 py-2.5">
-                    <span className={ACTION_COLORS[row.action] || 'badge-slate'}>{row.action}</span>
+                    <div className="flex items-center gap-2">
+                      <span className={ACTION_COLORS[row.action] || 'badge-slate'}>{row.action}</span>
+                      {row.action === 'blocked' && (
+                        <button
+                          className="text-xs text-primary-600 hover:underline whitespace-nowrap"
+                          onClick={() => setAllowDomain(row.domain)}
+                          title="Add this domain to the allow list on one or more policies"
+                        >
+                          + Allow
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
                 {lookupKey === key && <ResolveRow domain={row.domain} />}
@@ -200,6 +288,10 @@ export default function DnsLogs() {
           </tbody>
         </table>
       </div>
+
+      {allowDomain && (
+        <AllowDomainModal domain={allowDomain} onClose={() => setAllowDomain(null)} />
+      )}
     </div>
   );
 }
