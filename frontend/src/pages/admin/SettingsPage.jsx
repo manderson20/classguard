@@ -310,8 +310,7 @@ export default function SettingsPage() {
   useEffect(() => {
     if (dnsSettings && Object.keys(dnsSettings).length) {
       setDns({
-        upstream_primary:   dnsSettings.upstream_primary   || '8.8.8.8',
-        upstream_secondary: dnsSettings.upstream_secondary || '8.8.4.4',
+        upstream_ipv4:      dnsSettings.upstream_ipv4      || '8.8.8.8, 8.8.4.4',
         upstream_ipv6:      dnsSettings.upstream_ipv6      || '',
         block_page_ip:      dnsSettings.block_page_ip      || '',
         block_page_ipv6:    dnsSettings.block_page_ipv6    || '',
@@ -362,24 +361,18 @@ export default function SettingsPage() {
           <div className="text-slate-400 text-sm">Loading…</div>
         ) : (
           <>
-            <Field label="Primary Upstream DNS" hint="Default: 8.8.8.8 (Google)">
+            <Field label="Upstream DNS Servers (IPv4)" hint="Comma-separated, tried in order. Default: 8.8.8.8, 8.8.4.4 (Google) — add as many as you want, e.g. for several internal or regional resolvers.">
               <input
                 className="input font-mono text-sm"
-                value={dns.upstream_primary || ''}
-                onChange={e => setDns(d => ({ ...d, upstream_primary: e.target.value }))}
+                placeholder="8.8.8.8, 8.8.4.4"
+                value={dns.upstream_ipv4 || ''}
+                onChange={e => setDns(d => ({ ...d, upstream_ipv4: e.target.value }))}
               />
             </Field>
-            <Field label="Secondary Upstream DNS" hint="Fallback resolver">
+            <Field label="Upstream DNS Servers (IPv6, optional)" hint="Comma-separated, tried in order before falling back to the IPv4 servers above. Leave blank unless you specifically want AAAA queries sent to different resolver(s) — most public resolvers (Google, Cloudflare, Quad9, etc.) already answer AAAA fine over plain IPv4 transport, a resolver's address is just how you reach it, not which record types it can answer.">
               <input
                 className="input font-mono text-sm"
-                value={dns.upstream_secondary || ''}
-                onChange={e => setDns(d => ({ ...d, upstream_secondary: e.target.value }))}
-              />
-            </Field>
-            <Field label="Upstream IPv6 (optional)" hint="Leave blank unless you specifically want AAAA queries sent to a different resolver than the ones above. Most public resolvers (Google, Cloudflare, Quad9, etc.) already answer AAAA fine over plain IPv4 transport — a resolver's address is just how you reach it, not which record types it can answer — but if yours doesn't, set one here that does.">
-              <input
-                className="input font-mono text-sm"
-                placeholder="e.g. 2606:4700:4700::1111"
+                placeholder="2606:4700:4700::1111, 2001:4860:4860::8888"
                 value={dns.upstream_ipv6 || ''}
                 onChange={e => setDns(d => ({ ...d, upstream_ipv6: e.target.value }))}
               />

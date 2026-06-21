@@ -17,55 +17,61 @@ const TYPE_NAMES = {
 
 // Clients are rebuilt only when the resolved settings actually change (the
 // settings themselves are already Redis-cached for 60s by
-// policyCache.getDnsEngineSettings() — this just avoids reconstructing a
-// dns2 client on every single query when nothing changed).
-let cachedKey = null;
-let primaryClient   = null;
-let secondaryClient = null;
-let ipv6Client       = null;
+// policyCache.getDnsEngineSettings() — this just avoids reconstructing dns2
+// clients on every single query when nothing changed).
+let cachedKey   = null;
+let ipv4Clients = [];
+let ipv6Clients = [];
 
 async function getClients() {
   const s = await policyCache.getDnsEngineSettings();
-  const key = `${s.upstreamPrimary}|${s.upstreamSecondary}|${s.upstreamIpv6}`;
+  const key = `${s.upstreamIpv4.join(',')}|${s.upstreamIpv6.join(',')}`;
   if (key !== cachedKey) {
-    primaryClient   = new DNS({ dns: s.upstreamPrimary,   retries: 1, timeout: 4000 });
-    secondaryClient = new DNS({ dns: s.upstreamSecondary, retries: 1, timeout: 4000 });
-    ipv6Client      = s.upstreamIpv6 ? new DNS({ dns: s.upstreamIpv6, retries: 1, timeout: 4000 }) : null;
+    ipv4Clients = s.upstreamIpv4.map(addr => new DNS({ dns: addr, retries: 1, timeout: 4000 }));
+    ipv6Clients = s.upstreamIpv6.map(addr => new DNS({ dns: addr, retries: 1, timeout: 4000 }));
     cachedKey = key;
   }
-  return { primaryClient, secondaryClient, ipv6Client };
+  return { ipv4Clients, ipv6Clients };
 }
 
 /**
- * Forward a query to the upstream resolver.
+ * Forward a query to the upstream resolver(s).
  *
- * upstreamIpv6 is an optional override, not a requirement — AAAA queries
- * already resolve correctly via the regular primary/secondary resolvers
- * (a resolver's own address is just the transport you reach it over,
- * independent of which record type you ask it for; 8.8.8.8 answers AAAA
- * questions over plain IPv4 just fine). This only matters if an admin
- * specifically wants AAAA queries routed to a *different* resolver.
+ * upstreamIpv6 is an optional list, not a requirement — AAAA queries
+ * already resolve correctly via the regular IPv4 resolvers for most
+ * providers (a resolver's own address is just the transport you reach it
+ * over, independent of which record type you ask it for; 8.8.8.8 answers
+ * AAAA questions over plain IPv4 just fine). This only matters if an admin
+ * specifically wants AAAA queries routed to different resolver(s).
  *
- * Falls back to primary -> secondary if the chosen client times out/errors.
- * Returns a dns2 Packet (with .answers, .authorities, .additionals).
+ * AAAA queries try the IPv6 list first (in order), then always fall
+ * through to the IPv4 list (in order) — covers both "no IPv6 list
+ * configured" and "every IPv6 resolver failed."
+ * Returns a dns2 Packet (.answers/.authorities/.additionals).
  */
 async function resolve(name, typeNum) {
   const typeName = TYPE_NAMES[typeNum] || 'A';
-  const { primaryClient, secondaryClient, ipv6Client } = await getClients();
+  const { ipv4Clients, ipv6Clients } = await getClients();
 
-  if (typeName === 'AAAA' && ipv6Client) {
-    try {
-      return await ipv6Client.resolve(name, typeName);
-    } catch {
-      // fall through to the regular primary/secondary below
+  if (typeName === 'AAAA') {
+    for (const client of ipv6Clients) {
+      try {
+        return await client.resolve(name, typeName);
+      } catch {
+        // try the next configured resolver
+      }
     }
   }
 
-  try {
-    return await primaryClient.resolve(name, typeName);
-  } catch {
-    return await secondaryClient.resolve(name, typeName);
+  let lastErr;
+  for (const client of ipv4Clients) {
+    try {
+      return await client.resolve(name, typeName);
+    } catch (err) {
+      lastErr = err;
+    }
   }
+  throw lastErr || new Error('No upstream resolvers configured');
 }
 
 module.exports = { resolve };
