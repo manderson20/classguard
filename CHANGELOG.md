@@ -18,6 +18,62 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.3.0] - 2026-06-21
+
+### Added
+
+- **Persisted browser history** — tab-navigation events captured by the
+  Chrome extension were only ever shown live on the teacher dashboard, with
+  no durable record once the capped Redis stream filled. Now drained to a
+  new `browser_history` table (same hypertable/compression/retention shape
+  as `dns_logs`) every 5 seconds, with a new admin **Browser History** page
+  (filter by student/URL/action/date, teacher-roster-scoped) and a deep
+  link from each student's User Detail page next to DNS Logs.
+- **Google profile photos** surfaced in the UI — `users.photo_url` was
+  already being ingested from Workspace/Classroom sync and SSO login, but
+  only ever rendered on Staff Analytics. Now shown (with a letter-circle
+  fallback on load error, via a new shared `Avatar` component) on the Users
+  list, User Detail, and the live-lesson student grid.
+- **HA cluster generalized from 2 nodes to N nodes** — `nodes` now carries
+  an explicit `failover_priority` per node instead of a hardcoded
+  primary/secondary VRRP priority pair, so any number of servers can
+  participate in the same priority-ordered election. Every node generates
+  as VRRP `state BACKUP` with `nopreempt` (pure protocol-driven election,
+  no hardcoded "MASTER" template); a recovered higher-priority node stays
+  demoted until explicitly promoted back. The HA and RADIUS pages now show
+  an editable, ranked failover order across every node instead of two fixed
+  "primary priority"/"secondary priority" fields.
+- **NTP server (chrony)** — ClassGuard's existing NTP page only ever
+  monitored external time sources for dashboard health; it never served
+  time to anything. Adds a real chrony-based server (every node runs it
+  independently, no election needed — redundancy comes from DHCP handing
+  out every node's IP), configurable upstream pool and allowed client
+  subnets, with a generated config/install-script bundle per node.
+- **Filter Simulator can test a specific policy directly** — previously it
+  could only resolve the effective policy via the same student/network
+  lookup chain real traffic goes through, with no way to check a policy's
+  own rules in isolation (e.g. while still drafting one before assigning it
+  to anyone). New mode toggle skips resolution and evaluates the chosen
+  policy's domain/category/blocklist rules directly.
+
+### Fixed
+
+- DNS engine's TCP path logged the stringified `net.Socket` accessor
+  function as a query's `source_ip` instead of the real client address
+  (dns2 hands the TCP handler a raw socket, not a `{address, port}` dict
+  like UDP gets) — and because that one malformed value poisons the whole
+  batch insert, a single TCP-retried query could silently wedge the entire
+  `dns_logs` drain for every device, not just the TCP one, until someone
+  noticed the repeating error log.
+- Kea DHCP had no `allocator` set, silently running Kea's unsafe iterative
+  default against a Postgres lease table shared by multiple simultaneous
+  HA-node instances with no `libdhcp_ha` hook — per ISC's own shared-lease-
+  DB guidance this causes the same address to be double-offered to two
+  clients. Set to `random`, which Kea 2.6.2+ (running 2.6.5) supports
+  safely for this exact multi-instance setup.
+
+---
+
 ## [0.2.0] - 2026-06-21
 
 ### Added
