@@ -9,6 +9,11 @@ const ACTION_COLORS = {
   unknown: 'text-slate-400',
 };
 
+const HISTORY_ACTION_COLORS = {
+  allowed: 'text-green-600',
+  blocked: 'text-red-600',
+};
+
 export default function UserDetail() {
   const { userId } = useParams();
 
@@ -27,6 +32,14 @@ export default function UserDetail() {
     queryFn:  () => {
       const from = new Date(Date.now() - 86400_000).toISOString();
       return api.get(`/dns/logs?student_id=${userId}&from=${from}&limit=50`).then(r => r.results || []);
+    },
+  });
+
+  const { data: history = [] } = useQuery({
+    queryKey: ['user-browser-history', userId],
+    queryFn:  () => {
+      const from = new Date(Date.now() - 86400_000).toISOString();
+      return api.get(`/extension/browser-history?student_id=${userId}&from=${from}&limit=50`).then(r => r.results || []);
     },
   });
 
@@ -49,10 +62,10 @@ export default function UserDetail() {
         {/* Profile */}
         <div className="card p-5 space-y-3">
           <div className="flex items-center gap-3">
-            <Avatar photoUrl={user.photo_url} name={user.full_name} email={user.email} className="w-12 h-12 text-lg" />
-            <div>
-              <div className="font-semibold text-slate-900">{user.full_name || '—'}</div>
-              <div className="text-sm text-slate-400">{user.email}</div>
+            <Avatar photoUrl={user.photo_url} name={user.full_name} email={user.email} className="w-12 h-12 text-lg flex-shrink-0" />
+            <div className="min-w-0 flex-1">
+              <div className="font-semibold text-slate-900 truncate" title={user.full_name}>{user.full_name || '—'}</div>
+              <div className="text-sm text-slate-400 truncate" title={user.email}>{user.email}</div>
             </div>
           </div>
 
@@ -108,49 +121,87 @@ export default function UserDetail() {
         </div>
       </div>
 
-      {/* Recent DNS activity */}
-      <div className="card p-5 mt-6">
-        <div className="flex items-center justify-between mb-4">
-          <h2 className="text-sm font-semibold text-slate-700">DNS Activity (last 24h)</h2>
-          <div className="flex items-center gap-3">
-            <Link to={`/admin/dns/logs?student_id=${userId}`} className="text-xs text-primary-600 hover:underline">
+      {/* Recent activity — DNS-level and extension-level side by side, same window */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        {/* DNS activity */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-700">DNS Activity (last 24h)</h2>
+            <Link to={`/admin/dns/logs?student_id=${userId}`} className="text-xs text-primary-600 hover:underline whitespace-nowrap">
               Full logs →
             </Link>
-            <Link to={`/admin/browser-history?student_id=${userId}`} className="text-xs text-primary-600 hover:underline">
-              Browser history →
+          </div>
+          {logs.length === 0 ? (
+            <div className="text-slate-400 text-sm py-4 text-center">No DNS activity in the last 24h</div>
+          ) : (
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="pb-2 text-slate-500 font-semibold">Time</th>
+                    <th className="pb-2 text-slate-500 font-semibold">Domain</th>
+                    <th className="pb-2 text-slate-500 font-semibold">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {logs.slice(0, 50).map((row, i) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="py-1.5 pr-3 font-mono text-slate-400 whitespace-nowrap">
+                        {new Date(row.queried_at).toLocaleTimeString()}
+                      </td>
+                      <td className="py-1.5 pr-3 font-mono text-slate-700 truncate max-w-[140px]" title={row.domain}>
+                        {row.domain}
+                      </td>
+                      <td className={`py-1.5 font-semibold whitespace-nowrap ${ACTION_COLORS[row.action] || 'text-slate-400'}`}>
+                        {row.action}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+
+        {/* Extension activity (browser history) */}
+        <div className="card p-5">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-700">Extension Activity (last 24h)</h2>
+            <Link to={`/admin/browser-history?student_id=${userId}`} className="text-xs text-primary-600 hover:underline whitespace-nowrap">
+              Full history →
             </Link>
           </div>
-        </div>
-        {logs.length === 0 ? (
-          <div className="text-slate-400 text-sm py-4 text-center">No DNS activity in the last 24h</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-100">
-                  <th className="pb-2 text-slate-500 font-semibold">Time</th>
-                  <th className="pb-2 text-slate-500 font-semibold">Domain</th>
-                  <th className="pb-2 text-slate-500 font-semibold">Type</th>
-                  <th className="pb-2 text-slate-500 font-semibold">Action</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-50">
-                {logs.slice(0, 50).map((row, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="py-1.5 pr-4 font-mono text-slate-400 whitespace-nowrap">
-                      {new Date(row.queried_at).toLocaleTimeString()}
-                    </td>
-                    <td className="py-1.5 pr-4 font-mono text-slate-700">{row.domain}</td>
-                    <td className="py-1.5 pr-4 text-slate-400">{row.query_type || 'A'}</td>
-                    <td className={`py-1.5 font-semibold ${ACTION_COLORS[row.action] || 'text-slate-400'}`}>
-                      {row.action}
-                    </td>
+          {history.length === 0 ? (
+            <div className="text-slate-400 text-sm py-4 text-center">No extension activity in the last 24h</div>
+          ) : (
+            <div className="overflow-x-auto max-h-96 overflow-y-auto">
+              <table className="w-full text-left text-xs">
+                <thead>
+                  <tr className="border-b border-slate-100">
+                    <th className="pb-2 text-slate-500 font-semibold">Time</th>
+                    <th className="pb-2 text-slate-500 font-semibold">Page</th>
+                    <th className="pb-2 text-slate-500 font-semibold">Action</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {history.slice(0, 50).map((row, i) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="py-1.5 pr-3 font-mono text-slate-400 whitespace-nowrap">
+                        {new Date(row.visited_at).toLocaleTimeString()}
+                      </td>
+                      <td className="py-1.5 pr-3 text-slate-700 truncate max-w-[140px]" title={row.url}>
+                        {row.title || row.url}
+                      </td>
+                      <td className={`py-1.5 font-semibold whitespace-nowrap ${HISTORY_ACTION_COLORS[row.action] || 'text-slate-400'}`}>
+                        {row.action || '—'}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
