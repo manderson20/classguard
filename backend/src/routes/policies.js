@@ -46,11 +46,15 @@ async function bustPolicyCache(policyId) {
 
 // ---------------------------------------------------------------------------
 // GET /api/v1/policies/ou-list
-// Returns distinct OUs from synced users + OUs that already have assignments
+// Returns the full OU tree synced from Google (settings.google_ous, written
+// by syncOrgUnits — every OU in the account, even ones with zero users
+// currently synced into our DB) plus, as a fallback for installs that have
+// never run an OU sync, whatever's visible from synced users/assignments.
 // (must come before /:id)
 // ---------------------------------------------------------------------------
 router.get('/ou-list', async (req, res) => {
-  const [fromUsers, fromAssignments] = await Promise.all([
+  const [fromSettings, fromUsers, fromAssignments] = await Promise.all([
+    query(`SELECT value FROM settings WHERE key = 'google_ous'`),
     query(`SELECT DISTINCT google_ou AS path FROM users
            WHERE google_ou IS NOT NULL AND google_ou <> ''
            ORDER BY google_ou`),
@@ -58,7 +62,12 @@ router.get('/ou-list', async (req, res) => {
            WHERE target_type = 'ou' AND target_ou IS NOT NULL
            ORDER BY target_ou`),
   ]);
+  let fromTree = [];
+  try {
+    fromTree = (JSON.parse(fromSettings.rows[0]?.value || '[]')).map(ou => ou.path).filter(Boolean);
+  } catch { /* google_ous not set or not valid JSON yet — fall back to the other two sources */ }
   const paths = [...new Set([
+    ...fromTree,
     ...fromUsers.rows.map(r => r.path),
     ...fromAssignments.rows.map(r => r.path),
   ])].sort();

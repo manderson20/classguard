@@ -14,6 +14,12 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ## [Unreleased]
 
+> No changes staged yet.
+
+---
+
+## [0.2.0] - 2026-06-21
+
 ### Added
 
 - **Integrations → Google Workspace** restructured into sub-tabs (Device &
@@ -33,6 +39,26 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 - **Devices table pagination** — page-size selector and Prev/Next controls
   plus a search box on Integrations → All Devices, instead of a hard 50-row
   cap with no way to see the rest.
+- **Automatic staff/student role detection from Google OU**, configurable
+  per-district under Integrations → Google Workspace → Role Mapping by OU
+  (longest-matching-OU-prefix wins, e.g. one `/Employees` rule covers every
+  staff sub-OU). New users from directory sync or first Google sign-in get
+  the right role automatically instead of everyone defaulting to `student`
+  — which previously locked every staff member out of the admin app on
+  Google SSO login. A role changed manually on the Users page is never
+  overwritten by this. Includes a preview table of OUs not yet covered by a
+  rule (with live user counts) and an on-demand re-apply action so editing
+  the rules doesn't require waiting for the next scheduled sync.
+- **SSO login now supports multiple Workspace domains** (comma-separated) —
+  needed wherever staff and students are issued accounts on different
+  domains/subdomains of the same Workspace tenant.
+- **Unified device view** — Integrations → All Devices now shows one row per
+  physical device instead of a separate row per integration, merging
+  Snipe-IT/Mosyle/Google Chromebook records by serial number and overlaying
+  live "on network" status (IP, AP, SSID) from the UniFi controller by MAC
+  match. A "Sources" column shows which integrations have a record for each
+  device; asset/ownership fields prefer Snipe-IT, technical fields (OS,
+  name, model) prefer the MDM that reported them.
 
 ### Fixed
 
@@ -57,6 +83,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
   SSO login vs. the service account needed for directory sync) and shared
   error state between the directory sync and device sync, making
   "configured"/error display misleading for both Google and Mosyle.
+- **Google directory sync only ever pulled one Workspace domain** — most
+  real student accounts live on a different domain/subdomain than staff, so
+  the vast majority of the student body (student count went from 42 to
+  2,958 once fixed) was silently never synced at all. Now syncs the whole
+  Workspace account (matching how org-unit sync already worked), not just
+  one configured domain.
+- `/policies/ou-list` (used by both the policy assignment OU picker and the
+  new role-mapping UI) only ever showed OUs that already had a synced user
+  or existing assignment — most of the real OU tree was invisible. Now
+  returns the full OU tree from the last directory sync.
 
 ---
 
