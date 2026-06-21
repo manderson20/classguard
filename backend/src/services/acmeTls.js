@@ -73,6 +73,15 @@ function writeCertToDisk(certPem, keyPem) {
   fs.mkdirSync(CERT_DIR, { recursive: true });
   fs.writeFileSync(path.join(CERT_DIR, 'fullchain.pem'), certPem, { mode: 0o644 });
   fs.writeFileSync(path.join(CERT_DIR, 'privkey.pem'), keyPem, { mode: 0o600 });
+  // Marker only this function ever writes — the frontend's self-signed
+  // placeholder (docker-entrypoint-tls.sh) is generated independently and
+  // never reaches this code path, so this file's mere existence means a
+  // real Let's Encrypt cert is on disk. nginx checks for it per-request
+  // (`if (-f ...)`, no reload needed) to decide whether to redirect plain
+  // HTTP to HTTPS — can't redirect before a real cert exists, or admins
+  // reaching the server for the first time over HTTP would hit an SSL
+  // error instead of the self-signed-but-working placeholder.
+  fs.writeFileSync(path.join(CERT_DIR, '.le-active'), '');
 }
 
 // ---------------------------------------------------------------------------
