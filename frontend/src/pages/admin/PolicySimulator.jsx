@@ -60,7 +60,9 @@ function TraceStep({ step, index }) {
 }
 
 export default function PolicySimulator() {
+  const [mode,       setMode]       = useState('resolve'); // 'resolve' | 'policy'
   const [studentId,  setStudentId]  = useState('');
+  const [policyId,   setPolicyId]   = useState('');
   const [domain,     setDomain]     = useState('');
   const [sourceIp,   setSourceIp]   = useState('');
   const [result,     setResult]     = useState(null);
@@ -73,15 +75,25 @@ export default function PolicySimulator() {
     select:   d => (d.users || d || []).filter(u => u.role === 'student'),
   });
 
+  const { data: policies = [] } = useQuery({
+    queryKey: ['policies-list'],
+    queryFn:  () => api.get('/policies'),
+  });
+
   const run = async () => {
     if (!domain.trim()) { setError('Domain is required'); return; }
+    if (mode === 'policy' && !policyId) { setError('Choose a policy to test against'); return; }
     setError('');
     setLoading(true);
     setResult(null);
     try {
       const body = { domain: domain.trim().toLowerCase() };
-      if (studentId) body.student_id = studentId;
-      if (sourceIp)  body.source_ip  = sourceIp.trim();
+      if (mode === 'policy') {
+        body.policy_id = policyId;
+      } else {
+        if (studentId) body.student_id = studentId;
+        if (sourceIp)  body.source_ip  = sourceIp.trim();
+      }
       const data = await api.post('/policies/simulate', body);
       setResult(data);
     } catch (e) {
@@ -108,36 +120,86 @@ export default function PolicySimulator() {
           </p>
         </div>
 
+        {/* Mode toggle */}
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setMode('resolve')}
+            className={`flex-1 text-sm font-medium rounded-lg px-3 py-2 border transition-colors ${
+              mode === 'resolve'
+                ? 'bg-primary-50 border-primary-300 text-primary-700'
+                : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+            }`}
+          >
+            Resolve automatically
+            <span className="block text-xs font-normal opacity-75 mt-0.5">By student / source IP — what real traffic would get</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('policy')}
+            className={`flex-1 text-sm font-medium rounded-lg px-3 py-2 border transition-colors ${
+              mode === 'policy'
+                ? 'bg-primary-50 border-primary-300 text-primary-700'
+                : 'bg-white border-slate-200 text-slate-500 hover:bg-slate-50'
+            }`}
+          >
+            Test a specific policy
+            <span className="block text-xs font-normal opacity-75 mt-0.5">Skip resolution — check one policy's rules directly</span>
+          </button>
+        </div>
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
-              Student <span className="text-slate-400 font-normal normal-case">(optional)</span>
-            </label>
-            <select
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full bg-white"
-              value={studentId}
-              onChange={e => setStudentId(e.target.value)}
-            >
-              <option value="">— No student (district default policy) —</option>
-              {users.map(u => (
-                <option key={u.id} value={u.id}>
-                  {u.display_name || u.email} {u.ou_path ? `(${u.ou_path.split('/').pop()})` : ''}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
-              Source IP <span className="text-slate-400 font-normal normal-case">(optional)</span>
-            </label>
-            <input
-              className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full"
-              placeholder="192.168.1.50"
-              value={sourceIp}
-              onChange={e => setSourceIp(e.target.value)}
-            />
-            <p className="text-xs text-slate-400 mt-0.5">Used for subnet-based policy lookup</p>
-          </div>
+          {mode === 'policy' ? (
+            <div className="sm:col-span-2">
+              <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
+                Policy <span className="text-red-500">*</span>
+              </label>
+              <select
+                className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full bg-white"
+                value={policyId}
+                onChange={e => setPolicyId(e.target.value)}
+              >
+                <option value="">— Choose a policy —</option>
+                {policies.map(p => (
+                  <option key={p.id} value={p.id}>
+                    {p.name}{p.is_default ? ' (default)' : ''}{p.is_network_policy ? ' (network floor)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
+                  Student <span className="text-slate-400 font-normal normal-case">(optional)</span>
+                </label>
+                <select
+                  className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full bg-white"
+                  value={studentId}
+                  onChange={e => setStudentId(e.target.value)}
+                >
+                  <option value="">— No student (district default policy) —</option>
+                  {users.map(u => (
+                    <option key={u.id} value={u.id}>
+                      {u.display_name || u.email} {u.ou_path ? `(${u.ou_path.split('/').pop()})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
+                  Source IP <span className="text-slate-400 font-normal normal-case">(optional)</span>
+                </label>
+                <input
+                  className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full"
+                  placeholder="192.168.1.50"
+                  value={sourceIp}
+                  onChange={e => setSourceIp(e.target.value)}
+                />
+                <p className="text-xs text-slate-400 mt-0.5">Used for subnet-based policy lookup</p>
+              </div>
+            </>
+          )}
           <div className="sm:col-span-2">
             <label className="block text-xs font-semibold text-slate-600 mb-1 uppercase tracking-wide">
               Domain to test <span className="text-red-500">*</span>
