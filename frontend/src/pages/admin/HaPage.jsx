@@ -107,10 +107,17 @@ function SoftwareUpdateSection() {
   const qc = useQueryClient();
   const [scheduledAt, setScheduledAt] = useState('');
   const [result, setResult] = useState(null);
+  const [githubToken, setGithubToken] = useState('');
 
-  const { data: check, isLoading: checking, refetch } = useQuery({
+  const { data: check, error: checkError, isLoading: checking, refetch } = useQuery({
     queryKey: ['ha-check-update'],
     queryFn:  () => api.get('/ha/check-update'),
+    retry: false,
+  });
+
+  const saveToken = useMutation({
+    mutationFn: () => api.put('/settings', { github_update_token: githubToken.trim() }),
+    onSuccess: () => { setGithubToken(''); refetch(); },
   });
 
   const { data: schedule = [] } = useQuery({
@@ -146,6 +153,24 @@ function SoftwareUpdateSection() {
           {checking ? 'Checking…' : 'Check for updates'}
         </button>
       </div>
+
+      {checkError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 mb-3">
+          <p className="text-sm text-red-700">{checkError.message}</p>
+          {checkError.needs_token && (
+            <div className="flex items-end gap-2 mt-3">
+              <Field label="GitHub Token" hint="needs read access to manderson20/classguard">
+                <input type="password" className={INPUT} placeholder="ghp_… or github_pat_…"
+                  value={githubToken} onChange={e => setGithubToken(e.target.value)} />
+              </Field>
+              <button onClick={() => saveToken.mutate()} disabled={!githubToken.trim() || saveToken.isPending}
+                className="btn-primary text-sm">
+                {saveToken.isPending ? 'Saving…' : 'Save & Recheck'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {check && (
         <div className="text-sm mb-3">

@@ -51,6 +51,11 @@ const ALLOWED_KEYS = new Set([
   'ldap_google_enabled', 'ldap_client_cert_path', 'ldap_client_key_path',
   'ldap_base_dn', 'ldap_google_domain',
   'radius_default_nas_secret',
+  // HA Cluster > Software Updates — only needed because the classguard repo
+  // is private; GitHub's Contents API 404s on an unauthenticated request to
+  // a private repo (indistinguishable from "doesn't exist"), which silently
+  // broke the whole check-for-update -> schedule-update flow.
+  'github_update_token',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object
