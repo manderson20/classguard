@@ -312,7 +312,9 @@ export default function SettingsPage() {
       setDns({
         upstream_primary:   dnsSettings.upstream_primary   || '8.8.8.8',
         upstream_secondary: dnsSettings.upstream_secondary || '8.8.4.4',
+        upstream_ipv6:      dnsSettings.upstream_ipv6      || '',
         block_page_ip:      dnsSettings.block_page_ip      || '',
+        block_page_ipv6:    dnsSettings.block_page_ipv6    || '',
         cache_ttl:          dnsSettings.cache_ttl          || '300',
         dhcp_auto_register:         dnsSettings.dhcp_auto_register         || 'false',
         dhcp_auto_register_zone_id: dnsSettings.dhcp_auto_register_zone_id || '',
@@ -374,12 +376,28 @@ export default function SettingsPage() {
                 onChange={e => setDns(d => ({ ...d, upstream_secondary: e.target.value }))}
               />
             </Field>
+            <Field label="Upstream IPv6 (optional)" hint="Leave blank unless you want AAAA queries sent to a different resolver — the servers above already answer AAAA questions fine over IPv4 transport, a resolver's address is just how you reach it, not which record types it can answer.">
+              <input
+                className="input font-mono text-sm"
+                placeholder="e.g. 2606:4700:4700::1111"
+                value={dns.upstream_ipv6 || ''}
+                onChange={e => setDns(d => ({ ...d, upstream_ipv6: e.target.value }))}
+              />
+            </Field>
             <Field label="Block Page IP" hint="IP to redirect blocked A queries to">
               <input
                 className="input font-mono text-sm"
                 placeholder="e.g. 192.168.1.100"
                 value={dns.block_page_ip || ''}
                 onChange={e => setDns(d => ({ ...d, block_page_ip: e.target.value }))}
+              />
+            </Field>
+            <Field label="Block Page IPv6 (optional)" hint="IP to redirect blocked AAAA queries to — leave blank to return NXDOMAIN for blocked AAAA instead (clients fall back to the A block page either way)">
+              <input
+                className="input font-mono text-sm"
+                placeholder="e.g. fd00::1"
+                value={dns.block_page_ipv6 || ''}
+                onChange={e => setDns(d => ({ ...d, block_page_ipv6: e.target.value }))}
               />
             </Field>
             <Field label="DNS Cache TTL" hint="Seconds to cache upstream responses">

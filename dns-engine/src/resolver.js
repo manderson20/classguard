@@ -1,6 +1,5 @@
 const DNS            = require('dns2');
 const { Packet }     = DNS;
-const config         = require('./config');
 const blocklist      = require('./blocklistLoader');
 const categoryLookup = require('./categoryLookup');
 const localRecords   = require('./localRecords');
@@ -203,11 +202,17 @@ async function forwardToSpecific(domain, typeNum, serverIp) {
   }
 }
 
-function buildResponse(request, result) {
+async function buildResponse(request, result) {
   const response = Packet.createResponseFromRequest(request);
   const [question] = request.questions;
 
   if (result.action === 'blocked') {
+    // block_page_ip/block_page_ipv6 are DB-backed (Settings -> DNS &
+    // Retention), live-read here the same way the rest of policyCache.js
+    // works — config.js's env values are just the fallback for a fresh
+    // install where nobody's touched that page yet.
+    const settings = await policyCache.getDnsEngineSettings();
+
     // Match the sinkhole record type to the question type — previously this
     // always pushed an A record regardless of whether the question was A or
     // AAAA, which for an AAAA query meant a type-mismatched answer (not a
@@ -216,24 +221,24 @@ function buildResponse(request, result) {
     // sinkholed, A record). Same safe outcome either way, but worth doing
     // properly now that there's an actual AAAA sinkhole to push.
     if (question?.type === Packet.TYPE.AAAA) {
-      if (config.dns.blockPageIpv6) {
+      if (settings.blockPageIpv6) {
         response.answers.push({
           name:    question.name,
           type:    Packet.TYPE.AAAA,
           class:   Packet.CLASS.IN,
           ttl:     5,
-          address: config.dns.blockPageIpv6,
+          address: settings.blockPageIpv6,
         });
       } else {
         response.header.rcode = Packet.RCODE.NXDOMAIN;
       }
-    } else if (question && config.dns.blockPageIp) {
+    } else if (question && settings.blockPageIp) {
       response.answers.push({
         name:    question.name,
         type:    Packet.TYPE.A,
         class:   Packet.CLASS.IN,
         ttl:     5,
-        address: config.dns.blockPageIp,
+        address: settings.blockPageIp,
       });
     } else {
       response.header.rcode = Packet.RCODE.NXDOMAIN;

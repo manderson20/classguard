@@ -329,7 +329,7 @@ router.get('/settings', authenticate, requireMinRole('admin'), async (req, res) 
 });
 
 router.put('/settings', authenticate, requireMinRole('admin'), async (req, res) => {
-  const allowed = ['upstream_primary','upstream_secondary','block_page_ip','cache_ttl',
+  const allowed = ['upstream_primary','upstream_secondary','upstream_ipv6','block_page_ip','block_page_ipv6','cache_ttl',
                    'dhcp_auto_register','dhcp_auto_register_zone_id'];
   const entries = Object.entries(req.body).filter(([k]) => allowed.includes(k));
   if (entries.length === 0) return res.status(400).json({ error: 'No valid settings provided' });

@@ -1,5 +1,5 @@
-const redis  = require('./redis');
-const config = require('./config');
+const redis       = require('./redis');
+const policyCache = require('./policyCache');
 
 const PREFIX = 'dns:cache:';
 
@@ -23,13 +23,15 @@ async function get(domain, type) {
 /**
  * Caches the answers array.
  * TTL is the minimum record TTL from the answers (floored to 1s),
- * capped to config.cache.ttl.
+ * capped to the cache_ttl setting (Settings -> DNS & Retention; live-read
+ * via policyCache, same as the upstream/block-page settings).
  */
 async function set(domain, type, answers) {
   if (!answers || answers.length === 0) return;
 
-  const minTtl = answers.reduce((min, a) => Math.min(min, a.ttl ?? config.cache.ttl), config.cache.ttl);
-  const ttl    = Math.max(1, Math.min(minTtl, config.cache.ttl));
+  const { cacheTtl } = await policyCache.getDnsEngineSettings();
+  const minTtl = answers.reduce((min, a) => Math.min(min, a.ttl ?? cacheTtl), cacheTtl);
+  const ttl    = Math.max(1, Math.min(minTtl, cacheTtl));
 
   await redis.set(cacheKey(domain, type), JSON.stringify(answers), 'EX', ttl);
 }
