@@ -330,6 +330,21 @@ async function completeManualChallenge() {
 // ---------------------------------------------------------------------------
 async function renewIfNeeded() {
   const cfg = await getConfig();
+
+  // Backfill the .le-active marker (see writeCertToDisk) for certs that
+  // were already issued before that marker existed, or if it was somehow
+  // lost — reflects "a real cert is on disk right now" regardless of
+  // whether auto-renewal happens to be enabled at this exact moment, since
+  // disabling renewal doesn't retroactively invalidate an already-issued
+  // cert still sitting there. Runs on this same daily cron tick, cheap
+  // fs check, self-heals without waiting for the next actual renewal
+  // (which could be months away).
+  const markerPath = path.join(CERT_DIR, '.le-active');
+  if (cfg.cert_pem && !fs.existsSync(markerPath)) {
+    fs.mkdirSync(CERT_DIR, { recursive: true });
+    fs.writeFileSync(markerPath, '');
+  }
+
   if (!cfg.enabled || !cfg.cert_expires_at) return { renewed: false };
 
   const daysLeft = (new Date(cfg.cert_expires_at) - Date.now()) / 86_400_000;
