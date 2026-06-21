@@ -188,13 +188,22 @@ async function getDnsEngineSettings() {
     // fall through to config.js defaults below
   }
 
+  // upstream_ipv4/upstream_ipv6 are comma-separated lists — as many resolvers
+  // as an admin wants to configure for each, tried in order. Nobody's
+  // required to fill more than one; this is just an option for districts
+  // that want it (e.g. several internal/regional resolvers, or several
+  // public ones for redundancy).
+  const parseList = (raw) => (raw || '').split(',').map(s => s.trim()).filter(Boolean);
+
+  const upstreamIpv4 = parseList(fetched.upstream_ipv4);
+  const upstreamIpv6 = parseList(fetched.upstream_ipv6);
+
   const settings = {
-    upstreamPrimary:   fetched.upstream_primary   || config.dns.upstreamPrimary,
-    upstreamSecondary: fetched.upstream_secondary || config.dns.upstreamSecondary,
-    upstreamIpv6:       fetched.upstream_ipv6       || null,
-    blockPageIp:        fetched.block_page_ip       || config.dns.blockPageIp,
-    blockPageIpv6:      fetched.block_page_ipv6     || config.dns.blockPageIpv6,
-    cacheTtl:           parseInt(fetched.cache_ttl, 10) || config.cache.ttl,
+    upstreamIpv4: upstreamIpv4.length ? upstreamIpv4 : [config.dns.upstreamPrimary, config.dns.upstreamSecondary].filter(Boolean),
+    upstreamIpv6,
+    blockPageIp:   fetched.block_page_ip   || config.dns.blockPageIp,
+    blockPageIpv6: fetched.block_page_ipv6 || config.dns.blockPageIpv6,
+    cacheTtl:      parseInt(fetched.cache_ttl, 10) || config.cache.ttl,
   };
   await redis.set(DNS_SETTINGS_KEY, JSON.stringify(settings), 'EX', DNS_SETTINGS_TTL).catch(() => {});
   return settings;
