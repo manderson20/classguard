@@ -60,6 +60,11 @@ function generateInstallScript() {
 # Run on each ClassGuard node: sudo bash install-chrony.sh
 set -euo pipefail
 
+echo "Disabling systemd-timesyncd (chrony takes over clock sync)..."
+if systemctl is-enabled systemd-timesyncd >/dev/null 2>&1 || systemctl is-active systemd-timesyncd >/dev/null 2>&1; then
+  systemctl disable --now systemd-timesyncd
+fi
+
 echo "Installing chrony..."
 apt-get update -qq
 apt-get install -y chrony
@@ -78,6 +83,14 @@ fi
 echo "Starting chrony..."
 systemctl enable chrony
 systemctl restart chrony
+
+if [[ -f ntp-client-report.sh ]]; then
+  echo "Installing the client-activity reporter (cron, every 5 min)..."
+  cp ntp-client-report.sh /usr/local/bin/ntp-client-report.sh
+  chmod +x /usr/local/bin/ntp-client-report.sh
+  cron_line="*/5 * * * * /usr/local/bin/ntp-client-report.sh"
+  (crontab -l 2>/dev/null | grep -vF "ntp-client-report.sh"; echo "$cron_line") | crontab -
+fi
 
 echo ""
 echo "Done! Verify with: chronyc sources"
