@@ -660,9 +660,19 @@ const GITHUB_REPO = 'manderson20/classguard';
 
 router.get('/check-update', ...auth, async (req, res) => {
   try {
+    const { rows: [tokenRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'github_update_token'`);
+    // The classguard repo is private — GitHub's Contents API returns a plain
+    // 404 for an unauthenticated request to a private repo (same as a repo
+    // that doesn't exist at all), which silently broke this whole check
+    // with no indication of why. A token with read access to the repo fixes
+    // it; without one, surface that clearly instead of a bare 404.
+    const githubHeaders = tokenRow?.value
+      ? { Authorization: `Bearer ${tokenRow.value}` }
+      : {};
+
     const { data: latestVersionRaw } = await axios.get(
       `https://api.github.com/repos/${GITHUB_REPO}/contents/VERSION?ref=main`,
-      { headers: { Accept: 'application/vnd.github.raw' }, timeout: 8000 }
+      { headers: { Accept: 'application/vnd.github.raw', ...githubHeaders }, timeout: 8000 }
     );
     const latestVersion = String(latestVersionRaw).trim();
 
@@ -670,7 +680,7 @@ router.get('/check-update', ...auth, async (req, res) => {
     try {
       const { data: changelogRaw } = await axios.get(
         `https://api.github.com/repos/${GITHUB_REPO}/contents/CHANGELOG.md?ref=main`,
-        { headers: { Accept: 'application/vnd.github.raw' }, timeout: 8000 }
+        { headers: { Accept: 'application/vnd.github.raw', ...githubHeaders }, timeout: 8000 }
       );
       const escaped = latestVersion.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const match = String(changelogRaw).match(new RegExp(`## \\[${escaped}\\][^]*?(?=\\n## \\[|$)`));
@@ -684,7 +694,11 @@ router.get('/check-update', ...auth, async (req, res) => {
       changelog,
     });
   } catch (err) {
-    res.status(502).json({ error: `Failed to check GitHub: ${err.message}` });
+    const isAuthError = err.response?.status === 404 || err.response?.status === 401;
+    const hint = isAuthError
+      ? ' — the classguard repo is private; add a GitHub token with read access to it below.'
+      : '';
+    res.status(502).json({ error: `Failed to check GitHub: ${err.message}${hint}`, needs_token: isAuthError });
   }
 });
 
