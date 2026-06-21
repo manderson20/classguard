@@ -145,7 +145,7 @@ router.get('/clients', ...auth, async (req, res) => {
 router.get('/clients/lookup/:mac', ...auth, async (req, res) => {
   const mac = req.params.mac.toLowerCase().replace(/[^0-9a-f]/g, ':');
   try {
-    const [{ rows: clients }, { rows: dhcp }, { rows: device }, { rows: dns }] = await Promise.all([
+    const [{ rows: clients }, { rows: dhcp }] = await Promise.all([
       pool.query(
         `SELECT c.*, n.name AS controller_name, n.vendor
          FROM network_clients c JOIN network_controllers n ON n.id = c.controller_id
@@ -153,24 +153,32 @@ router.get('/clients/lookup/:mac', ...auth, async (req, res) => {
         [mac]
       ),
       pool.query(
-        `SELECT r.*, s.name AS subnet_name, s.subnet
+        `SELECT r.*, s.label AS subnet_name, s.subnet
          FROM dhcp_reservations r JOIN dhcp_subnets s ON s.id = r.subnet_id
          WHERE r.mac_address = $1`,
         [mac]
       ),
+    ]);
+
+    // dhcp_reservations has no link to a user/student - dns_logs is keyed by
+    // source_ip, so resolve through the device's current observed IP (live
+    // controller data first, since most clients are dynamic and never get a
+    // reservation at all; the static reservation IP is the fallback).
+    const ip = clients[0]?.ip_address || dhcp[0]?.ip_address || null;
+
+    const [{ rows: device }, { rows: dns }] = await Promise.all([
       pool.query(
         `SELECT * FROM integration_devices WHERE $1 = ANY(mac_addresses) LIMIT 1`,
         [mac]
       ),
-      pool.query(
-        `SELECT domain, action, block_reason, queried_at
-         FROM dns_logs
-         WHERE user_id = (
-           SELECT student_id FROM dhcp_reservations WHERE mac_address = $1 LIMIT 1
-         ) AND queried_at > NOW() - INTERVAL '1 hour'
-         ORDER BY queried_at DESC LIMIT 50`,
-        [mac]
-      ),
+      ip
+        ? pool.query(
+            `SELECT domain, action, block_reason, queried_at
+             FROM dns_logs WHERE source_ip = $1::inet AND queried_at > NOW() - INTERVAL '1 hour'
+             ORDER BY queried_at DESC LIMIT 50`,
+            [ip]
+          )
+        : Promise.resolve({ rows: [] }),
     ]);
     res.json({ network: clients[0] || null, dhcp: dhcp[0] || null, device: device[0] || null, recent_dns: dns });
   } catch (err) { res.status(500).json({ error: err.message }); }

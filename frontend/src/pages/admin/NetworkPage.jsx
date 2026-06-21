@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
@@ -290,7 +291,7 @@ function ClientsTab() {
                 <td className="px-3 py-2 text-xs text-slate-400">{c.vendor_oui||c.controller_name}</td>
                 <td className="px-3 py-2 text-xs text-slate-400">{c.last_seen ? new Date(c.last_seen).toLocaleTimeString() : '—'}</td>
                 <td className="px-3 py-2">
-                  <a href={`/admin/network/device/${c.mac}`} className="text-xs text-primary-600 hover:underline">Details</a>
+                  <Link to={`/admin/network/device/${c.mac}`} className="text-xs text-primary-600 hover:underline">Details</Link>
                 </td>
               </tr>
             ))}
