@@ -49,6 +49,7 @@ import ScreenshotsPage     from './pages/admin/ScreenshotsPage';
 import ChatAuditPage       from './pages/admin/ChatAuditPage';
 import DeviceViewAuditPage from './pages/admin/DeviceViewAuditPage';
 import VpnPage             from './pages/admin/VpnPage';
+import Ipv6Page             from './pages/admin/Ipv6Page';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
@@ -125,6 +126,7 @@ export default function App() {
           <Route path="/admin/settings"               element={<SettingsPage />} />
           <Route path="/admin/system-health"           element={<SystemHealthPage />} />
           <Route path="/admin/vpn"                    element={<VpnPage />} />
+          <Route path="/admin/ipv6"                   element={<Ipv6Page />} />
         </Route>
       </Route>
 

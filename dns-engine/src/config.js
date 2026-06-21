@@ -6,6 +6,7 @@ module.exports = {
     upstreamPrimary:   process.env.DNS_UPSTREAM_PRIMARY   || '1.1.1.1',
     upstreamSecondary: process.env.DNS_UPSTREAM_SECONDARY || '8.8.8.8',
     blockPageIp:       process.env.DNS_BLOCK_PAGE_IP      || null,
+    blockPageIpv6:     process.env.DNS_BLOCK_PAGE_IPV6    || null,
   },
   http: {
     port: parseInt(process.env.DNS_HTTP_PORT) || 3053,

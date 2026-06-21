@@ -33,6 +33,7 @@ import {
   mdiPulse,
   mdiEyeOutline,
   mdiVpn,
+  mdiTunnelOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -100,6 +101,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/integrations', icon: mdiPuzzleOutline,      label: 'Integrations' },
       { to: '/admin/ha',           icon: mdiSwapHorizontal,     label: 'HA Cluster'   },
       { to: '/admin/vpn',          icon: mdiVpn,                label: 'VPN'          },
+      { to: '/admin/ipv6',         icon: mdiTunnelOutline,      label: 'IPv6'         },
       { to: '/admin/ntp',          icon: mdiClockOutline,       label: 'NTP'          },
       { to: '/admin/system-health', icon: mdiPulse,             label: 'System Health' },
       { to: '/admin/settings',     icon: mdiCogOutline,         label: 'Settings'     },
