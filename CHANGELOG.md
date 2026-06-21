@@ -18,6 +18,57 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.4.0] - 2026-06-21
+
+### Added
+
+- **Automatic HTTP -> HTTPS redirect** once a real Let's Encrypt cert is
+  active — previously port 80 and 443 served identical content with no
+  redirect at all, even after a real cert was issued.
+- **Quick allow-list action on DNS Logs** — blocked rows now have a
+  "+ Allow" action that adds the domain to one or more policies' allow
+  list directly from the log, instead of needing to find the right policy
+  and type the domain in by hand.
+- **NTP client visibility** — a new "Devices Polling This Server" table
+  shows which devices are actually using ClassGuard's NTP server (chrony),
+  fed by a new cron-installed reporter script in the existing deployment
+  bundle. Previously the only way to see this was SSHing in and running
+  `chronyc clients` by hand.
+
+### Fixed
+
+- **The DNS block page never showed over HTTPS** — port 443 only ever had
+  one server block (the admin SPA), so a blocked site's mismatched
+  Host/SNI had nowhere to fall through to, unlike port 80. Since nearly
+  every real website is HTTPS-only now, almost every blocked-domain visit
+  was hitting this gap: students saw ClassGuard's admin login screen
+  instead of "Site Blocked." (The browser's certificate warning for the
+  mismatched domain is unavoidable without installing a trusted root CA
+  fleet-wide, which ClassGuard deliberately doesn't do — this only fixes
+  what's shown after clicking through that warning.)
+- **The Chrome extension was never actually monitoring any device** — its
+  sign-in used an interactive consent prompt on every automatic attempt
+  (install, browser startup, and every 1-minute retry). That kind of
+  prompt can't display from an unattended background call without a user
+  gesture, so every attempt failed silently, forever — no real student
+  device had ever successfully authenticated. Switched to silent
+  authentication, which works with no prompt at all on a managed device
+  already signed into the school Google account.
+- Removed the extension popup's "Sign Out" button — a monitored student
+  had a one-click way to de-monitor their own device.
+- The extension's toolbar icon and popup header showed a generic Chrome
+  placeholder / shield emoji, since the manifest never declared any
+  icons. Now shows ClassGuard's actual logo.
+- A pre-existing Let's Encrypt cert (issued before the redirect feature
+  above existed) would have sat in limbo for months before the redirect
+  ever activated, since it only backfills on renewal; now backfills on
+  every daily check regardless.
+- The chrony NTP install script left `systemd-timesyncd` running alongside
+  chrony and never actually installed its own client-activity reporter's
+  cron job, even though it shipped the script in the same bundle.
+
+---
+
 ## [0.3.0] - 2026-06-21
 
 ### Added
