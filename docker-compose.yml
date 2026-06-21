@@ -225,6 +225,37 @@ services:
       retries:      3
 
   # ---------------------------------------------------------------------------
+  # StrongSwan IKEv2 VPN — staff remote access. Certificate-based auth,
+  # trusting Mosyle's own SCEP-issued client certs (see VPN admin page).
+  #
+  # network_mode: host, unlike every other service here — IKEv2/ESP need
+  # direct access to the host's real interfaces and routing table to bind
+  # the VRRP VIP correctly and to forward decrypted tunnel traffic into the
+  # LAN. Docker's bridge network would NAT all of that away. This is the
+  # same reason keepalived itself runs directly on the host rather than in
+  # a container. A side effect: this container isn't on classguard-net, so
+  # vpn-agent.py reaches the API at 127.0.0.1:3001 — the exact same path
+  # keepalived's own host-level health check already uses for the same
+  # reason (see api's "127.0.0.1:3001:3001" port binding above).
+  # ---------------------------------------------------------------------------
+  vpn:
+    build:
+      context:    ./infrastructure/vpn
+      dockerfile: Dockerfile
+    container_name: classguard-vpn
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file: .env
+    volumes:
+      - tls-certs:/certs:ro
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+
+  # ---------------------------------------------------------------------------
   # Frontend — React app built with Vite, served by nginx
   # nginx also proxies /api/ and /socket.io/ to the api container
   # ---------------------------------------------------------------------------
