@@ -24,6 +24,154 @@ function OffsetBar({ ms }) {
   );
 }
 
+// Editable comma-separated list — used for upstream pool servers and
+// allowed client subnets, both of which are TEXT[] columns on the backend.
+function ListEditor({ label, hint, values, onChange, placeholder }) {
+  const [text, setText] = useState((values || []).join(', '));
+  return (
+    <div>
+      <label className="text-xs font-medium text-slate-600 block mb-1">{label}</label>
+      {hint && <p className="text-xs text-slate-400 mb-1">{hint}</p>}
+      <input
+        className={INPUT}
+        value={text}
+        placeholder={placeholder}
+        onChange={e => setText(e.target.value)}
+        onBlur={() => onChange(text.split(',').map(s => s.trim()).filter(Boolean))}
+      />
+    </div>
+  );
+}
+
+function NtpServerSection() {
+  const qc = useQueryClient();
+  const [form, setForm] = useState(null);
+  const [bundle, setBundle] = useState(null);
+  const [loadingBundle, setLoadingBundle] = useState(false);
+  const [activeFile, setActiveFile] = useState(null);
+
+  const { data: cfgData = {} } = useQuery({
+    queryKey: ['ntp-server-config'],
+    queryFn:  () => api.get('/ntp/server-config'),
+  });
+
+  const save = useMutation({
+    mutationFn: () => api.put('/ntp/server-config', form || cfgData),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['ntp-server-config'] }),
+  });
+
+  const cfg = form || cfgData;
+  const set = (k, v) => setForm(p => ({ ...(p || cfgData), [k]: v }));
+
+  const loadBundle = async () => {
+    setLoadingBundle(true);
+    try {
+      const b = await api.get('/ntp/server-bundle');
+      setBundle(b);
+      setActiveFile(Object.keys(b)[0]);
+    } finally {
+      setLoadingBundle(false);
+    }
+  };
+
+  const downloadFile = (name, content) => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
+    a.download = name;
+    a.click();
+  };
+
+  return (
+    <div className="mb-8">
+      <h2 className="font-semibold text-slate-800 mb-3">NTP Server — Serve Time to the LAN</h2>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
+        <p className="text-xs text-slate-500 mb-4">
+          Runs <strong>chrony</strong> on every node, independently — unlike VRRP there's no
+          failover priority here, every node just serves time on its own real IP. Point DHCP
+          option 42 (or clients directly) at every node's IP for redundancy. Install chrony
+          directly on the host (not in Docker) on each node and deploy the matching config below.
+        </p>
+
+        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer mb-4">
+          <input type="checkbox" className="w-4 h-4 rounded"
+            checked={cfg.enabled === true}
+            onChange={e => set('enabled', e.target.checked)} />
+          Enable NTP server config generation
+        </label>
+
+        <div className="grid md:grid-cols-2 gap-4">
+          <ListEditor
+            label="Upstream pool servers"
+            hint="comma-separated — this node syncs its own clock from these"
+            values={cfg.upstream_pool}
+            placeholder="0.pool.ntp.org, 1.pool.ntp.org"
+            onChange={v => set('upstream_pool', v)}
+          />
+          <ListEditor
+            label="Allowed client subnets"
+            hint="comma-separated CIDRs — required, or chrony serves no one (never defaults to allow-all)"
+            values={cfg.allowed_subnets}
+            placeholder="172.16.1.0/24, 10.0.0.0/16"
+            onChange={v => set('allowed_subnets', v)}
+          />
+        </div>
+        <div className="mt-4">
+          <label className="text-xs font-medium text-slate-600 block mb-1">Local stratum fallback</label>
+          <input type="number" className={INPUT + ' w-32'} value={cfg.local_stratum ?? 10}
+            onChange={e => set('local_stratum', parseInt(e.target.value))} min={1} max={15} />
+          <p className="text-xs text-slate-400 mt-1">Still serve LAN clients at this stratum if every upstream pool server is briefly unreachable.</p>
+        </div>
+
+        <div className="flex justify-end mt-4">
+          <button onClick={() => save.mutate()} disabled={save.isPending} className="btn-primary text-sm">
+            {save.isPending ? 'Saving…' : 'Save NTP Server Config'}
+          </button>
+        </div>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <h3 className="font-semibold text-slate-900">chrony Config Files</h3>
+            <p className="text-xs text-slate-500 mt-0.5">Generated from the settings above. Deploy to each node's host (outside Docker).</p>
+          </div>
+          <button onClick={loadBundle} disabled={loadingBundle} className="btn-primary text-sm">
+            {loadingBundle ? 'Generating…' : 'Generate Configs'}
+          </button>
+        </div>
+
+        {bundle && (
+          <div className="border border-slate-200 rounded-lg overflow-hidden">
+            <div className="flex border-b border-slate-200 overflow-x-auto">
+              {Object.keys(bundle).map(name => (
+                <button key={name} onClick={() => setActiveFile(name)}
+                  className={`px-3 py-2 text-xs font-mono whitespace-nowrap border-r border-slate-200 transition-colors
+                    ${activeFile === name ? 'bg-primary-600 text-white' : 'hover:bg-slate-50 text-slate-600'}`}>
+                  {name}
+                </button>
+              ))}
+            </div>
+            {activeFile && (
+              <div className="relative">
+                <div className="absolute top-2 right-2 flex gap-2">
+                  <button onClick={() => navigator.clipboard.writeText(bundle[activeFile])}
+                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Copy</button>
+                  <button onClick={() => downloadFile(activeFile, bundle[activeFile])}
+                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Download</button>
+                </div>
+                <pre className="p-4 text-xs font-mono bg-slate-900 text-slate-100 overflow-x-auto max-h-96 overflow-y-auto whitespace-pre">
+                  {bundle[activeFile]}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export default function NtpPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState({ address:'', description:'', prefer: false });
@@ -62,6 +210,8 @@ export default function NtpPage() {
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
+      <NtpServerSection />
+
       <div className="flex items-start justify-between mb-5">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">NTP Monitoring</h1>

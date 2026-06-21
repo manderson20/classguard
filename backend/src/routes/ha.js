@@ -257,6 +257,27 @@ router.put('/nodes/:nodeId/role', ...auth, async (req, res) => {
   }
 });
 
+// PUT /api/v1/ha/nodes/:nodeId/priority — reorders a node's place in the
+// VRRP failover election (see services/keepalived.js). Independent of
+// ha_role (the Postgres replication role) — priority only governs which
+// live node wins the VIP, it does not touch database write access.
+router.put('/nodes/:nodeId/priority', ...auth, async (req, res) => {
+  const failoverPriority = parseInt(req.body.failover_priority, 10);
+  if (!Number.isInteger(failoverPriority) || failoverPriority < 1 || failoverPriority > 255) {
+    return res.status(400).json({ error: 'failover_priority must be an integer between 1 and 255 (VRRP\'s own valid range)' });
+  }
+  try {
+    const { rows } = await pool.query(
+      'UPDATE nodes SET failover_priority = $1 WHERE node_id = $2 RETURNING *',
+      [failoverPriority, req.params.nodeId]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Node not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // DELETE /api/v1/ha/nodes/:nodeId
 router.delete('/nodes/:nodeId', ...auth, async (req, res) => {
   if (req.params.nodeId === config.node.id) {
@@ -353,9 +374,20 @@ router.post('/join', async (req, res) => {
     }
     const invite = inv[0];
 
+    // A freshly-joined node always lands at the bottom of the failover
+    // order by default — 10 below whatever the lowest active node's
+    // priority currently is (floored at 10) — so it can never accidentally
+    // outrank the existing primary just by joining. An admin can re-rank it
+    // afterward via PUT /nodes/:nodeId/priority.
+    const { rows: [{ min_priority }] } = await client.query(
+      `SELECT COALESCE(MIN(failover_priority), 110) AS min_priority FROM nodes WHERE is_active = true`
+    );
+    const defaultPriority = Math.max(10, min_priority - 10);
+    const failoverPriority = req.body.failover_priority ?? defaultPriority;
+
     const { rows: nodeRows } = await client.query(
-      `INSERT INTO nodes (node_id, hostname, ip, role, ha_role, api_url, version, last_seen, is_active)
-       VALUES ($1, $2, '0.0.0.0', 'secondary', $3, $4, $5, NOW(), true)
+      `INSERT INTO nodes (node_id, hostname, ip, role, ha_role, api_url, version, last_seen, is_active, failover_priority)
+       VALUES ($1, $2, '0.0.0.0', 'secondary', $3, $4, $5, NOW(), true, $6)
        ON CONFLICT (node_id) WHERE node_id IS NOT NULL DO UPDATE SET
          hostname  = EXCLUDED.hostname,
          ha_role   = EXCLUDED.ha_role,
@@ -364,7 +396,7 @@ router.post('/join', async (req, res) => {
          last_seen = NOW(),
          is_active = true
        RETURNING *`,
-      [node_id, hostname || node_id, ha_role || invite.ha_role, api_url, version || 'unknown']
+      [node_id, hostname || node_id, ha_role || invite.ha_role, api_url, version || 'unknown', failoverPriority]
     );
 
     await client.query(

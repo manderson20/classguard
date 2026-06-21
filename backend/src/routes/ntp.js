@@ -3,9 +3,11 @@ const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
-const ntp = require('../services/ntp');
+const ntp     = require('../services/ntp');
+const chrony  = require('../services/chrony');
 
-const auth = [authenticate, requireMinRole('admin')];
+const auth      = [authenticate, requireMinRole('admin')];
+const superauth = [authenticate, requireMinRole('superadmin')];
 
 // GET /api/v1/ntp/servers
 router.get('/servers', ...auth, async (req, res) => {
@@ -76,6 +78,50 @@ router.get('/status', ...auth, async (req, res) => {
     const synced    = rows.filter(r => r.reachable && r.stratum);
     const minStrat  = synced.length ? Math.min(...synced.map(r => r.stratum)) : null;
     res.json({ servers: rows, stratum: minStrat, synced: synced.length > 0 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// NTP server (chrony) — config + deployment bundle. Distinct from
+// /servers above, which is the external-source-monitoring feature that
+// already existed; this is ClassGuard becoming a server itself.
+// ---------------------------------------------------------------------------
+
+// GET /api/v1/ntp/server-config
+router.get('/server-config', ...auth, async (req, res) => {
+  try {
+    res.json(await chrony.getNtpConfig());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/v1/ntp/server-config
+router.put('/server-config', ...superauth, async (req, res) => {
+  const { enabled, upstream_pool, allowed_subnets, local_stratum } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE ntp_server_config SET
+         enabled         = COALESCE($1, enabled),
+         upstream_pool   = COALESCE($2, upstream_pool),
+         allowed_subnets = COALESCE($3, allowed_subnets),
+         local_stratum   = COALESCE($4, local_stratum),
+         updated_at      = NOW()
+       RETURNING *`,
+      [enabled ?? null, upstream_pool ?? null, allowed_subnets ?? null, local_stratum ?? null]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/ntp/server-bundle — chrony.conf + install script for every node
+router.get('/server-bundle', ...superauth, async (req, res) => {
+  try {
+    res.json(await chrony.buildNtpBundle());
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
