@@ -376,7 +376,7 @@ export default function SettingsPage() {
                 onChange={e => setDns(d => ({ ...d, upstream_secondary: e.target.value }))}
               />
             </Field>
-            <Field label="Upstream IPv6 (optional)" hint="Leave blank unless you want AAAA queries sent to a different resolver — the servers above already answer AAAA questions fine over IPv4 transport, a resolver's address is just how you reach it, not which record types it can answer.">
+            <Field label="Upstream IPv6 (optional)" hint="Leave blank unless you specifically want AAAA queries sent to a different resolver than the ones above. Most public resolvers (Google, Cloudflare, Quad9, etc.) already answer AAAA fine over plain IPv4 transport — a resolver's address is just how you reach it, not which record types it can answer — but if yours doesn't, set one here that does.">
               <input
                 className="input font-mono text-sm"
                 placeholder="e.g. 2606:4700:4700::1111"
