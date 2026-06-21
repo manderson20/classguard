@@ -123,6 +123,7 @@ app.use('/api/v1/chat',          require('./routes/chat'));
 app.use('/api/v1/system',        require('./routes/systemHealth'));
 app.use('/api/v1/live-view',     require('./routes/liveView'));
 app.use('/api/v1/vpn',           require('./routes/vpn'));
+app.use('/api/v1/ipv6',          require('./routes/ipv6'));
 app.use('/metrics',              require('./routes/metrics'));
 
 // Health check — used by Docker, load balancers, and the HA node registry

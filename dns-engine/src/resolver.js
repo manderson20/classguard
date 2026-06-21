@@ -205,19 +205,36 @@ async function forwardToSpecific(domain, typeNum, serverIp) {
 
 function buildResponse(request, result) {
   const response = Packet.createResponseFromRequest(request);
+  const [question] = request.questions;
 
   if (result.action === 'blocked') {
-    if (config.dns.blockPageIp) {
-      const [question] = request.questions;
-      if (question) {
+    // Match the sinkhole record type to the question type — previously this
+    // always pushed an A record regardless of whether the question was A or
+    // AAAA, which for an AAAA query meant a type-mismatched answer (not a
+    // real NXDOMAIN, but no valid AAAA record either — most clients would
+    // just treat it as "no IPv6 address" and fall back to the, correctly
+    // sinkholed, A record). Same safe outcome either way, but worth doing
+    // properly now that there's an actual AAAA sinkhole to push.
+    if (question?.type === Packet.TYPE.AAAA) {
+      if (config.dns.blockPageIpv6) {
         response.answers.push({
           name:    question.name,
-          type:    Packet.TYPE.A,
+          type:    Packet.TYPE.AAAA,
           class:   Packet.CLASS.IN,
           ttl:     5,
-          address: config.dns.blockPageIp,
+          address: config.dns.blockPageIpv6,
         });
+      } else {
+        response.header.rcode = Packet.RCODE.NXDOMAIN;
       }
+    } else if (question && config.dns.blockPageIp) {
+      response.answers.push({
+        name:    question.name,
+        type:    Packet.TYPE.A,
+        class:   Packet.CLASS.IN,
+        ttl:     5,
+        address: config.dns.blockPageIp,
+      });
     } else {
       response.header.rcode = Packet.RCODE.NXDOMAIN;
     }
