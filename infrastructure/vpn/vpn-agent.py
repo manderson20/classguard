@@ -65,7 +65,7 @@ connections {{
         }}
         remote {{
             auth = pubkey
-            cacerts = mosyle-ca.pem
+            cacerts = classguard-ca.pem
         }}
         children {{
             net {{
@@ -112,9 +112,13 @@ def ensure_routing(client_subnet):
 def apply_config(cfg):
     global _last_config_hash
 
-    if not cfg.get("enabled") or not cfg.get("mosyle_ca_pem"):
+    if not cfg.get("enabled") or not cfg.get("ca_cert_pem"):
         # Nothing loaded into swanctl — charon stays up and listening, but
         # with zero connections configured, so it can't accept any tunnel.
+        # ca_cert_pem is ClassGuard's own CA (services/ca.js), generated via
+        # the VPN page's "Generate CA" button — the same CA the SCEP server
+        # (infrastructure/scep/) issues client certs from. Not Mosyle's own
+        # cert; Mosyle never had one to give (see migration 053).
         return
 
     config_hash = hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest()
@@ -126,8 +130,8 @@ def apply_config(cfg):
     os.makedirs("/etc/swanctl/private", exist_ok=True)
     os.makedirs("/etc/swanctl/conf.d", exist_ok=True)
 
-    with open("/etc/swanctl/x509ca/mosyle-ca.pem", "w") as f:
-        f.write(cfg["mosyle_ca_pem"])
+    with open("/etc/swanctl/x509ca/classguard-ca.pem", "w") as f:
+        f.write(cfg["ca_cert_pem"])
 
     # fullchain.pem (leaf + intermediates) is fine to drop straight into the
     # x509 cert dir as-is — swanctl loads every cert it finds there and

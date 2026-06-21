@@ -44,13 +44,13 @@ function CopyField({ label, value }) {
 // Exactly what to paste into Mosyle's VPN payload screen — Mosyle's own API
 // has no way to push this profile (confirmed against its actual API spec),
 // so this does as much of the work as possible short of that.
-function MosyleProfilePanel({ cfg }) {
+function MosyleProfilePanel() {
   const { data: vrrp } = useQuery({ queryKey: ['ha-vrrp'], queryFn: () => api.get('/ha/vrrp') });
   const server = vrrp?.vip_address || '(configure a VRRP VIP on the HA Cluster page first)';
 
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
-      <h3 className="font-semibold text-slate-900 mb-1">Mosyle Profile Values</h3>
+      <h3 className="font-semibold text-slate-900 mb-1">Mosyle VPN Profile Values</h3>
       <p className="text-xs text-slate-500 mb-4">
         Mosyle's API has no endpoint to push a VPN profile — paste these values into
         Management → Profiles → VPN in Mosyle's own console.
@@ -58,8 +58,93 @@ function MosyleProfilePanel({ cfg }) {
       <CopyField label="Connection Type" value="IKEv2" />
       <CopyField label="Server" value={server} />
       <CopyField label="Machine Authentication" value="Certificate" />
-      <CopyField label="Account" value="(Mosyle device/user variable — any identity from your SCEP profile)" />
-      {cfg.client_subnet && <CopyField label="Client IP pool (informational only — not entered in Mosyle)" value={cfg.client_subnet} />}
+      <CopyField label="Identity Certificate" value="The cert issued via the SCEP profile below" />
+    </div>
+  );
+}
+
+// Mosyle's SCEP profile doesn't hand out a certificate — it's Apple's
+// standard SCEP payload, just a pointer at a SCEP server plus a static
+// challenge (confirmed from Mosyle's own profile screen). This panel is
+// what makes that pointer resolve to ClassGuard's own CA below.
+function ScepProfilePanel({ cfg }) {
+  const url = `${window.location.origin}/scep/`;
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
+      <h3 className="font-semibold text-slate-900 mb-1">Mosyle SCEP Profile Values</h3>
+      <p className="text-xs text-slate-500 mb-4">
+        Management → Profiles → SCEP in Mosyle. Create this <strong>before</strong> the VPN
+        profile above — the VPN profile's Identity Certificate picker references this one.
+      </p>
+      <CopyField label="URL" value={url} />
+      <CopyField label="Subject" value="CN=%Email%" />
+      <CopyField label="Challenge" value={cfg.scep_challenge} />
+      <CopyField label="Key Size (in bits)" value="2048 (Mosyle's own default of 1024 is weak — change it)" />
+      <p className="text-xs text-slate-400 mt-3">
+        Setting Subject to <span className={MONO}>CN=%Email%</span> means every issued cert's
+        identity is the staff member's actual email, using Mosyle's own variable substitution —
+        that's what shows up in the Sessions table below instead of an opaque device serial.
+      </p>
+    </div>
+  );
+}
+
+function CaSection({ cfg }) {
+  const qc = useQueryClient();
+  const generate = useMutation({
+    mutationFn: () => api.post('/vpn/generate-ca'),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['vpn-config'] }),
+  });
+
+  const download = () => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([cfg.ca_cert_pem], { type: 'application/x-pem-file' }));
+    a.download = 'classguard-vpn-ca.pem';
+    a.click();
+  };
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
+      <h3 className="font-semibold text-slate-900 mb-3">Certificate Authority</h3>
+      {!cfg.ca_cert_pem ? (
+        <div>
+          <p className="text-xs text-slate-500 mb-3">
+            ClassGuard generates and owns this CA itself — Mosyle never had one to export
+            (its SCEP profile only points devices at a SCEP server; see the panel below).
+            The SCEP server issues client certs from this CA, and the VPN server trusts it directly.
+          </p>
+          <button onClick={() => generate.mutate()} disabled={generate.isPending} className="btn-primary text-sm">
+            {generate.isPending ? 'Generating…' : 'Generate CA'}
+          </button>
+        </div>
+      ) : (
+        <div>
+          <div className="grid md:grid-cols-2 gap-4 text-sm mb-3">
+            <div>
+              <div className="text-xs text-slate-500">Expires</div>
+              <div className="text-slate-800">{cfg.ca_info ? new Date(cfg.ca_info.notAfter).toLocaleDateString() : '—'}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs text-slate-500">Fingerprint (SHA-256)</div>
+              <div className={`${MONO} text-slate-800 truncate`}>{cfg.ca_info?.fingerprint || '—'}</div>
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={download} className="btn-secondary text-sm">Download CA Certificate</button>
+            <button
+              onClick={() => { if (confirm('Rotating invalidates every certificate already issued to staff devices. Continue?')) generate.mutate(); }}
+              disabled={generate.isPending}
+              className="btn-secondary text-sm text-red-600"
+            >
+              {generate.isPending ? 'Rotating…' : 'Rotate CA'}
+            </button>
+          </div>
+          <p className="text-xs text-slate-400 mt-2">
+            Download this and feed it into Mosyle's SCEP profile "Create from Certificate…" button
+            (Fingerprint field) so devices can verify they're talking to the right server.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
@@ -67,7 +152,6 @@ function MosyleProfilePanel({ cfg }) {
 export default function VpnPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState(null);
-  const [showCa, setShowCa] = useState(false);
 
   const { data: cfgData = {} } = useQuery({
     queryKey: ['vpn-config'],
@@ -96,38 +180,35 @@ export default function VpnPage() {
         <h1 className="text-2xl font-bold text-slate-900">VPN — Staff Remote Access</h1>
         <p className="text-slate-500 text-sm mt-0.5">
           Self-hosted IKEv2 over the VRRP floating IP. Apple's built-in VPN client connects directly —
-          no app to install on staff Macs/iPads, just the MDM profile below. Authentication trusts
-          Mosyle's own SCEP-issued certificates; ClassGuard never issues or manages client certs itself.
+          no app to install on staff Macs/iPads, just the MDM profiles below. Authentication trusts
+          ClassGuard's own CA, issued to devices via a self-hosted SCEP server when Mosyle enrolls them —
+          Mosyle itself never holds a certificate; its SCEP profile is just a pointer at that server.
           This is a traditional perimeter VPN, not ZTNA — a connected client is a network member, subject
           only to the optional subnet restriction below.
         </p>
       </div>
 
-      <MosyleProfilePanel cfg={cfg} />
+      <CaSection cfg={cfg} />
+      <ScepProfilePanel cfg={cfg} />
+      <MosyleProfilePanel />
 
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
         <h3 className="font-semibold text-slate-900 mb-3">Configuration</h3>
 
-        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer mb-4">
+        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer mb-3">
           <input type="checkbox" className="w-4 h-4 rounded"
             checked={cfg.enabled === true}
             onChange={e => set('enabled', e.target.checked)} />
           Enable VPN server
         </label>
 
-        <div className="mb-4">
-          <label className="text-xs font-medium text-slate-600 block mb-1">Mosyle CA certificate (PEM)</label>
-          <p className="text-xs text-slate-400 mb-1">
-            From Mosyle's SCEP profile config — incoming client certs are trusted only if signed by this CA.
-          </p>
-          <textarea
-            className={`${INPUT} ${MONO} h-32`}
-            placeholder="-----BEGIN CERTIFICATE-----..."
-            value={showCa ? (cfg.mosyle_ca_pem || '') : (cfg.mosyle_ca_pem ? '(hidden — click to edit)' : '')}
-            onFocus={() => setShowCa(true)}
-            onChange={e => set('mosyle_ca_pem', e.target.value)}
-          />
-        </div>
+        <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer mb-4">
+          <input type="checkbox" className="w-4 h-4 rounded"
+            checked={cfg.scep_enabled === true}
+            disabled={!cfg.ca_cert_pem}
+            onChange={e => set('scep_enabled', e.target.checked)} />
+          Enable SCEP server {!cfg.ca_cert_pem && <span className="text-xs text-slate-400">(generate a CA first)</span>}
+        </label>
 
         <div className="grid md:grid-cols-2 gap-4 mb-4">
           <div>
