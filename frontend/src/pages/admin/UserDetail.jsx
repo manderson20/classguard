@@ -113,9 +113,14 @@ export default function UserDetail() {
       <div className="card p-5 mt-6">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-sm font-semibold text-slate-700">DNS Activity (last 24h)</h2>
-          <Link to={`/admin/dns/logs?student_id=${userId}`} className="text-xs text-primary-600 hover:underline">
-            Full logs →
-          </Link>
+          <div className="flex items-center gap-3">
+            <Link to={`/admin/dns/logs?student_id=${userId}`} className="text-xs text-primary-600 hover:underline">
+              Full logs →
+            </Link>
+            <Link to={`/admin/browser-history?student_id=${userId}`} className="text-xs text-primary-600 hover:underline">
+              Browser history →
+            </Link>
+          </div>
         </div>
         {logs.length === 0 ? (
           <div className="text-slate-400 text-sm py-4 text-center">No DNS activity in the last 24h</div>

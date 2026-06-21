@@ -29,6 +29,7 @@ import {
   mdiEmailOutline,
   mdiPhoneOutline,
   mdiChatOutline,
+  mdiHistory,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -69,6 +70,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/blocklists',  icon: mdiShieldOutline,       label: 'Blocklists'    },
       { to: '/admin/categories',  icon: mdiTagOutline,          label: 'Categories'    },
       { to: '/admin/screenshots',       icon: mdiCameraOutline,  label: 'Screenshots'       },
+      { to: '/admin/browser-history',   icon: mdiHistory,        label: 'Browser History'   },
       { to: '/admin/chat',              icon: mdiChatOutline,    label: 'Chat Audit'        },
       { to: '/admin/ai',                icon: mdiRobotOutline,   label: 'AI Classifier'     },
       { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true },

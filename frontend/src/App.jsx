@@ -27,6 +27,7 @@ import GroupsPage          from './pages/admin/GroupsPage';
 import DnsLogs         from './pages/admin/DnsLogs';
 import DnsStats        from './pages/admin/DnsStats';
 import DnsRecordsPage  from './pages/admin/DnsRecordsPage';
+import BrowserHistoryPage from './pages/admin/BrowserHistoryPage';
 import BlocklistsPage     from './pages/admin/BlocklistsPage';
 import ContentCategories  from './pages/admin/ContentCategories';
 import IpamPage        from './pages/admin/IpamPage';
@@ -98,6 +99,7 @@ export default function App() {
           <Route path="/admin/dns/logs"               element={<DnsLogs />} />
           <Route path="/admin/dns/stats"              element={<DnsStats />} />
           <Route path="/admin/dns/records"            element={<DnsRecordsPage />} />
+          <Route path="/admin/browser-history"        element={<BrowserHistoryPage />} />
           <Route path="/admin/blocklists"             element={<BlocklistsPage />} />
           <Route path="/admin/categories"            element={<ContentCategories />} />
           <Route path="/admin/ipam"                   element={<IpamFullPage />} />
