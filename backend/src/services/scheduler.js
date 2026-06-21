@@ -14,6 +14,8 @@ const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
 const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 const radiusSync = require('./radiusSync');
 const ntp = require('./ntp');
+const { syncController } = require('../routes/network');
+const { pool } = require('../db');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -371,6 +373,22 @@ function startScheduler() {
   // IPAM reflects who currently holds a dynamically-leased IP.
   cron.schedule('*/2 * * * *', () => {
     dhcpLeaseIpamSync.run().catch(err => console.error('[scheduler] dhcp-lease-ipam-sync error:', err.message));
+  });
+
+  // Network controller client/AP sync — every 15 minutes. This was previously
+  // ONLY triggered by an admin clicking "Sync"/"Sync All" in the UI - nothing
+  // scheduled ever refreshed network_clients itself, so both this and the two
+  // jobs below that read from it (RADIUS device promotion, IPAM) were quietly
+  // working off however-stale that last manual click left things.
+  cron.schedule('*/15 * * * *', async () => {
+    try {
+      const { rows } = await pool.query('SELECT id FROM network_controllers WHERE is_active = true');
+      for (const { id } of rows) {
+        await syncController(id).catch(err => console.error(`[scheduler] network-controller-sync ${id} error:`, err.message));
+      }
+    } catch (err) {
+      console.error('[scheduler] network-controller-sync error:', err.message);
+    }
   });
 
   // RADIUS device/NAS auto-provisioning — every 30 minutes. Pulls endpoint
