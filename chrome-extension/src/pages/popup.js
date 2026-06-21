@@ -3,7 +3,6 @@
 const content    = document.getElementById('content');
 const headerSub  = document.getElementById('header-sub');
 const btnSync    = document.getElementById('btn-sync');
-const btnSignout = document.getElementById('btn-signout');
 
 // ---------------------------------------------------------------------------
 // Load status from service worker
@@ -87,12 +86,6 @@ btnSync.addEventListener('click', async () => {
   await loadStatus();
   btnSync.textContent = 'Sync Policy';
   btnSync.disabled = false;
-});
-
-btnSignout.addEventListener('click', async () => {
-  if (!confirm('Sign out of ClassGuard? Your internet access restrictions will be removed on this device.')) return;
-  await sendMessage({ type: 'CG_SIGN_OUT' });
-  await loadStatus();
 });
 
 // ---------------------------------------------------------------------------

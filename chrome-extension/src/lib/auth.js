@@ -5,9 +5,11 @@ const JWT_KEY  = 'cg_jwt';
 const USER_KEY = 'cg_user';
 
 // ---------------------------------------------------------------------------
-// Google OAuth — get an access token for the signed-in Chrome profile account
+// Google OAuth — get an access token for the signed-in Chrome profile account.
+// Defaults to silent (no prompt) — see service-worker.js's authenticate()
+// for why this extension never asks a student to interactively consent.
 // ---------------------------------------------------------------------------
-export function getGoogleToken(interactive = true) {
+export function getGoogleToken(interactive = false) {
   return new Promise((resolve, reject) => {
     chrome.identity.getAuthToken({ interactive }, (token) => {
       if (chrome.runtime.lastError) {

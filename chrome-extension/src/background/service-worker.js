@@ -66,11 +66,22 @@ async function init() {
 
 // ---------------------------------------------------------------------------
 // Authentication
+//
+// Always silent (interactive: false). This extension is force-installed on
+// managed devices already signed into the school's Google account, so a
+// token should be retrievable with no prompt at all. Using interactive mode
+// here would do two things we don't want: chrome.identity's consent UI
+// can't actually show from an unattended background call anyway (Chrome
+// requires a user gesture), so it would just fail silently the same as
+// today — and even if it could show, a student dismissing it would leave
+// the device unmonitored with no way for that to get flagged. If silent
+// auth fails, retry on the existing 1-minute alarm (see onAlarm) rather
+// than ever surfacing a skippable prompt.
 // ---------------------------------------------------------------------------
 async function authenticate() {
   let googleToken;
   try {
-    googleToken = await getGoogleToken(true);
+    googleToken = await getGoogleToken(false);
   } catch (err) {
     console.warn('[ClassGuard] Google sign-in unavailable:', err.message);
     return;
@@ -375,14 +386,6 @@ async function handleMessage(msg, sender) {
         getCachedPolicy(),
       ]);
       return { authenticated: !!jwt, user, policy, socketConnected: isConnected() };
-    }
-
-    case 'CG_SIGN_OUT': {
-      await clearAuth();
-      await enforcePolicy(null);
-      const { disconnectSocket } = await import('../lib/socket.js');
-      disconnectSocket();
-      return { ok: true };
     }
 
     case 'CG_FORCE_SYNC': {
