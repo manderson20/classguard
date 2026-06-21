@@ -16,7 +16,23 @@ async function loadStatus() {
   }
 }
 
-function render({ authenticated, user, policy, socketConnected }) {
+function formatSyncedAt(ts) {
+  if (!ts) return 'Never';
+  const diffMin = Math.round((Date.now() - ts) / 60_000);
+  if (diffMin < 1)  return 'Just now';
+  if (diffMin < 60) return `${diffMin} min ago`;
+  return new Date(ts).toLocaleString();
+}
+
+function render({ authenticated, user, policy, socketConnected, policySyncedAt, version }) {
+  const versionFooter = `
+    <div class="section" style="border-bottom:none">
+      <div style="font-size:11px;color:#94a3b8;display:flex;justify-content:space-between">
+        <span>Extension v${esc(version || '?')}</span>
+        ${authenticated ? `<span>Policy synced: ${esc(formatSyncedAt(policySyncedAt))}</span>` : ''}
+      </div>
+    </div>`;
+
   if (!authenticated || !user) {
     headerSub.textContent = 'Not signed in';
     content.innerHTML = `
@@ -26,7 +42,8 @@ function render({ authenticated, user, policy, socketConnected }) {
         <p style="font-size:12px;color:#94a3b8;margin-top:6px">
           Sign in to your school Google account to activate ClassGuard.
         </p>
-      </div>`;
+      </div>
+      ${versionFooter}`;
     return;
   }
 
@@ -67,6 +84,7 @@ function render({ authenticated, user, policy, socketConnected }) {
         </div>
       </div>
     </div>
+    ${versionFooter}
   `;
 }
 

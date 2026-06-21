@@ -1,6 +1,6 @@
 {
   "name": "classguard-extension",
-  "version": "0.0.7",
+  "version": "0.0.8",
   "private": true,
   "description": "ClassGuard Chrome Extension — student device monitoring and policy enforcement",
   "scripts": {
