@@ -72,6 +72,30 @@ function formatMac(raw) {
   return hex.match(/.{1,2}/g).join(':').toUpperCase();
 }
 
+// Windows always prefixes the export's "Option Name" with its zero-padded
+// option code ("042 NTP Servers") regardless of OS language/locale, so match
+// on the leading number rather than the trailing English text. Router (3),
+// DNS Servers (6), and DNS Domain Name (15) are handled separately above
+// since they map onto dhcp_subnets' own first-class columns, not a generic
+// dhcp_options row.
+function extractOptionCode(name) {
+  const m = /^(\d{1,3})\b/.exec((name || '').trim());
+  return m ? parseInt(m[1], 10) : null;
+}
+
+const KEA_OPTION_BY_CODE = {
+  2:   'time-offset',
+  4:   'time-servers',
+  7:   'log-servers',
+  42:  'ntp-servers',
+  44:  'netbios-name-servers',
+  46:  'netbios-node-type',
+  47:  'netbios-scope',
+  66:  'tftp-server-name',
+  67:  'boot-file-name',
+  119: 'domain-search',
+};
+
 async function run({ scopeName, poolText, optionsText, reservationsText, leasesText, policiesText }, commit) {
   if (!scopeName || !scopeName.trim()) throw new Error('A scope name is required');
   const warnings = [];
@@ -85,6 +109,7 @@ async function run({ scopeName, poolText, optionsText, reservationsText, leasesT
   if (!poolStart || !poolEnd) throw new Error('Pool file is required (need at least the Start/End IP Address to determine the scope range)');
 
   let gateway = null, dnsServers = [], domainName = null;
+  const extraOptions = [];
   if (optionsText) {
     for (const o of parseTabFile(optionsText)) {
       const isPolicyScoped = o['Policy Name'] && o['Policy Name'] !== 'None';
@@ -92,10 +117,17 @@ async function run({ scopeName, poolText, optionsText, reservationsText, leasesT
         notesParts.push(`Policy-scoped option "${o['Option Name']}" = ${o['Value']} (policy: ${o['Policy Name']}) — not imported; set up via Kea client-classes if this PXE/policy behavior is still needed.`);
         continue;
       }
-      if (/^003 Router$/i.test(o['Option Name'])) gateway = o['Value'].split(',')[0].trim() || null;
-      else if (/^006 DNS Servers$/i.test(o['Option Name'])) dnsServers = o['Value'].split(',').map(s => s.trim()).filter(Boolean);
-      else if (/^015 DNS Domain Name$/i.test(o['Option Name'])) domainName = o['Value'].trim() || null;
-      else notesParts.push(`Scope option "${o['Option Name']}" = ${o['Value']} — not auto-mapped, add manually under DHCP → Options if needed.`);
+      const code = extractOptionCode(o['Option Name']);
+      if (code === 3)       { gateway = o['Value'].split(',')[0].trim() || null; continue; }
+      if (code === 6)       { dnsServers = o['Value'].split(',').map(s => s.trim()).filter(Boolean); continue; }
+      if (code === 15)      { domainName = o['Value'].trim() || null; continue; }
+
+      const keaName = KEA_OPTION_BY_CODE[code];
+      if (keaName && o['Value']) {
+        extraOptions.push({ code, name: keaName, label: o['Option Name'], data: o['Value'].trim() });
+      } else {
+        notesParts.push(`Scope option "${o['Option Name']}" = ${o['Value']} — not auto-mapped, add manually under DHCP → Options if needed.`);
+      }
     }
   }
 
@@ -116,7 +148,7 @@ async function run({ scopeName, poolText, optionsText, reservationsText, leasesT
   const cidr = inferCidr([gateway, poolStart, poolEnd]);
   if (!cidr) throw new Error('Could not infer a subnet from the pool range');
 
-  const counts = { reservations: 0, reservationsSkipped: 0 };
+  const counts = { reservations: 0, reservationsSkipped: 0, options: 0 };
   const sample = [];
 
   const client = await pool.connect();
@@ -141,6 +173,29 @@ async function run({ scopeName, poolText, optionsText, reservationsText, leasesT
         [maxRow.next, cidr, scopeName, poolStart, poolEnd, gateway, dnsServers.length ? dnsServers : null, domainName, notesParts.join('\n') || null]
       );
       subnetRow = created;
+    }
+
+    // Upsert by (subnet, option name) rather than relying on a DB constraint —
+    // there isn't one on dhcp_options, and re-importing the same scope export
+    // should update existing rows in place rather than pile up duplicates.
+    for (const opt of extraOptions) {
+      const { rows: [existingOpt] } = await client.query(
+        `SELECT id FROM dhcp_options WHERE scope='subnet' AND dhcp_subnet_id=$1 AND option_name=$2`,
+        [subnetRow.id, opt.name]
+      );
+      if (existingOpt) {
+        await client.query(
+          `UPDATE dhcp_options SET option_data=$2, option_label=$3, option_code=$4, is_active=true, updated_at=NOW() WHERE id=$1`,
+          [existingOpt.id, opt.data, opt.label, opt.code]
+        );
+      } else {
+        await client.query(
+          `INSERT INTO dhcp_options (scope, dhcp_subnet_id, option_code, option_name, option_label, option_data, created_by)
+           VALUES ('subnet', $1, $2, $3, $4, $5, $6)`,
+          [subnetRow.id, opt.code, opt.name, opt.label, opt.data, null]
+        );
+      }
+      counts.options++;
     }
 
     const reservationRows = [];

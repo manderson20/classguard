@@ -793,6 +793,7 @@ function ImportWindowsScopeModal({ onClose, onCommitted }) {
             <div className="text-sm text-slate-700">
               <div>Inferred subnet: <strong className="font-mono">{(committed || preview).subnet}</strong></div>
               <div>Reservations imported: <strong>{c.reservations}</strong>{c.reservationsSkipped > 0 && <span className="text-slate-400"> ({c.reservationsSkipped} skipped — no MAC on file)</span>}</div>
+              <div>Scope options imported: <strong>{c.options}</strong></div>
             </div>
             {(preview || committed).warnings?.length > 0 && (
               <ul className="mt-2 space-y-0.5 max-h-24 overflow-y-auto">
