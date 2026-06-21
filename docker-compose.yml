@@ -240,6 +240,11 @@ services:
       # loads correctly when reached via the virtual IP, not just this
       # node's own real address. Blank/unset on a non-HA node.
       VRRP_VIP: ${VRRP_VIP:-}
+      # Public domain name a Let's Encrypt cert was issued for (Settings ->
+      # TLS), if any — must be in server_name too, or visits to the domain
+      # itself fall through to the default_server block page instead of the
+      # admin SPA, on both plain HTTP and (once a cert covers it) HTTPS.
+      CLASSGUARD_DOMAIN: ${CLASSGUARD_DOMAIN:-}
     ports:
       - "80:80"
       - "443:443"
