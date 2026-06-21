@@ -43,6 +43,77 @@ function ListEditor({ label, hint, values, onChange, placeholder }) {
   );
 }
 
+function LastSeenBadge({ lastSeenAt }) {
+  if (!lastSeenAt) return <span className="text-slate-400 text-xs">Listed, never synced</span>;
+  const ageMs = Date.now() - new Date(lastSeenAt).getTime();
+  const color = ageMs < 10 * 60_000 ? 'green' : ageMs < 60 * 60_000 ? 'yellow' : 'red';
+  return (
+    <span className={`px-2 py-0.5 rounded text-xs font-medium bg-${color}-100 text-${color}-700`}>
+      {new Date(lastSeenAt).toLocaleString()}
+    </span>
+  );
+}
+
+// Devices actually polling this node's chrony for time — fed by
+// ntp-client-report.sh (in the bundle below) running `chronyc clients` via
+// cron and reporting it back. Only populated once that script is actually
+// installed on a node with chrony running; an empty table here usually just
+// means the bundle hasn't been deployed yet, not that nothing is syncing.
+function NtpClientsSection() {
+  const { data: clients = [], isLoading, refetch, isFetching } = useQuery({
+    queryKey: ['ntp-clients'],
+    queryFn:  () => api.get('/ntp/clients'),
+    refetchInterval: 60_000,
+  });
+
+  return (
+    <div className="mb-8">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold text-slate-800">Devices Polling This Server</h2>
+        <button onClick={() => refetch()} disabled={isFetching} className="btn-secondary text-sm disabled:opacity-50">
+          {isFetching ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+      <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>
+              {['Device','Node','NTP Packets','Dropped','Last Seen'].map(h => (
+                <th key={h} className="px-3 py-2 text-left">{h}</th>
+              ))}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {clients.map(c => (
+              <tr key={c.id} className="hover:bg-slate-50">
+                <td className="px-3 py-3">
+                  <div className="font-mono font-medium text-slate-800 text-xs">{c.client_address}</div>
+                  {c.device_name && <div className="text-xs text-slate-400">{c.device_name}</div>}
+                </td>
+                <td className="px-3 py-3 text-xs font-mono text-slate-500">{c.node_id}</td>
+                <td className="px-3 py-3 text-xs font-mono text-slate-600">{c.ntp_packets}</td>
+                <td className="px-3 py-3 text-xs font-mono text-slate-600">{c.ntp_dropped}</td>
+                <td className="px-3 py-3"><LastSeenBadge lastSeenAt={c.last_seen_at} /></td>
+              </tr>
+            ))}
+            {!isLoading && clients.length === 0 && (
+              <tr><td colSpan={5} className="text-center text-slate-400 py-8 text-sm">
+                No devices reported yet. Install <span className="font-mono text-xs">ntp-client-report.sh</span> (from
+                the config bundle below) via cron on each node once chrony is running.
+              </td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-slate-400 mt-2">
+        Auto-refreshes every 60s. chrony only ever exposes a live snapshot per client (cumulative
+        packet count, time since last packet) — not a per-request log — so this mirrors that shape
+        rather than a full query history like DNS Logs.
+      </p>
+    </div>
+  );
+}
+
 function NtpServerSection() {
   const qc = useQueryClient();
   const [form, setForm] = useState(null);
@@ -134,7 +205,11 @@ function NtpServerSection() {
         <div className="flex items-center justify-between mb-4">
           <div>
             <h3 className="font-semibold text-slate-900">chrony Config Files</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Generated from the settings above. Deploy to each node's host (outside Docker).</p>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Generated from the settings above. Deploy to each node's host (outside Docker) —
+              also includes <span className="font-mono">ntp-client-report.sh</span>, which feeds
+              the "Devices Polling This Server" list below once installed via cron.
+            </p>
           </div>
           <button onClick={loadBundle} disabled={loadingBundle} className="btn-primary text-sm">
             {loadingBundle ? 'Generating…' : 'Generate Configs'}
@@ -211,6 +286,7 @@ export default function NtpPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto">
       <NtpServerSection />
+      <NtpClientsSection />
 
       <div className="flex items-start justify-between mb-5">
         <div>

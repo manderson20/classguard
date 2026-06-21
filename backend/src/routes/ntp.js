@@ -127,4 +127,59 @@ router.get('/server-bundle', ...superauth, async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// NTP client visibility — which devices are actually polling this node's
+// chrony for time, fed by the cron-installed ntp-client-report.sh script
+// from the bundle above (chrony itself only exposes a live `chronyc
+// clients` snapshot, no log of its own — see services/chrony.js).
+// ---------------------------------------------------------------------------
+
+// POST /api/v1/ntp/internal/clients — internal-secret only (see middleware/auth.js
+// isInternalRequest); requireMinRole passes naturally for that caller, same
+// pattern as extension.js's /internal/tab-events/bulk.
+router.post('/internal/clients', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { node_id, clients } = req.body;
+  if (!node_id || !Array.isArray(clients)) {
+    return res.status(400).json({ error: 'node_id and clients[] required' });
+  }
+  try {
+    for (const c of clients) {
+      if (!c.client_address) continue;
+      const lastSeenAt = Number(c.seconds_since_last_rx) >= 0
+        ? new Date(Date.now() - Number(c.seconds_since_last_rx) * 1000)
+        : null;
+      await pool.query(
+        `INSERT INTO ntp_clients (node_id, client_address, ntp_packets, ntp_dropped, last_seen_at)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (node_id, client_address) DO UPDATE SET
+           ntp_packets  = EXCLUDED.ntp_packets,
+           ntp_dropped  = EXCLUDED.ntp_dropped,
+           last_seen_at = COALESCE(EXCLUDED.last_seen_at, ntp_clients.last_seen_at),
+           updated_at   = NOW()`,
+        [node_id, c.client_address, c.ntp_packets || 0, c.ntp_dropped || 0, lastSeenAt]
+      );
+    }
+    res.json({ status: 'ok', count: clients.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/ntp/clients — admin UI listing, with device names resolved the
+// same way DNS Logs does (IP inventory first, then phone system).
+router.get('/clients', ...auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT nc.*, COALESCE(ip.hostname, ph.display_name) AS device_name
+       FROM ntp_clients nc
+       LEFT JOIN ip_addresses ip ON ip.ip = nc.client_address
+       LEFT JOIN phones ph ON ip.id IS NULL AND ph.ip_address = nc.client_address
+       ORDER BY nc.last_seen_at DESC NULLS LAST`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = router;
