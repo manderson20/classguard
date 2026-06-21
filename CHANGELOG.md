@@ -18,6 +18,35 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.5.0] - 2026-06-21
+
+### Added
+
+- **Extension popup shows its own version number and last policy sync
+  time**, visible whether signed in or not — lets an admin check a
+  device's state at a glance without devtools.
+
+### Fixed
+
+- **A second, independent bug behind "the extension never tracks
+  anything"**, found after the 0.4.0 auth fix actually let a real device
+  reach the server for the first time: `/extension/auth` was crashing
+  with a 500 on every login because `users.last_login_at` — referenced by
+  this route and by Staff Analytics' "last login" sort since both were
+  written — was never actually added to the schema. Verified live: once
+  fixed, the next automatic retry from a real device went from 500 to
+  200, and device registration plus real browser-history rows appeared
+  for the first time on this deployment.
+- Extension icons now use the dedicated shield mark provided for this
+  purpose instead of a cropped wordmark, which was illegible at toolbar
+  size.
+- The popup's logo was invisible against its own header — both are blue,
+  so a thin-line-art mark on a same-color background disappeared
+  entirely even though it rendered correctly. Given a white backing plate
+  so it actually contrasts.
+
+---
+
 ## [0.4.0] - 2026-06-21
 
 ### Added
