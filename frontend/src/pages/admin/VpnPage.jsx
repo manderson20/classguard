@@ -41,50 +41,217 @@ function CopyField({ label, value }) {
   );
 }
 
-// Exactly what to paste into Mosyle's VPN payload screen — Mosyle's own API
-// has no way to push this profile (confirmed against its actual API spec),
-// so this does as much of the work as possible short of that.
-function MosyleProfilePanel() {
+function downloadText(filename, content) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
+  a.download = filename;
+  a.click();
+}
+
+// macOS/iOS via Mosyle — the only platform actually in use here, so this is
+// the one with a real walkthrough rather than just a values reference.
+// ClassGuard can't push either profile itself (confirmed against Mosyle's
+// actual API spec — no profile/payload endpoint exists at all), so this
+// does as much of the work as possible short of that: every value an admin
+// needs, in the order they're needed.
+function MosylePanel({ cfg }) {
   const { data: vrrp } = useQuery({ queryKey: ['ha-vrrp'], queryFn: () => api.get('/ha/vrrp') });
   const server = vrrp?.vip_address || '(configure a VRRP VIP on the HA Cluster page first)';
+  const scepUrl = `${window.location.origin}/scep/`;
 
   return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
-      <h3 className="font-semibold text-slate-900 mb-1">Mosyle VPN Profile Values</h3>
-      <p className="text-xs text-slate-500 mb-4">
-        Mosyle's API has no endpoint to push a VPN profile — paste these values into
-        Management → Profiles → VPN in Mosyle's own console.
+    <div>
+      <h4 className="font-semibold text-slate-800 text-sm mb-2">1. Create the SCEP profile first</h4>
+      <p className="text-xs text-slate-500 mb-2">Mosyle: Management → Profiles → SCEP → Add New Profile.</p>
+      <div className="bg-slate-50 rounded-lg p-3 mb-3">
+        <CopyField label="URL" value={scepUrl} />
+        <CopyField label="Subject" value="CN=%Email%" />
+        <CopyField label="Challenge" value={cfg.scep_challenge} />
+        <CopyField label="Key Size (in bits)" value="2048 — Mosyle's own default of 1024 is weak, change it" />
+      </div>
+      <p className="text-xs text-slate-400 mb-4">
+        Subject = <span className={MONO}>CN=%Email%</span> (Mosyle's own variable substitution) means every
+        issued cert's identity is the staff member's actual email — that's what shows up in the Sessions
+        table below instead of an opaque device serial. Assign this profile to specific users (1:1), not
+        just devices, or <span className={MONO}>%Email%</span> has nothing to resolve to.
       </p>
-      <CopyField label="Connection Type" value="IKEv2" />
-      <CopyField label="Server" value={server} />
-      <CopyField label="Machine Authentication" value="Certificate" />
-      <CopyField label="Identity Certificate" value="The cert issued via the SCEP profile below" />
+
+      <h4 className="font-semibold text-slate-800 text-sm mb-2">2. Feed it ClassGuard's CA</h4>
+      <p className="text-xs text-slate-500 mb-4">
+        Download the CA certificate from the section above, then back in that same SCEP profile, use the
+        "Create from Certificate…" button next to Fingerprint and upload it.
+      </p>
+
+      <h4 className="font-semibold text-slate-800 text-sm mb-2">3. Create the VPN profile</h4>
+      <p className="text-xs text-slate-500 mb-2">Management → Profiles → VPN → Add New Profile.</p>
+      <div className="bg-slate-50 rounded-lg p-3 mb-3">
+        <CopyField label="Connection Type" value="IKEv2" />
+        <CopyField label="Server" value={server} />
+        <CopyField label="Machine Authentication" value="Certificate" />
+        <CopyField label="Identity Certificate" value="Choose authentication certificate → the SCEP profile from step 1" />
+      </div>
+
+      <h4 className="font-semibold text-slate-800 text-sm mb-2">4. Assign both profiles to one test device first</h4>
+      <p className="text-xs text-slate-500">
+        Confirm it actually enrolls and connects (Sessions table below) before assigning more broadly.
+      </p>
     </div>
   );
 }
 
-// Mosyle's SCEP profile doesn't hand out a certificate — it's Apple's
-// standard SCEP payload, just a pointer at a SCEP server plus a static
-// challenge (confirmed from Mosyle's own profile screen). This panel is
-// what makes that pointer resolve to ClassGuard's own CA below.
-function ScepProfilePanel({ cfg }) {
-  const url = `${window.location.origin}/scep/`;
+// ChromeOS — genuinely more involved than the Mac flow, not just a
+// different console: a Chromebook doesn't talk to an arbitrary SCEP URL
+// directly. Worth saying plainly rather than presenting this as equivalent
+// effort to the Mosyle path.
+function ChromeOsPanel({ cfg }) {
+  const { data: vrrp } = useQuery({ queryKey: ['ha-vrrp'], queryFn: () => api.get('/ha/vrrp') });
+  const server = vrrp?.vip_address || '(configure a VRRP VIP on the HA Cluster page first)';
+  const scepUrl = `${window.location.origin}/scep/`;
+
+  return (
+    <div>
+      <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4 text-xs text-amber-800">
+        Chromebooks don't enroll against a SCEP URL directly the way Macs/iPads do. Google requires
+        installing its own <strong>Cloud Certificate Connector</strong> — a small Windows service, running
+        somewhere on your network — that bridges Google's cloud to this SCEP server. Google is also
+        migrating ChromeOS certificate provisioning to a newer Certificate Provisioning API through 2026,
+        so verify the exact console steps against Google's current docs when you set this up.
+      </div>
+
+      <h4 className="font-semibold text-slate-800 text-sm mb-2">1. Install the Cloud Certificate Connector</h4>
+      <p className="text-xs text-slate-500 mb-4">
+        On a Windows host that can stay running and reach this SCEP server. Configure it with the SCEP
+        values below (Google Admin console → Devices → Networks → Certificates).
+      </p>
+      <div className="bg-slate-50 rounded-lg p-3 mb-4">
+        <CopyField label="SCEP URL" value={scepUrl} />
+        <CopyField label="Challenge" value={cfg.scep_challenge} />
+      </div>
+
+      <h4 className="font-semibold text-slate-800 text-sm mb-2">2. Add the VPN network</h4>
+      <p className="text-xs text-slate-500 mb-2">Google Admin console → Devices → Networks → add a Network → VPN.</p>
+      <div className="bg-slate-50 rounded-lg p-3 mb-3">
+        <CopyField label="Connection Type" value="IKEv2" />
+        <CopyField label="Server" value={server} />
+        <CopyField label="Authentication" value="User/Server certificate (reference the cert provisioned in step 1)" />
+      </div>
+
+      <h4 className="font-semibold text-slate-800 text-sm mb-2">3. Apply to an OU with one test device first</h4>
+      <p className="text-xs text-slate-500">Confirm enrollment and connection before applying org-wide.</p>
+    </div>
+  );
+}
+
+// Windows — two real paths depending on whether the district has any MDM
+// for staff Windows laptops at all, which varies a lot more district to
+// district than it does for Mac/iPad.
+function WindowsPanel({ cfg }) {
+  const { data: vrrp } = useQuery({ queryKey: ['ha-vrrp'], queryFn: () => api.get('/ha/vrrp') });
+  const server = vrrp?.vip_address || '(configure a VRRP VIP on the HA Cluster page first)';
+  const scepUrl = `${window.location.origin}/scep/`;
+  const [mode, setMode] = useState('intune');
+
+  const script = `# ClassGuard VPN setup — no MDM required. Run as Administrator.
+# Downloads nothing itself — get scepclient.exe first from the SAME
+# open-source project this server is built from (same supply-chain
+# reasoning as ClassGuard's own server-side build):
+#   https://github.com/micromdm/scep/releases/download/v2.3.0/scepclient-windows-amd64-v2.3.0.zip
+# Extract scepclient.exe into this same folder before running this script.
+# Also download the CA certificate from this VPN page first and save it
+# next to this script as classguard-ca.pem.
+
+$ServerUrl  = "${scepUrl}"
+$Challenge  = "${cfg.scep_challenge || '<paste the Challenge value from above>'}"
+$CaFingerprint = "${cfg.ca_info?.fingerprint || '<paste the CA fingerprint shown above>'}"
+$VpnServer  = "${server}"
+$Cn         = "$env:USERNAME@$env:USERDNSDOMAIN"   # identity for this device's cert
+
+# 1. Enroll for a certificate against ClassGuard's SCEP server
+.\\scepclient.exe -server-url $ServerUrl -challenge $Challenge -ca-fingerprint $CaFingerprint \`
+  -cn $Cn -private-key .\\classguard-vpn.key -certificate .\\classguard-vpn.pem
+
+# 2. Trust ClassGuard's CA, then import the issued cert
+Import-Certificate -FilePath .\\classguard-ca.pem -CertStoreLocation Cert:\\LocalMachine\\Root
+certutil -importPFX -p "" .\\classguard-vpn.pem  # adjust if scepclient wrote a PFX instead of separate cert/key
+
+# 3. Create the VPN connection
+Add-VpnConnection -Name "ClassGuard" -ServerAddress $VpnServer -TunnelType Ikev2 \`
+  -AuthenticationMethod MachineCertificate -RememberCredential -Force
+
+Write-Host "Done. Connect via Settings -> Network & internet -> VPN -> ClassGuard."
+`;
+
+  return (
+    <div>
+      <div className="flex gap-2 mb-4">
+        <button onClick={() => setMode('intune')} className={`text-xs px-3 py-1.5 rounded-full font-medium ${mode === 'intune' ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-600'}`}>Has Intune (or similar MDM)</button>
+        <button onClick={() => setMode('manual')} className={`text-xs px-3 py-1.5 rounded-full font-medium ${mode === 'manual' ? 'bg-primary-600 text-white' : 'bg-slate-100 text-slate-600'}`}>No MDM</button>
+      </div>
+
+      {mode === 'intune' ? (
+        <div>
+          <h4 className="font-semibold text-slate-800 text-sm mb-2">1. SCEP certificate profile</h4>
+          <p className="text-xs text-slate-500 mb-2">Intune: Devices → Configuration → Create → SCEP certificate profile.</p>
+          <div className="bg-slate-50 rounded-lg p-3 mb-4">
+            <CopyField label="SCEP Server URL" value={scepUrl} />
+            <CopyField label="Subject name format" value="CN={{UserPrincipalName}}" />
+            <CopyField label="Challenge" value={cfg.scep_challenge} />
+            <CopyField label="Key size" value="2048" />
+          </div>
+          <h4 className="font-semibold text-slate-800 text-sm mb-2">2. VPN profile</h4>
+          <p className="text-xs text-slate-500 mb-2">Devices → Configuration → Create → VPN, Windows 10 and later.</p>
+          <div className="bg-slate-50 rounded-lg p-3 mb-3">
+            <CopyField label="Connection type" value="IKEv2" />
+            <CopyField label="Server address" value={server} />
+            <CopyField label="Authentication method" value="Machine certificates — select the SCEP profile from step 1" />
+          </div>
+          <p className="text-xs text-slate-500">Assign both to one test device's group before wider rollout.</p>
+        </div>
+      ) : (
+        <div>
+          <p className="text-xs text-slate-500 mb-3">
+            For districts without device management on staff Windows laptops — a script using
+            scepclient, the same project ClassGuard's SCEP server is built from, rather than anything
+            requiring a management policy server.
+          </p>
+          <button onClick={() => downloadText('classguard-vpn-setup.ps1', script)} className="btn-secondary text-sm mb-3">
+            Download Setup Script
+          </button>
+          <p className="text-xs text-slate-400">
+            Review it before running — it needs scepclient.exe (linked in the script's own comments) and
+            the CA certificate downloaded from the section above, both placed next to the script first.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DeploymentInstructions({ cfg }) {
+  const [platform, setPlatform] = useState('mac');
+  const TABS = [
+    { id: 'mac', label: 'macOS / iOS (Mosyle)' },
+    { id: 'chromeos', label: 'ChromeOS' },
+    { id: 'windows', label: 'Windows' },
+  ];
   return (
     <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
-      <h3 className="font-semibold text-slate-900 mb-1">Mosyle SCEP Profile Values</h3>
+      <h3 className="font-semibold text-slate-900 mb-1">Device Setup Instructions</h3>
       <p className="text-xs text-slate-500 mb-4">
-        Management → Profiles → SCEP in Mosyle. Create this <strong>before</strong> the VPN
-        profile above — the VPN profile's Identity Certificate picker references this one.
+        ClassGuard's SCEP server speaks a standard protocol any platform can enroll against — these are
+        the platform-specific ways to actually point a device at it.
       </p>
-      <CopyField label="URL" value={url} />
-      <CopyField label="Subject" value="CN=%Email%" />
-      <CopyField label="Challenge" value={cfg.scep_challenge} />
-      <CopyField label="Key Size (in bits)" value="2048 (Mosyle's own default of 1024 is weak — change it)" />
-      <p className="text-xs text-slate-400 mt-3">
-        Setting Subject to <span className={MONO}>CN=%Email%</span> means every issued cert's
-        identity is the staff member's actual email, using Mosyle's own variable substitution —
-        that's what shows up in the Sessions table below instead of an opaque device serial.
-      </p>
+      <div className="flex gap-2 mb-4 border-b border-slate-100 pb-3">
+        {TABS.map(t => (
+          <button key={t.id} onClick={() => setPlatform(t.id)}
+            className={`text-xs px-3 py-1.5 rounded-full font-medium ${platform === t.id ? 'bg-slate-800 text-white' : 'bg-slate-100 text-slate-600'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      {platform === 'mac' && <MosylePanel cfg={cfg} />}
+      {platform === 'chromeos' && <ChromeOsPanel cfg={cfg} />}
+      {platform === 'windows' && <WindowsPanel cfg={cfg} />}
     </div>
   );
 }
@@ -179,18 +346,17 @@ export default function VpnPage() {
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">VPN — Staff Remote Access</h1>
         <p className="text-slate-500 text-sm mt-0.5">
-          Self-hosted IKEv2 over the VRRP floating IP. Apple's built-in VPN client connects directly —
-          no app to install on staff Macs/iPads, just the MDM profiles below. Authentication trusts
-          ClassGuard's own CA, issued to devices via a self-hosted SCEP server when Mosyle enrolls them —
-          Mosyle itself never holds a certificate; its SCEP profile is just a pointer at that server.
+          Self-hosted IKEv2 over the VRRP floating IP. Authentication trusts ClassGuard's own CA, issued
+          to devices via a self-hosted SCEP server on enrollment — no MDM vendor ever holds a certificate
+          itself, each one's "SCEP profile" is just a pointer at this server, so any platform that speaks
+          SCEP can enroll (deployment instructions below cover macOS/iOS via Mosyle, ChromeOS, and Windows).
           This is a traditional perimeter VPN, not ZTNA — a connected client is a network member, subject
           only to the optional subnet restriction below.
         </p>
       </div>
 
       <CaSection cfg={cfg} />
-      <ScepProfilePanel cfg={cfg} />
-      <MosyleProfilePanel />
+      <DeploymentInstructions cfg={cfg} />
 
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
         <h3 className="font-semibold text-slate-900 mb-3">Configuration</h3>
