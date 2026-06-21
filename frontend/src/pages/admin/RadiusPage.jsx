@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
+import FailoverPriorityList from '../../components/FailoverPriorityList';
 
 // ---------------------------------------------------------------------------
 // Shared primitives
@@ -1049,7 +1050,7 @@ function HaConfigTab() {
           <Field label="Subnet prefix length">
             <input type="number" className={INPUT} value={cfg.vip_prefix_len||24} onChange={e=>set('vip_prefix_len',parseInt(e.target.value))} min={1} max={32}/>
           </Field>
-          <Field label="Network interface" hint="on both nodes">
+          <Field label="Network interface" hint="on every node">
             <input className={INPUT} value={cfg.vip_interface||'eth0'} onChange={e=>set('vip_interface',e.target.value)}/>
           </Field>
           <Field label="VRRP instance name">
@@ -1061,12 +1062,9 @@ function HaConfigTab() {
           <Field label="VRRP auth password">
             <input type="password" className={INPUT} value={cfg.vrrp_auth_password||''} onChange={e=>set('vrrp_auth_password',e.target.value)}/>
           </Field>
-          <Field label="Primary priority" hint="default 150">
-            <input type="number" className={INPUT} value={cfg.priority_primary||150} onChange={e=>set('priority_primary',parseInt(e.target.value))}/>
-          </Field>
-          <Field label="Secondary priority" hint="default 100">
-            <input type="number" className={INPUT} value={cfg.priority_secondary||100} onChange={e=>set('priority_secondary',parseInt(e.target.value))}/>
-          </Field>
+        </div>
+        <div className="mt-4 pt-4 border-t border-slate-100">
+          <FailoverPriorityList />
         </div>
         <div className="flex justify-end mt-4">
           <button onClick={()=>saveHa.mutate()} disabled={saveHa.isPending} className="btn-primary text-sm">

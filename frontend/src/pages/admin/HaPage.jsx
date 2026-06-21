@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
+import FailoverPriorityList from '../../components/FailoverPriorityList';
 
 const ROLE_COLOR = { primary: 'blue', standby: 'green', replica: 'slate' };
 const ROLE_LABEL = { primary: 'Primary', standby: 'Standby', replica: 'Read Replica' };
@@ -680,7 +681,7 @@ function VrrpSection() {
           <Field label="Subnet prefix length">
             <input type="number" className={INPUT} value={cfg.vip_prefix_len || 24} onChange={e => set('vip_prefix_len', parseInt(e.target.value))} min={1} max={32} />
           </Field>
-          <Field label="Network interface" hint="on both nodes">
+          <Field label="Network interface" hint="on every node">
             <input className={INPUT} value={cfg.vip_interface || 'eth0'} onChange={e => set('vip_interface', e.target.value)} />
           </Field>
           <Field label="VRRP instance name">
@@ -692,12 +693,9 @@ function VrrpSection() {
           <Field label="VRRP auth password">
             <input type="password" className={INPUT} value={cfg.vrrp_auth_password || ''} onChange={e => set('vrrp_auth_password', e.target.value)} />
           </Field>
-          <Field label="Primary priority" hint="default 150">
-            <input type="number" className={INPUT} value={cfg.priority_primary || 150} onChange={e => set('priority_primary', parseInt(e.target.value))} />
-          </Field>
-          <Field label="Secondary priority" hint="default 100">
-            <input type="number" className={INPUT} value={cfg.priority_secondary || 100} onChange={e => set('priority_secondary', parseInt(e.target.value))} />
-          </Field>
+        </div>
+        <div className="mt-4 pt-4 border-t border-slate-100">
+          <FailoverPriorityList />
         </div>
         <div className="flex items-center gap-5 mt-4 pt-4 border-t border-slate-100">
           <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer">
@@ -1018,13 +1016,14 @@ export default function HaPage() {
       {isLoading && <p className="text-sm text-slate-400">Loading nodes…</p>}
 
       <div className="flex flex-col gap-3 mb-8">
-        {nodes.map(n => (
+        {[...nodes].sort((a, b) => (b.failover_priority ?? 100) - (a.failover_priority ?? 100)).map((n, i) => (
           <div key={n.id}
             className={`bg-white border rounded-xl p-5 shadow-sm ${n.healthy ? 'border-slate-200' : 'border-red-200 bg-red-50/30'}`}>
             <div className="flex items-start gap-4">
               <div className="text-2xl">{n.ha_role === 'primary' ? '🖥️' : '🔄'}</div>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2 flex-wrap">
+                  <span className="text-xs font-mono text-slate-400">#{i + 1}</span>
                   <span className="font-semibold text-slate-900">{n.hostname}</span>
                   <RoleBadge role={n.ha_role} />
                   <StatusDot healthy={n.healthy} secondsSinceSeen={n.seconds_since_seen} />
@@ -1033,7 +1032,7 @@ export default function HaPage() {
                 <div className="mt-1 text-xs text-slate-500 font-mono">{n.api_url || <span className="text-amber-500">No API URL — health probing disabled</span>}</div>
                 <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-3 text-xs text-slate-500">
                   <div><span className="font-medium">Node ID:</span> {n.node_id || n.id.slice(0, 8)}</div>
-                  <div><span className="font-medium">Role:</span> {n.role || '—'}</div>
+                  <div><span className="font-medium">Failover priority:</span> {n.failover_priority ?? 100}</div>
                   <div><span className="font-medium">Last seen:</span> {n.seconds_since_seen == null ? 'Never' : n.seconds_since_seen < 60 ? 'Just now' : `${Math.round(n.seconds_since_seen / 60)}m ago`}</div>
                   <div><span className="font-medium">DB lag:</span> {n.db_lag_bytes != null ? `${n.db_lag_bytes}B` : '—'}</div>
                 </div>
