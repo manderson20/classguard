@@ -8,6 +8,7 @@ import { enforcePolicy }           from '../lib/rules.js';
 import { connectSocket, isConnected } from '../lib/socket.js';
 
 const POLICY_CACHE_KEY   = 'cg_policy';
+const POLICY_SYNC_TS_KEY = 'cg_policy_synced_at';
 const KEYWORDS_CACHE_KEY = 'cg_keywords';
 const BRANDING_CACHE_KEY = 'cg_branding';
 const BRANDING_TS_KEY    = 'cg_branding_ts';
@@ -130,7 +131,10 @@ async function syncPolicy(jwtOverride) {
 
   try {
     const policy = await apiFetch('/users/me/effective-policy', { jwt });
-    await chrome.storage.local.set({ [POLICY_CACHE_KEY]: policy });
+    await chrome.storage.local.set({
+      [POLICY_CACHE_KEY]:   policy,
+      [POLICY_SYNC_TS_KEY]: Date.now(),
+    });
     await enforcePolicy(policy);
     chrome.runtime.sendMessage({ type: 'CG_POLICY_UPDATED', policy }).catch(() => {});
   } catch (err) {
@@ -380,12 +384,20 @@ async function sendHeartbeat() {
 async function handleMessage(msg, sender) {
   switch (msg.type) {
     case 'CG_GET_STATUS': {
-      const [jwt, user, policy] = await Promise.all([
+      const [jwt, user, policy, tsData] = await Promise.all([
         getStoredJWT(),
         getStoredUser(),
         getCachedPolicy(),
+        chrome.storage.local.get(POLICY_SYNC_TS_KEY),
       ]);
-      return { authenticated: !!jwt, user, policy, socketConnected: isConnected() };
+      return {
+        authenticated:   !!jwt,
+        user,
+        policy,
+        socketConnected: isConnected(),
+        policySyncedAt:  tsData[POLICY_SYNC_TS_KEY] || null,
+        version:         chrome.runtime.getManifest().version,
+      };
     }
 
     case 'CG_FORCE_SYNC': {
