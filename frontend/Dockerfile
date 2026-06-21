@@ -1,4 +1,5 @@
-FROM node:20-alpine AS build
+# Pinned to the exact Node version currently deployed - see backend/Dockerfile.
+FROM node:20.20.2-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
@@ -7,7 +8,9 @@ ARG VITE_API_URL
 ENV VITE_API_URL=${VITE_API_URL}
 RUN npm run build
 
-FROM nginx:alpine AS serve
+# Pinned to the exact nginx version currently deployed - same rationale as
+# the Node pin above.
+FROM nginx:1.31.1-alpine AS serve
 RUN apk add --no-cache openssl
 COPY --from=build /app/dist /usr/share/nginx/html
 # nginx Docker image processes /etc/nginx/templates/*.template via envsubst on startup

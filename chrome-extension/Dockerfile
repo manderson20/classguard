@@ -1,4 +1,5 @@
-FROM node:20-alpine
+# Pinned to the exact Node version currently deployed - see backend/Dockerfile.
+FROM node:20.20.2-alpine
 RUN apk add --no-cache zip
 WORKDIR /app
 COPY package*.json ./
