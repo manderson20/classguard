@@ -259,9 +259,24 @@ async function syncController(controllerId) {
     const adapter = getAdapter(controller.vendor);
     const clients = await adapter.fetchClients(controller);
 
+    // Some vendors' client API (UniFi in particular) only reports the AP's
+    // MAC on each client, not its name - the name only exists on the device
+    // list. Cross-reference it here so the AP shows its real name instead of
+    // a MAC address everywhere ap_name is displayed.
+    let apNameByMac = new Map();
+    if (adapter.fetchDevices) {
+      try {
+        const devices = await adapter.fetchDevices(controller);
+        apNameByMac = new Map(devices.map(d => [(d.mac || '').toLowerCase(), d.name]));
+      } catch (e) {
+        console.warn(`[network] could not fetch devices for AP name resolution (${controller.name}): ${e.message}`);
+      }
+    }
+
     // Upsert all clients
     for (const c of clients) {
       if (!c.mac) continue;
+      const apName = c.ap_name || apNameByMac.get(c.ap_mac) || c.ap_mac || null;
       await pool.query(
         `INSERT INTO network_clients
            (controller_id, mac, ip_address, hostname, ap_name, ssid, rssi, channel, radio_type,
@@ -277,7 +292,7 @@ async function syncController(controllerId) {
            status = EXCLUDED.status, vendor_oui = EXCLUDED.vendor_oui,
            os_type = EXCLUDED.os_type, last_seen = EXCLUDED.last_seen,
            raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
-        [controllerId, c.mac, c.ip_address, c.hostname, c.ap_name, c.ssid,
+        [controllerId, c.mac, c.ip_address, c.hostname, apName, c.ssid,
          c.rssi, c.channel, c.radio_type, c.switch_name, c.switch_port,
          c.vlan, c.connection_type, c.status, c.vendor_oui, c.os_type,
          c.first_seen, c.last_seen, JSON.stringify(c.raw_data)]

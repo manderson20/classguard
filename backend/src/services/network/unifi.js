@@ -123,7 +123,13 @@ async function fetchClients(config) {
       mac:             (c.mac || '').toLowerCase(),
       ip_address:      c.ip || null,
       hostname:        c.hostname || c.name || null,
-      ap_name:         c.ap_mac ? (c['ap_name'] || c.ap_mac) : null,
+      // UniFi's client/station API never actually includes a resolved AP
+      // name (only ap_mac) - the real name only exists on the device list
+      // (fetchDevices). Surface the raw MAC here; the caller cross-references
+      // it against fetchDevices() to resolve the real name, falling back to
+      // this MAC only if that lookup comes up empty.
+      ap_mac:          c.ap_mac ? c.ap_mac.toLowerCase() : null,
+      ap_name:         c['ap_name'] || null,
       ssid:            c.essid || null,
       rssi:            c.rssi   != null ? c.rssi   : null,
       channel:         c.channel != null ? c.channel : null,
