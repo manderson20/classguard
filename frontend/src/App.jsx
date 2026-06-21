@@ -42,6 +42,7 @@ import NtpPage         from './pages/admin/NtpPage';
 import AiPage          from './pages/admin/AiPage';
 import NetworkPage     from './pages/admin/NetworkPage';
 import NetworkDeviceDetail from './pages/admin/NetworkDeviceDetail';
+import SystemHealthPage from './pages/admin/SystemHealthPage';
 import RosterPage          from './pages/admin/RosterPage';
 import RadiusPage          from './pages/admin/RadiusPage';
 import ScreenshotsPage     from './pages/admin/ScreenshotsPage';
@@ -119,6 +120,7 @@ export default function App() {
           <Route path="/admin/screenshots"            element={<ScreenshotsPage />} />
           <Route path="/admin/chat"                   element={<ChatAuditPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
+          <Route path="/admin/system-health"           element={<SystemHealthPage />} />
         </Route>
       </Route>
 
