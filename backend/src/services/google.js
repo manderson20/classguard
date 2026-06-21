@@ -57,6 +57,66 @@ async function getServiceAccountAuth(scopes) {
   return new google.auth.GoogleAuth({ keyFile: keyPath, scopes, clientOptions: { subject: superadmin } });
 }
 
+// ---------------------------------------------------------------------------
+// OU → role mapping
+// ---------------------------------------------------------------------------
+// Configurable rather than hardcoded to this district's "/Students" vs
+// "/Employees" convention — other schools' Workspace OU trees use different
+// top-level names. Stored as Integrations > Google Workspace > Device &
+// Directory Sync > "Role Mapping by OU". Longest matching prefix wins so a
+// more specific rule (e.g. "/Employees/Substitute Teachers" -> student-ish
+// restricted access) can override a broader one ("/Employees" -> teacher).
+const DEFAULT_OU_ROLE_RULES = [
+  { ouPrefix: '/Students',  role: 'student' },
+  { ouPrefix: '/Employees', role: 'teacher' },
+];
+
+function ouMatchesPrefix(ouPath, prefix) {
+  return ouPath === prefix || ouPath.startsWith(prefix.replace(/\/$/, '') + '/');
+}
+
+async function getOuRoleRules() {
+  const raw = await getSetting('google_ou_role_rules');
+  if (!raw) return DEFAULT_OU_ROLE_RULES;
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) && parsed.length ? parsed : DEFAULT_OU_ROLE_RULES;
+  } catch {
+    return DEFAULT_OU_ROLE_RULES;
+  }
+}
+
+function resolveRoleFromOu(ouPath, rules) {
+  if (!ouPath) return 'student';
+  const matches = rules.filter(r => ouMatchesPrefix(ouPath, r.ouPrefix));
+  if (!matches.length) return 'student';
+  matches.sort((a, b) => b.ouPrefix.length - a.ouPrefix.length);
+  return matches[0].role;
+}
+
+// Re-applies the current OU role rules to every user whose role has never
+// been manually overridden — used both right after the next scheduled sync
+// and on-demand from the UI when an admin edits the rules (so a rule change
+// doesn't require waiting for the next sync to take effect).
+async function backfillRolesFromOu(actorId = null) {
+  const rules = await getOuRoleRules();
+  const { rows } = await pool.query(
+    `SELECT id, google_ou, role FROM users WHERE role_source = 'auto' AND google_ou IS NOT NULL AND google_ou <> ''`
+  );
+
+  let changed = 0;
+  for (const u of rows) {
+    const newRole = resolveRoleFromOu(u.google_ou, rules);
+    if (newRole !== u.role) {
+      await pool.query(`UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2`, [newRole, u.id]);
+      changed++;
+    }
+  }
+
+  await _auditLog(actorId, 'google_backfill_roles', { checked: rows.length, changed });
+  return { checked: rows.length, changed };
+}
+
 const ADMIN_SCOPES = [
   'https://www.googleapis.com/auth/admin.directory.user.readonly',
   'https://www.googleapis.com/auth/admin.directory.group.readonly',
@@ -117,18 +177,24 @@ async function paginate(fn, params = {}) {
 // syncUsers
 // ---------------------------------------------------------------------------
 async function syncUsers(admin, actorId) {
-  const domain = await getSetting('google_workspace_domain') || process.env.GOOGLE_WORKSPACE_DOMAIN;
-  if (!domain) throw new Error('Workspace Domain not set — configure it under Integrations > Google Workspace');
+  // customer (whole Workspace account), not domain — a single domain misses
+  // every user on a secondary domain or subdomain (e.g. students issued
+  // accounts under students.example.org while staff are on example.org).
+  // syncOrgUnits already used customer, which is why the OU tree pulled in
+  // all 136 OUs while this only ever synced one domain's worth of users.
+  const customerId = await getSetting('google_customer_id') || process.env.GOOGLE_CUSTOMER_ID || 'my_customer';
 
   const googleUsers = await paginate(
     (p) => admin.users.list(p),
-    { domain, maxResults: 500, orderBy: 'email' }
+    { customer: customerId, maxResults: 500, orderBy: 'email' }
   );
 
+  const rules     = await getOuRoleRules();
   const googleIds = new Set();
 
   for (const gu of googleUsers) {
     googleIds.add(gu.id);
+    const role = resolveRoleFromOu(gu.orgUnitPath, rules);
 
     // Conflict target is email, not google_id: google_id is nullable (e.g. a
     // user created earlier via OneRoster import has it NULL), and Postgres
@@ -136,16 +202,23 @@ async function syncUsers(admin, actorId) {
     // (google_id) silently never matches those rows — it tried a fresh
     // INSERT instead and hit the separate email-uniqueness violation.
     // email is NOT NULL + UNIQUE for every row, so it's the reliable match.
+    //
+    // role/role_source: only set on first INSERT. On conflict, role is left
+    // alone entirely whenever role_source = 'manual' (an admin explicitly
+    // set it via PUT /users/:id/role) — otherwise it's re-derived from the
+    // OU rules every sync, so a student moved to a staff OU picks up the
+    // right role on the next run without anyone having to fix it by hand.
     await pool.query(
       `INSERT INTO users
-         (google_id, email, full_name, given_name, photo_url, google_ou, last_synced_at, updated_at)
-       VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
+         (google_id, email, full_name, given_name, photo_url, google_ou, role, role_source, last_synced_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'auto',NOW(),NOW())
        ON CONFLICT (email) DO UPDATE SET
          google_id      = EXCLUDED.google_id,
          full_name      = EXCLUDED.full_name,
          given_name     = EXCLUDED.given_name,
          photo_url      = EXCLUDED.photo_url,
          google_ou      = EXCLUDED.google_ou,
+         role           = CASE WHEN users.role_source = 'manual' THEN users.role ELSE EXCLUDED.role END,
          is_active      = true,
          last_synced_at = NOW(),
          updated_at     = NOW()`,
@@ -156,6 +229,7 @@ async function syncUsers(admin, actorId) {
         gu.name?.givenName   ?? null,
         gu.thumbnailPhotoUrl ?? null,
         gu.orgUnitPath       ?? null,
+        role,
       ]
     );
   }
@@ -178,12 +252,11 @@ async function syncUsers(admin, actorId) {
 // syncGroups
 // ---------------------------------------------------------------------------
 async function syncGroups(admin, actorId) {
-  const domain = await getSetting('google_workspace_domain') || process.env.GOOGLE_WORKSPACE_DOMAIN;
-  if (!domain) throw new Error('Workspace Domain not set — configure it under Integrations > Google Workspace');
+  const customerId = await getSetting('google_customer_id') || process.env.GOOGLE_CUSTOMER_ID || 'my_customer';
 
   const googleGroups = await paginate(
     (p) => admin.groups.list(p),
-    { domain, maxResults: 200 }
+    { customer: customerId, maxResults: 200 }
   );
 
   for (const gg of googleGroups) {
@@ -295,4 +368,7 @@ async function _auditLog(actorId, action, details) {
   }
 }
 
-module.exports = { initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits, getServiceAccountAuth };
+module.exports = {
+  initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits, getServiceAccountAuth,
+  getOuRoleRules, resolveRoleFromOu, backfillRolesFromOu,
+};

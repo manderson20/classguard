@@ -211,7 +211,9 @@ function DevicesTable({ source, search }) {
   const total   = resp?.total ?? devices.length;
   const lastPage = Math.max(1, Math.ceil(total / limit));
 
-  const OS_COLOR = { chromeos:'blue', macos:'slate', ios:'orange', windows:'blue', android:'green' };
+  const OS_COLOR = { chromeos:'blue', macos:'slate', ios:'orange', windows:'blue', android:'green', ipados:'orange' };
+  const SOURCE_LABEL = { snipeit: 'Snipe-IT', mosyle: 'Mosyle', google_admin: 'Google' };
+  const SOURCE_COLOR = { snipeit: 'slate', mosyle: 'orange', google_admin: 'blue' };
 
   if (isLoading) return <p className="text-sm text-slate-400 py-4">Loading…</p>;
 
@@ -220,28 +222,44 @@ function DevicesTable({ source, search }) {
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-            <tr>{['Device','Model','OS','Serial','Assigned To','IP','Status','Last Seen'].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+            <tr>{['Device','Model','OS','Serial','Assigned To','Sources','On Network','Status','Last Synced'].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {devices.map(d=>(
-              <tr key={d.id} className="hover:bg-slate-50">
-                <td className="px-3 py-2 font-medium text-slate-800 text-xs">{d.device_name||'—'}</td>
-                <td className="px-3 py-2 text-xs text-slate-500">{d.device_model||'—'}</td>
+              <tr key={d.key} className="hover:bg-slate-50">
+                <td className="px-3 py-2 font-medium text-slate-800 text-xs">{d.deviceName||'—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{d.deviceModel||'—'}</td>
                 <td className="px-3 py-2">
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium bg-${OS_COLOR[d.os_type]||'slate'}-100 text-${OS_COLOR[d.os_type]||'slate'}-700`}>
-                    {d.os_type||'—'}
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium bg-${OS_COLOR[d.osType]||'slate'}-100 text-${OS_COLOR[d.osType]||'slate'}-700`}>
+                    {d.osType||'—'}
                   </span>
                 </td>
-                <td className="px-3 py-2 font-mono text-xs text-slate-500">{d.serial_number||'—'}</td>
-                <td className="px-3 py-2 text-xs text-slate-500">{d.assigned_email||'—'}</td>
-                <td className="px-3 py-2 font-mono text-xs text-slate-500">{(d.ip_addresses||[]).join(', ')||'—'}</td>
-                <td className="px-3 py-2 text-xs">
-                  <span className={`px-2 py-0.5 rounded ${d.status==='active'?'bg-green-100 text-green-700':'bg-slate-100 text-slate-500'}`}>{d.status}</span>
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">{d.serialNumber||'—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{d.assignedEmail||d.assignedUser||'—'}</td>
+                <td className="px-3 py-2">
+                  <div className="flex gap-1 flex-wrap">
+                    {d.sources.map(s => (
+                      <span key={s.source} className={`px-1.5 py-0.5 rounded text-[11px] font-medium bg-${SOURCE_COLOR[s.source]||'slate'}-100 text-${SOURCE_COLOR[s.source]||'slate'}-700`}>
+                        {SOURCE_LABEL[s.source] || s.source}
+                      </span>
+                    ))}
+                  </div>
                 </td>
-                <td className="px-3 py-2 text-xs text-slate-400">{d.last_seen ? new Date(d.last_seen).toLocaleDateString() : '—'}</td>
+                <td className="px-3 py-2 text-xs">
+                  {d.network ? (
+                    <span title={`${d.network.ip || ''} ${d.network.apName ? 'via ' + d.network.apName : ''}`}
+                      className="px-1.5 py-0.5 rounded text-[11px] font-medium bg-green-100 text-green-700">
+                      Online{d.network.ip ? ` · ${d.network.ip}` : ''}
+                    </span>
+                  ) : <span className="text-slate-300">—</span>}
+                </td>
+                <td className="px-3 py-2 text-xs">
+                  <span className={`px-2 py-0.5 rounded ${d.status==='active'||d.status==='Deployed'?'bg-green-100 text-green-700':'bg-slate-100 text-slate-500'}`}>{d.status||'—'}</span>
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-400">{d.lastSynced ? new Date(d.lastSynced).toLocaleDateString() : '—'}</td>
               </tr>
             ))}
-            {!devices.length && <tr><td colSpan={8} className="text-center text-slate-400 py-6">No devices synced yet</td></tr>}
+            {!devices.length && <tr><td colSpan={9} className="text-center text-slate-400 py-6">No devices synced yet</td></tr>}
           </tbody>
         </table>
       </div>
@@ -334,8 +352,8 @@ function GoogleSsoSection() {
         <Field label="Authorized Redirect URI">
           <input className={INPUT} value={form.google_redirect_uri} onChange={e=>setForm(f=>({...f, google_redirect_uri:e.target.value}))}/>
         </Field>
-        <Field label="Workspace Domain (optional)">
-          <input className={INPUT} value={form.google_workspace_domain} onChange={e=>setForm(f=>({...f, google_workspace_domain:e.target.value}))} placeholder="school.org"/>
+        <Field label="Allowed Domain(s) (optional)" hint="Comma-separated if your Workspace spans more than one — e.g. staff on one domain, students on a subdomain">
+          <input className={INPUT} value={form.google_workspace_domain} onChange={e=>setForm(f=>({...f, google_workspace_domain:e.target.value}))} placeholder="school.org, students.school.org"/>
         </Field>
       </div>
       {saveError && <p className="text-red-500 text-xs">{saveError}</p>}
@@ -343,6 +361,148 @@ function GoogleSsoSection() {
         <button onClick={save} disabled={saving} className="btn-primary text-sm w-fit">{saving ? 'Saving…' : 'Save'}</button>
         {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
       </div>
+    </div>
+  );
+}
+
+const ROLE_OPTIONS = ['student', 'teacher', 'admin'];
+
+// Lets an admin decide which role new users get based on their Google OU,
+// instead of every synced/SSO-created account defaulting to 'student' (which
+// silently locked every staff member out of the admin app — RequireAuth
+// needs at least 'teacher'). Longest-matching-OU-prefix wins; an explicit
+// manual role change via the Users page is never overwritten by this.
+function OuRoleRulesSection() {
+  const qc = useQueryClient();
+  const [rules, setRules]   = useState([]);
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved]   = useState(false);
+  const [backfillResult, setBackfillResult] = useState(null);
+  const [backfilling, setBackfilling] = useState(false);
+
+  const { data: appSettings } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn:  () => api.get('/settings').catch(() => ({})),
+  });
+  const { data: ouList = [] } = useQuery({
+    queryKey: ['ou-list'],
+    queryFn:  () => api.get('/policies/ou-list'),
+  });
+  const { data: ouPreview = [] } = useQuery({
+    queryKey: ['ou-role-preview'],
+    queryFn:  () => api.get('/integrations/google/ou-role-preview'),
+  });
+
+  useEffect(() => {
+    if (!appSettings) return;
+    if (appSettings.google_ou_role_rules) {
+      try { setRules(JSON.parse(appSettings.google_ou_role_rules)); }
+      catch { setRules([]); }
+    } else {
+      setRules([{ ouPrefix: '/Students', role: 'student' }, { ouPrefix: '/Employees', role: 'teacher' }]);
+    }
+  }, [appSettings]);
+
+  const updateRule = (i, field, value) =>
+    setRules(rs => rs.map((r, idx) => idx === i ? { ...r, [field]: value } : r));
+  const removeRule = (i) => setRules(rs => rs.filter((_, idx) => idx !== i));
+  const addRule = (prefill = {}) => setRules(rs => [...rs, { ouPrefix: '', role: 'teacher', ...prefill }]);
+
+  const coveredPrefixes = rules.map(r => r.ouPrefix);
+  const uncovered = ouPreview.filter(p => !coveredPrefixes.some(prefix => p.ou === prefix || p.ou.startsWith(prefix.replace(/\/$/, '') + '/')));
+
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const clean = rules.filter(r => r.ouPrefix?.trim()).map(r => ({ ouPrefix: r.ouPrefix.trim(), role: r.role }));
+      await api.put('/settings', { google_ou_role_rules: JSON.stringify(clean) });
+      qc.invalidateQueries({ queryKey: ['app-settings'] });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const backfill = async () => {
+    setBackfilling(true);
+    setBackfillResult(null);
+    try {
+      const result = await api.post('/integrations/google/backfill-roles');
+      setBackfillResult(result);
+      qc.invalidateQueries({ queryKey: ['users-list'] });
+    } catch (e) {
+      setBackfillResult({ error: e.message || 'Backfill failed' });
+    } finally {
+      setBackfilling(false);
+    }
+  };
+
+  return (
+    <div className="border border-slate-200 rounded-lg p-3 flex flex-col gap-3">
+      <div>
+        <span className="text-sm font-medium text-slate-700">Role Mapping by OU</span>
+        <p className="text-xs text-slate-500 mt-0.5">
+          New users from directory sync or first Google sign-in are given a role based on the longest
+          matching OU prefix below (falls back to "student" if nothing matches). Roles changed manually
+          on the Users page are never overwritten by this.
+        </p>
+      </div>
+
+      <div className="flex flex-col gap-2">
+        {rules.map((r, i) => (
+          <div key={i} className="flex items-center gap-2">
+            <input className={INPUT + ' flex-1'} list="ou-role-datalist" placeholder="/Employees"
+              value={r.ouPrefix} onChange={e => updateRule(i, 'ouPrefix', e.target.value)}/>
+            <select className={INPUT + ' w-32'} value={r.role} onChange={e => updateRule(i, 'role', e.target.value)}>
+              {ROLE_OPTIONS.map(role => <option key={role} value={role}>{role}</option>)}
+            </select>
+            <button onClick={() => removeRule(i)} className="text-slate-400 hover:text-red-500 text-xs px-1">✕</button>
+          </div>
+        ))}
+        <datalist id="ou-role-datalist">
+          {ouList.map(p => <option key={p} value={p}/>)}
+        </datalist>
+        <button onClick={() => addRule()} className="text-xs text-primary-600 hover:text-primary-700 underline w-fit">+ Add rule</button>
+      </div>
+
+      {saveError && <p className="text-red-500 text-xs">{saveError}</p>}
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={saving} className="btn-secondary text-sm w-fit">{saving ? 'Saving…' : 'Save Rules'}</button>
+        {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+        <button onClick={backfill} disabled={backfilling} className="text-xs text-slate-500 hover:text-slate-700 underline ml-auto">
+          {backfilling ? 'Applying…' : 'Re-apply to existing users now'}
+        </button>
+      </div>
+      {backfillResult && (
+        backfillResult.error
+          ? <p className="text-red-500 text-xs">{backfillResult.error}</p>
+          : <p className="text-xs text-slate-500">Checked {backfillResult.checked} users, updated {backfillResult.changed}.</p>
+      )}
+
+      {uncovered.length > 0 && (
+        <div className="border-t border-slate-200 pt-3 mt-1">
+          <p className="text-xs font-semibold text-amber-600 uppercase tracking-wide mb-1">
+            {uncovered.length} OU{uncovered.length === 1 ? '' : 's'} not covered by a rule above (falling back to "student")
+          </p>
+          <div className="max-h-40 overflow-y-auto border border-slate-200 rounded-lg divide-y divide-slate-100">
+            {uncovered.map(p => (
+              <div key={p.ou} className="flex items-center gap-2 px-3 py-1.5 text-xs">
+                <span className="font-mono text-slate-700">{p.ou}</span>
+                <span className="text-slate-400">{p.count} user{p.count === 1 ? '' : 's'}, currently {p.currentRole}</span>
+                <button onClick={() => addRule({ ouPrefix: p.ou })}
+                  className="ml-auto text-primary-600 hover:text-primary-700 underline whitespace-nowrap">
+                  + Add rule for this OU
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -419,6 +579,8 @@ function GoogleSyncSection({ status }) {
         </div>
         <ErrorBanner message={status?.googleDevices?.lastError}/>
       </div>
+
+      {configured && <OuRoleRulesSection/>}
 
       <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-700">
         This is a separate credential from both Google Workspace Login (SSO) and the Chrome Extension's OAuth
@@ -1091,6 +1253,11 @@ function AllDevicesTab() {
 
   return (
     <div className="flex flex-col gap-3">
+      <p className="text-xs text-slate-500">
+        One row per physical device — the same Chromebook or iPad showing up in both Snipe-IT and an MDM
+        is merged here, matched by serial number, with live "on network" status overlaid from UniFi by MAC.
+        Filtering by source shows devices that have a record there, still with data from every other source too.
+      </p>
       <div className="flex items-center gap-3">
         <select value={sourceFilter} onChange={e=>setSourceFilter(e.target.value)}
           className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500">

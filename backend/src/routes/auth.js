@@ -2,10 +2,12 @@ const express = require('express');
 const crypto  = require('crypto');
 const { rateLimit } = require('express-rate-limit');
 const { OAuth2Client } = require('google-auth-library');
+const { google: googleApis } = require('googleapis');
 const jwt    = require('jsonwebtoken');
 const config = require('../config');
 const { query, pool } = require('../db');
 const { authenticate } = require('../middleware/auth');
+const { getServiceAccountAuth, getOuRoleRules, resolveRoleFromOu } = require('../services/google');
 
 const router = express.Router();
 
@@ -200,22 +202,52 @@ router.post('/google', loginLimiter, async (req, res) => {
     const { sub: googleId, email, name: fullName, given_name: givenName,
             picture: photoUrl, hd: hostedDomain } = payload;
 
-    if (goog.workspaceDomain && hostedDomain !== goog.workspaceDomain) {
+    // workspaceDomain may be a comma-separated list — a single Workspace
+    // account commonly spans several domains/subdomains (e.g. staff on
+    // example.org and a second legacy domain, students on
+    // students.example.org), and Google's hd claim reflects whichever one
+    // the signing-in account actually belongs to.
+    const allowedDomains = (goog.workspaceDomain || '')
+      .split(',').map(d => d.trim().toLowerCase()).filter(Boolean);
+    if (allowedDomains.length && !allowedDomains.includes((hostedDomain || '').toLowerCase())) {
       return res.status(403).json({ error: 'Account domain not authorized for this ClassGuard instance' });
     }
 
+    // Role is only ever decided here for a brand-new user (ON CONFLICT below
+    // never touches role) — the OIDC token carries no OU info, so a user who
+    // hasn't been through a directory sync yet (e.g. signing in the moment
+    // they're hired, before the next scheduled sync) needs a direct Admin SDK
+    // lookup. Best-effort: any failure here (service account not configured,
+    // user not found, etc.) just falls back to 'student' rather than
+    // blocking login — the next directory sync will correct it anyway.
+    let role = 'student';
+    try {
+      const auth  = await getServiceAccountAuth(['https://www.googleapis.com/auth/admin.directory.user.readonly']);
+      const admin = googleApis.admin({ version: 'directory_v1', auth });
+      const { data } = await admin.users.get({ userKey: email });
+      const rules = await getOuRoleRules();
+      role = resolveRoleFromOu(data.orgUnitPath, rules);
+    } catch {
+      // service account not configured, or this user has no directory record yet
+    }
+
+    // Conflict target is email, not google_id — same reason as google.js's
+    // syncUsers: a OneRoster-imported staff/student row can have a NULL
+    // google_id, and Postgres treats every NULL as distinct for a unique
+    // constraint, so ON CONFLICT (google_id) would silently miss it and hit
+    // the separate email-uniqueness violation on the INSERT instead.
     const { rows } = await query(
-      `INSERT INTO users (google_id, email, full_name, given_name, photo_url, role, last_synced_at)
-       VALUES ($1, $2, $3, $4, $5, 'student', NOW())
-       ON CONFLICT (google_id) DO UPDATE SET
-         email          = EXCLUDED.email,
+      `INSERT INTO users (google_id, email, full_name, given_name, photo_url, role, role_source, last_synced_at)
+       VALUES ($1, $2, $3, $4, $5, $6, 'auto', NOW())
+       ON CONFLICT (email) DO UPDATE SET
+         google_id      = EXCLUDED.google_id,
          full_name      = EXCLUDED.full_name,
          given_name     = EXCLUDED.given_name,
          photo_url      = EXCLUDED.photo_url,
          last_synced_at = NOW(),
          updated_at     = NOW()
        RETURNING *`,
-      [googleId, email, fullName, givenName, photoUrl]
+      [googleId, email, fullName, givenName, photoUrl, role]
     );
 
     const user = rows[0];

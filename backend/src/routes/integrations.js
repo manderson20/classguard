@@ -8,6 +8,7 @@ const mosyle  = require('../services/mosyle');
 const snipeit = require('../services/snipeit');
 const google  = require('../services/google');
 const phpipam = require('../services/phpipam');
+const { getUnifiedDevices } = require('../services/deviceConsolidation');
 
 const auth = [authenticate, requireMinRole('admin')];
 
@@ -59,39 +60,39 @@ router.get('/status', ...auth, async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // Devices — unified view across all integration sources
+//
+// One row per physical device, merged across Snipe-IT/Mosyle/Google by
+// serial number (see services/deviceConsolidation.js for why), with live
+// network presence from UniFi (network_clients) overlaid by MAC match.
+// Total device count here is intentionally lower than the sum of each
+// source's raw row count — that's the point, the same Chromebook showing up
+// in both Snipe-IT and Google Workspace is one device, not two.
 // ---------------------------------------------------------------------------
 
 // GET /api/v1/integrations/devices?source=&search=&page=&limit=
 router.get('/devices', ...auth, async (req, res) => {
   const { source, search, page = 1, limit = 50 } = req.query;
-  const conditions = [];
-  const values     = [];
-
-  if (source) {
-    conditions.push(`d.source = $${values.length + 1}`);
-    values.push(source);
-  }
-  if (search) {
-    conditions.push(
-      `(d.device_name ILIKE $${values.length + 1} OR d.serial_number ILIKE $${values.length + 1}
-        OR d.assigned_email ILIKE $${values.length + 1} OR d.assigned_user ILIKE $${values.length + 1})`
-    );
-    values.push(`%${search}%`);
-  }
-
-  const where  = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-  const offset = (parseInt(page, 10) - 1) * parseInt(limit, 10);
-
   try {
-    const [{ rows }, { rows: total }] = await Promise.all([
-      pool.query(
-        `SELECT * FROM integration_devices d ${where}
-         ORDER BY synced_at DESC LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
-        [...values, limit, offset]
-      ),
-      pool.query(`SELECT COUNT(*) FROM integration_devices d ${where}`, values),
-    ]);
-    res.json({ devices: rows, total: parseInt(total[0].count, 10), page: parseInt(page, 10) });
+    let unified = await getUnifiedDevices();
+
+    if (source) unified = unified.filter(d => d.sources.some(s => s.source === source));
+    if (search) {
+      const q = search.toLowerCase();
+      unified = unified.filter(d =>
+        (d.deviceName    || '').toLowerCase().includes(q) ||
+        (d.serialNumber  || '').toLowerCase().includes(q) ||
+        (d.assignedEmail || '').toLowerCase().includes(q) ||
+        (d.assignedUser  || '').toLowerCase().includes(q)
+      );
+    }
+
+    unified.sort((a, b) => (b.lastSynced ? new Date(b.lastSynced).getTime() : 0) - (a.lastSynced ? new Date(a.lastSynced).getTime() : 0));
+
+    const p      = Math.max(parseInt(page, 10) || 1, 1);
+    const l      = parseInt(limit, 10) || 50;
+    const offset = (p - 1) * l;
+
+    res.json({ devices: unified.slice(offset, offset + l), total: unified.length, page: p });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -160,6 +161,42 @@ router.post('/sync/snipeit', ...auth, async (req, res) => {
 router.post('/sync/google', ...auth, async (req, res) => {
   res.json({ status: 'started' });
   recordSyncOutcome('google', google.syncAll(req.user.id));
+});
+
+// GET /api/v1/integrations/google/ou-role-preview — every distinct OU
+// actually present among synced users, with its current count/role and what
+// role the active rules would resolve it to right now. Lets an admin spot
+// OUs that fall through to the 'student' default (e.g. /IT, /Staff,
+// /k12itc) without having to guess which OU names exist or eyeball the
+// Users page one row at a time.
+router.get('/google/ou-role-preview', ...auth, async (req, res) => {
+  const rules = await google.getOuRoleRules();
+  const { rows } = await pool.query(
+    `SELECT google_ou, role, role_source, count(*) AS count FROM users
+     WHERE google_ou IS NOT NULL AND google_ou <> ''
+     GROUP BY google_ou, role, role_source ORDER BY count DESC`
+  );
+  res.json(rows.map(r => ({
+    ou:           r.google_ou,
+    count:        parseInt(r.count, 10),
+    currentRole:  r.role,
+    roleSource:   r.role_source,
+    resolvedRole: google.resolveRoleFromOu(r.google_ou, rules),
+  })));
+});
+
+// POST /api/v1/integrations/google/backfill-roles — re-applies the current
+// OU role rules to every non-manually-overridden user immediately, instead
+// of waiting for the next scheduled directory sync. Runs synchronously
+// (fast — it's an in-memory loop over already-synced users, no Google API
+// calls) so the UI can show "Updated N users" right away.
+router.post('/google/backfill-roles', ...auth, async (req, res) => {
+  try {
+    const result = await google.backfillRolesFromOu(req.user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // POST /api/v1/integrations/sync/google-devices  — sync Chromebook/device inventory
