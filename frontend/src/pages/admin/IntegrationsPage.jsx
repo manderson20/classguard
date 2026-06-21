@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
@@ -35,10 +35,11 @@ function ErrorBanner({ message }) {
 
 const INPUT = 'border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full';
 
-function Field({ label, children }) {
+function Field({ label, hint, children }) {
   return (
     <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
       {label}{children}
+      {hint && <span className="text-[11px] text-slate-400 font-normal normal-case">{hint}</span>}
     </label>
   );
 }
@@ -191,45 +192,82 @@ function ZammadSection({ status }) {
 // ---------------------------------------------------------------------------
 // Devices table (shared for Google, Mosyle, Snipe-IT)
 // ---------------------------------------------------------------------------
-function DevicesTable({ source }) {
+function DevicesTable({ source, search }) {
+  const [page, setPage]   = useState(1);
+  const [limit, setLimit] = useState(50);
+
+  useEffect(() => { setPage(1); }, [source, search]); // reset paging when the filter changes
+
   const { data: resp, isLoading } = useQuery({
-    queryKey: ['int-devices', source],
-    queryFn: () => api.get(`/integrations/devices${source ? `?source=${source}` : ''}`),
+    queryKey: ['int-devices', source, search, page, limit],
+    queryFn: () => {
+      const params = new URLSearchParams({ page, limit });
+      if (source) params.set('source', source);
+      if (search) params.set('search', search);
+      return api.get(`/integrations/devices?${params}`);
+    },
   });
-  const devices = resp?.devices ?? resp ?? [];
+  const devices = resp?.devices ?? [];
+  const total   = resp?.total ?? devices.length;
+  const lastPage = Math.max(1, Math.ceil(total / limit));
 
   const OS_COLOR = { chromeos:'blue', macos:'slate', ios:'orange', windows:'blue', android:'green' };
 
   if (isLoading) return <p className="text-sm text-slate-400 py-4">Loading…</p>;
 
   return (
-    <div className="overflow-x-auto rounded-lg border border-slate-200">
-      <table className="w-full text-sm">
-        <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-          <tr>{['Device','Model','OS','Serial','Assigned To','IP','Status','Last Seen'].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
-        </thead>
-        <tbody className="divide-y divide-slate-100">
-          {devices.map(d=>(
-            <tr key={d.id} className="hover:bg-slate-50">
-              <td className="px-3 py-2 font-medium text-slate-800 text-xs">{d.device_name||'—'}</td>
-              <td className="px-3 py-2 text-xs text-slate-500">{d.device_model||'—'}</td>
-              <td className="px-3 py-2">
-                <span className={`px-2 py-0.5 rounded text-xs font-medium bg-${OS_COLOR[d.os_type]||'slate'}-100 text-${OS_COLOR[d.os_type]||'slate'}-700`}>
-                  {d.os_type||'—'}
-                </span>
-              </td>
-              <td className="px-3 py-2 font-mono text-xs text-slate-500">{d.serial_number||'—'}</td>
-              <td className="px-3 py-2 text-xs text-slate-500">{d.assigned_email||'—'}</td>
-              <td className="px-3 py-2 font-mono text-xs text-slate-500">{(d.ip_addresses||[]).join(', ')||'—'}</td>
-              <td className="px-3 py-2 text-xs">
-                <span className={`px-2 py-0.5 rounded ${d.status==='active'?'bg-green-100 text-green-700':'bg-slate-100 text-slate-500'}`}>{d.status}</span>
-              </td>
-              <td className="px-3 py-2 text-xs text-slate-400">{d.last_seen ? new Date(d.last_seen).toLocaleDateString() : '—'}</td>
-            </tr>
-          ))}
-          {!devices.length && <tr><td colSpan={8} className="text-center text-slate-400 py-6">No devices synced yet</td></tr>}
-        </tbody>
-      </table>
+    <div className="flex flex-col gap-2">
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>{['Device','Model','OS','Serial','Assigned To','IP','Status','Last Seen'].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {devices.map(d=>(
+              <tr key={d.id} className="hover:bg-slate-50">
+                <td className="px-3 py-2 font-medium text-slate-800 text-xs">{d.device_name||'—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{d.device_model||'—'}</td>
+                <td className="px-3 py-2">
+                  <span className={`px-2 py-0.5 rounded text-xs font-medium bg-${OS_COLOR[d.os_type]||'slate'}-100 text-${OS_COLOR[d.os_type]||'slate'}-700`}>
+                    {d.os_type||'—'}
+                  </span>
+                </td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">{d.serial_number||'—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{d.assigned_email||'—'}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">{(d.ip_addresses||[]).join(', ')||'—'}</td>
+                <td className="px-3 py-2 text-xs">
+                  <span className={`px-2 py-0.5 rounded ${d.status==='active'?'bg-green-100 text-green-700':'bg-slate-100 text-slate-500'}`}>{d.status}</span>
+                </td>
+                <td className="px-3 py-2 text-xs text-slate-400">{d.last_seen ? new Date(d.last_seen).toLocaleDateString() : '—'}</td>
+              </tr>
+            ))}
+            {!devices.length && <tr><td colSpan={8} className="text-center text-slate-400 py-6">No devices synced yet</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {total > 0 && (
+        <div className="flex items-center gap-3 text-xs text-slate-500">
+          <span>
+            Showing {(page - 1) * limit + 1}–{Math.min(page * limit, total)} of {total}
+          </span>
+          <select value={limit} onChange={e => { setLimit(parseInt(e.target.value, 10)); setPage(1); }}
+            className="border border-slate-300 rounded px-1.5 py-1 text-xs">
+            {[50, 100, 200, 500].map(n => <option key={n} value={n}>{n} / page</option>)}
+          </select>
+          <div className="ml-auto flex items-center gap-2">
+            <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1}
+              className="px-2 py-1 rounded border border-slate-300 disabled:opacity-40 hover:bg-slate-50">
+              ← Prev
+            </button>
+            <span>Page {page} of {lastPage}</span>
+            <button onClick={() => setPage(p => Math.min(lastPage, p + 1))} disabled={page >= lastPage}
+              className="px-2 py-1 rounded border border-slate-300 disabled:opacity-40 hover:bg-slate-50">
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -237,22 +275,574 @@ function DevicesTable({ source }) {
 // ---------------------------------------------------------------------------
 // Google Admin devices
 // ---------------------------------------------------------------------------
-function GoogleSection({ status }) {
-  const configured = status?.google?.configured;
+function GoogleSsoSection() {
+  const qc = useQueryClient();
+  const [form, setForm]     = useState({ google_client_id: '', google_client_secret: '', google_redirect_uri: '', google_workspace_domain: '' });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved]   = useState(false);
+
+  const { data: appSettings } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn:  () => api.get('/settings').catch(() => ({})),
+  });
+
+  useEffect(() => {
+    if (appSettings) {
+      setForm({
+        google_client_id:        appSettings.google_client_id        || '',
+        google_client_secret:    '', // write-only — never prefilled with the stored secret
+        google_redirect_uri:     appSettings.google_redirect_uri     || `${window.location.origin}/auth/callback`,
+        google_workspace_domain: appSettings.google_workspace_domain || '',
+      });
+    }
+  }, [appSettings]);
+
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const body = { ...form };
+      if (!body.google_client_secret) delete body.google_client_secret; // blank = keep current secret
+      await api.put('/settings', body);
+      qc.invalidateQueries({ queryKey: ['app-settings'] });
+      qc.invalidateQueries({ queryKey: ['integrations-status'] });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 max-w-xl">
+      <p className="text-xs text-slate-500">
+        Lets teachers and students sign in with their school Google account.{' '}
+        <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-primary-600 underline">Google Cloud Console</a>
+        {' '}→ APIs &amp; Services → Credentials → Create OAuth 2.0 Client ID (<strong>Web application</strong>).
+        Add <code className="bg-slate-100 px-1 rounded font-mono text-xs">{window.location.origin}/auth/callback</code> as an Authorized redirect URI.
+      </p>
+      <div className="flex flex-col gap-3">
+        <Field label="Google Client ID">
+          <input className={INPUT} value={form.google_client_id} onChange={e=>setForm(f=>({...f, google_client_id:e.target.value}))} placeholder="123456789-xxx.apps.googleusercontent.com"/>
+        </Field>
+        <Field label="Google Client Secret">
+          <input type="password" className={INPUT} value={form.google_client_secret} onChange={e=>setForm(f=>({...f, google_client_secret:e.target.value}))} placeholder="Leave blank to keep current secret"/>
+        </Field>
+        <Field label="Authorized Redirect URI">
+          <input className={INPUT} value={form.google_redirect_uri} onChange={e=>setForm(f=>({...f, google_redirect_uri:e.target.value}))}/>
+        </Field>
+        <Field label="Workspace Domain (optional)">
+          <input className={INPUT} value={form.google_workspace_domain} onChange={e=>setForm(f=>({...f, google_workspace_domain:e.target.value}))} placeholder="school.org"/>
+        </Field>
+      </div>
+      {saveError && <p className="text-red-500 text-xs">{saveError}</p>}
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={saving} className="btn-primary text-sm w-fit">{saving ? 'Saving…' : 'Save'}</button>
+        {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+      </div>
+    </div>
+  );
+}
+
+function GoogleSyncSection({ status }) {
+  const qc = useQueryClient();
+  const configured = status?.google?.configured;
+  const [form, setForm]     = useState({ google_service_account_json: '', google_superadmin_email: '', google_customer_id: '' });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved]   = useState(false);
+
+  const { data: appSettings } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn:  () => api.get('/settings').catch(() => ({})),
+  });
+
+  useEffect(() => {
+    if (appSettings) {
+      setForm({
+        google_service_account_json: '', // write-only — never prefilled with the stored key
+        google_superadmin_email:     appSettings.google_superadmin_email || '',
+        google_customer_id:          appSettings.google_customer_id      || '',
+      });
+    }
+  }, [appSettings]);
+
+  const hasStoredKey = !!appSettings?.google_service_account_json;
+
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const body = { ...form };
+      if (!body.google_service_account_json) delete body.google_service_account_json; // blank = keep current key
+      await api.put('/settings', body);
+      qc.invalidateQueries({ queryKey: ['app-settings'] });
+      qc.invalidateQueries({ queryKey: ['integrations-status'] });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-5">
       <div className="flex items-center gap-3">
         <StatusDot ok={configured}/>
-        <span className="text-sm text-slate-600">{configured ? 'Connected via Workspace' : 'Not configured — set credentials in Settings'}</span>
-        {configured && (
-          <div className="ml-auto flex gap-2">
-            <SyncButton label="Sync users/groups" endpoint="/integrations/sync/google"/>
-            <SyncButton label="Sync devices" endpoint="/integrations/sync/google-devices"/>
-          </div>
-        )}
+        <span className="text-sm text-slate-600">{configured ? 'Service account configured' : 'Not configured — Chromebooks/users/groups will not sync'}</span>
       </div>
-      <ErrorBanner message={status?.google?.lastError}/>
+
+      {/* Directory and device sync are independent operations — one can fail
+          while the other succeeds, so they're tracked and shown separately. */}
+      <div className="border border-slate-200 rounded-lg p-3 flex flex-col gap-2">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-slate-700">Users / Groups / Org Units</span>
+          {status?.google?.lastSync && <span className="text-xs text-slate-400">Last sync: {new Date(status.google.lastSync).toLocaleString()}</span>}
+          {configured && <div className="ml-auto"><SyncButton label="Sync users/groups" endpoint="/integrations/sync/google"/></div>}
+        </div>
+        <ErrorBanner message={status?.google?.lastError}/>
+      </div>
+
+      <div className="border border-slate-200 rounded-lg p-3 flex flex-col gap-2">
+        <div className="flex items-center gap-3">
+          <span className="text-sm font-medium text-slate-700">Chromebook Devices</span>
+          {status?.googleDevices?.deviceCount !== undefined && (
+            <span className="text-xs text-slate-400">{status.googleDevices.deviceCount} devices</span>
+          )}
+          {status?.googleDevices?.lastSync && <span className="text-xs text-slate-400">Last sync: {new Date(status.googleDevices.lastSync).toLocaleString()}</span>}
+          {configured && <div className="ml-auto"><SyncButton label="Sync devices" endpoint="/integrations/sync/google-devices"/></div>}
+        </div>
+        <ErrorBanner message={status?.googleDevices?.lastError}/>
+      </div>
+
+      <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-700">
+        This is a separate credential from both Google Workspace Login (SSO) and the Chrome Extension's OAuth
+        client — pulling in Chromebooks, users, and groups needs a <strong>service account</strong> with
+        domain-wide delegation, since it reads the Admin Directory on the district's behalf rather than acting
+        as a single signed-in user.
+      </div>
+
+      <ol className="text-xs text-slate-600 space-y-1.5 list-decimal list-inside max-w-2xl">
+        <li>
+          <a href="https://console.cloud.google.com/iam-admin/serviceaccounts" target="_blank" rel="noreferrer" className="text-primary-600 underline">
+            Google Cloud Console
+          </a> → IAM &amp; Admin → Service Accounts → Create Service Account.
+        </li>
+        <li>Open it → Keys → Add Key → Create new key → <strong>JSON</strong> → download it, then paste its full contents below.</li>
+        <li>
+          Copy the service account's <strong>numeric Client ID</strong> (on the same Details page, not its email address).
+        </li>
+        <li>
+          In Google Workspace Admin Console → Security → Access and data control → API controls → Domain-wide
+          delegation → Add new → paste that numeric Client ID with these scopes:
+          <pre className="bg-slate-800 text-green-300 text-xs rounded p-2 mt-1 leading-5 overflow-auto">{`https://www.googleapis.com/auth/admin.directory.user.readonly
+https://www.googleapis.com/auth/admin.directory.group.readonly
+https://www.googleapis.com/auth/admin.directory.orgunit.readonly
+https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`}</pre>
+        </li>
+        <li>Set the Superadmin Email below to a Workspace super-admin address — the service account impersonates them to call the Admin SDK.</li>
+      </ol>
+
+      <div className="flex flex-col gap-3 max-w-xl">
+        <Field label={`Service Account JSON Key${hasStoredKey ? ' (one is already saved)' : ''}`}>
+          <textarea
+            rows={6}
+            className={`${INPUT} font-mono text-xs`}
+            value={form.google_service_account_json}
+            onChange={e=>setForm(f=>({...f, google_service_account_json:e.target.value}))}
+            placeholder={hasStoredKey ? 'Leave blank to keep the currently saved key' : 'Paste the full downloaded JSON key file contents'}
+          />
+        </Field>
+        <Field label="Superadmin Email">
+          <input className={INPUT} value={form.google_superadmin_email} onChange={e=>setForm(f=>({...f, google_superadmin_email:e.target.value}))} placeholder="admin@school.org"/>
+        </Field>
+        <Field label="Customer ID (optional)">
+          <input className={INPUT} value={form.google_customer_id} onChange={e=>setForm(f=>({...f, google_customer_id:e.target.value}))} placeholder="Leave blank for my_customer"/>
+        </Field>
+      </div>
+      {saveError && <p className="text-red-500 text-xs">{saveError}</p>}
+      <div className="flex items-center gap-3">
+        <button onClick={save} disabled={saving} className="btn-primary text-sm w-fit">{saving ? 'Saving…' : 'Save'}</button>
+        {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+      </div>
+
       {configured && <DevicesTable source="google_admin"/>}
+    </div>
+  );
+}
+
+function YoutubeApiSection() {
+  const qc = useQueryClient();
+  const [apiKey, setApiKey] = useState('');
+  const [saved, setSaved]   = useState(false);
+
+  const { data: appSettings } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn:  () => api.get('/settings').catch(() => ({})),
+  });
+
+  useEffect(() => {
+    if (appSettings) setApiKey(appSettings.youtube_api_key || '');
+  }, [appSettings]);
+
+  const save = async () => {
+    await api.put('/settings', { youtube_api_key: apiKey });
+    qc.invalidateQueries({ queryKey: ['app-settings'] });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  };
+
+  return (
+    <div className="flex flex-col gap-4 max-w-xl">
+      <p className="text-xs text-slate-500">
+        Required for per-category and per-video YouTube filtering in policy rules. The API key is stored
+        server-side and never sent to student devices. Video category lookups are cached 24 hours in Redis —
+        10,000 free quota units/day covers a large school with heavy YouTube use.
+      </p>
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700">
+        <strong>Setup:</strong>{' '}
+        <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer" className="underline">Google Cloud Console</a>
+        {' '}→ APIs &amp; Services → Library → search <em>YouTube Data API v3</em> → Enable →
+        Credentials → Create API Key. Restrict the key to YouTube Data API v3 only.
+      </div>
+      <Field label="YouTube Data API Key">
+        <input type="password" className={`${INPUT} font-mono`} value={apiKey} onChange={e=>setApiKey(e.target.value)} placeholder="AIzaSy…"/>
+      </Field>
+      <div className="flex items-center gap-3">
+        <button onClick={save} className="btn-primary text-sm w-fit">Save API Key</button>
+        {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+      </div>
+    </div>
+  );
+}
+
+const GOOGLE_SUBTABS = ['Device & Directory Sync', 'SSO Login', 'Chrome Extension', 'YouTube Data API'];
+
+function GoogleWorkspaceTab({ status }) {
+  const [subtab, setSubtab] = useState('Device & Directory Sync');
+  return (
+    <div>
+      <div className="flex gap-1 border-b border-slate-100 mb-5">
+        {GOOGLE_SUBTABS.map(t => (
+          <button key={t} onClick={() => setSubtab(t)}
+            className={`px-3 py-1.5 text-xs font-medium rounded-t-lg whitespace-nowrap transition-colors
+              ${subtab === t ? 'bg-slate-50 border border-b-slate-50 border-slate-200 text-primary-700 -mb-px' : 'text-slate-500 hover:text-slate-700'}`}>
+            {t}
+          </button>
+        ))}
+      </div>
+      {subtab === 'Device & Directory Sync' && <GoogleSyncSection status={status}/>}
+      {subtab === 'SSO Login'               && <GoogleSsoSection/>}
+      {subtab === 'Chrome Extension'        && <ExtensionSection/>}
+      {subtab === 'YouTube Data API'        && <YoutubeApiSection/>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Chrome Extension
+// ---------------------------------------------------------------------------
+function ExtensionDownloadStatus() {
+  const [status, setStatus] = useState('checking'); // checking | ready | missing
+  const [meta, setMeta] = useState(null);
+
+  useEffect(() => {
+    fetch('/downloads/classguard-extension.zip', { method: 'HEAD' })
+      .then((res) => {
+        if (!res.ok) { setStatus('missing'); return; }
+        setMeta({
+          size:         res.headers.get('content-length'),
+          lastModified: res.headers.get('last-modified'),
+        });
+        setStatus('ready');
+      })
+      .catch(() => setStatus('missing'));
+  }, []);
+
+  if (status === 'checking') {
+    return <p className="text-xs text-slate-400">Checking for a built extension package…</p>;
+  }
+
+  if (status === 'missing') {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
+        No build found yet. Set the <strong>OAuth Client ID</strong> above — the builder rebuilds automatically
+        within about a minute of saving. (A code/version change, rather than a config change, still needs a
+        manual image rebuild on the host:{' '}
+        <code className="font-mono">docker compose build extension-builder &amp;&amp; docker compose up -d extension-builder</code>.)
+      </div>
+    );
+  }
+
+  const sizeMb = meta?.size ? (Number(meta.size) / (1024 * 1024)).toFixed(1) : null;
+  return (
+    <div className="flex items-center gap-3">
+      <a
+        href="/downloads/classguard-extension.crx"
+        download
+        className="inline-flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
+      >
+        Download Extension (.crx)
+      </a>
+      <a
+        href="/downloads/classguard-extension.zip"
+        download
+        className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg"
+      >
+        Unpacked (.zip, for dev-mode sideloading)
+      </a>
+      <span className="text-xs text-slate-400">
+        {sizeMb && `${sizeMb} MB`}{meta?.lastModified && ` · built ${new Date(meta.lastModified).toLocaleString()}`}
+      </span>
+    </div>
+  );
+}
+
+function ExtensionIdentity({ serverUrl, onExtensionId }) {
+  const [status, setStatus]         = useState('checking'); // checking | ready | missing
+  const [extensionId, setExtensionId] = useState(null);
+  const [copied, setCopied]         = useState('');
+
+  useEffect(() => {
+    fetch('/downloads/extension-id.txt')
+      .then((res) => {
+        if (!res.ok) { setStatus('missing'); return null; }
+        return res.text();
+      })
+      .then((text) => {
+        if (text == null) return;
+        setExtensionId(text.trim());
+        onExtensionId?.(text.trim());
+        setStatus('ready');
+      })
+      .catch(() => setStatus('missing'));
+  }, []);
+
+  const updateUrl = `${serverUrl}/downloads/update.xml`;
+
+  const copy = (key, text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(''), 2000);
+  };
+
+  if (status === 'checking') return null;
+
+  if (status === 'missing') {
+    return (
+      <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800 mb-3">
+        No signed build found yet — auto-update requires a one-time signing key. On the host, run:
+        <pre className="bg-slate-800 text-green-300 rounded p-2 mt-2 font-mono leading-5">docker compose run --rm extension-builder node scripts/generate-key.js</pre>
+        then add the printed <code className="font-mono">EXTENSION_SIGNING_KEY</code> line to <code className="font-mono">.env</code> on every node
+        in this cluster, and recreate <code className="font-mono">extension-builder</code>.
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+      <div>
+        <div className="text-xs font-medium text-slate-500 mb-1">Extension ID</div>
+        <div className="flex items-center gap-1.5">
+          <code className="bg-slate-100 rounded px-2 py-1 text-xs font-mono flex-1 truncate">{extensionId}</code>
+          <button onClick={() => copy('id', extensionId)} className="text-xs bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded flex-shrink-0">
+            {copied === 'id' ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+      </div>
+      <div>
+        <div className="text-xs font-medium text-slate-500 mb-1">Update URL</div>
+        <div className="flex items-center gap-1.5">
+          <code className="bg-slate-100 rounded px-2 py-1 text-xs font-mono flex-1 truncate">{updateUrl}</code>
+          <button onClick={() => copy('update', updateUrl)} className="text-xs bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded flex-shrink-0">
+            {copied === 'update' ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExtensionOAuthSection({ extensionId }) {
+  const qc = useQueryClient();
+  const [modal, setModal]   = useState(false);
+  const [form, setForm]     = useState({ extension_oauth_client_id: '', extension_public_url: '' });
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState(null);
+
+  const { data: appSettings } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn:  () => api.get('/settings').catch(() => ({})),
+  });
+
+  const configured = !!appSettings?.extension_oauth_client_id;
+
+  const openModal = () => {
+    setForm({
+      extension_oauth_client_id: appSettings?.extension_oauth_client_id || '',
+      extension_public_url:      appSettings?.extension_public_url     || '',
+    });
+    setSaveError(null);
+    setModal(true);
+  };
+
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await api.put('/settings', form);
+      qc.invalidateQueries({ queryKey: ['app-settings'] });
+      setModal(null);
+    } catch (e) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center gap-3">
+        <StatusDot ok={configured}/>
+        <span className="text-sm text-slate-600">
+          {configured ? 'Configured — rebuilds automatically when changed' : 'Not configured — the extension cannot install on any device until this is set'}
+        </span>
+        <button onClick={openModal} className="ml-auto text-xs text-slate-500 hover:text-slate-700 underline">Settings</button>
+      </div>
+      <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-700">
+        This is a <strong>different</strong> OAuth client than the one under the Google Workspace tab — that one is
+        for admin/teacher login on the web app ("Web application" type). This one is required for the extension's{' '}
+        <code className="font-mono">chrome.identity</code> Google sign-in and must be type{' '}
+        <strong>Chrome Extension</strong>. Chrome silently rejects the entire extension package — no install, no
+        error shown anywhere — if this is left blank.
+      </div>
+
+      {modal && (
+        <Modal title="Chrome Extension OAuth Client ID" onClose={()=>setModal(null)}>
+          <ol className="text-xs text-slate-600 mb-4 space-y-1.5 list-decimal list-inside">
+            <li>
+              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noreferrer" className="text-primary-600 underline">
+                Google Cloud Console
+              </a> → APIs &amp; Services → Credentials → Create Credentials → OAuth client ID.
+            </li>
+            <li>Application type: <strong>Chrome Extension</strong> (not Web application).</li>
+            <li>Item ID: <code className="bg-slate-100 px-1 rounded font-mono">{extensionId || '(see Extension ID below, once a build exists)'}</code></li>
+            <li>Copy the resulting Client ID and paste it below.</li>
+          </ol>
+          <div className="flex flex-col gap-3">
+            <Field label="Extension OAuth Client ID">
+              <input className={INPUT} value={form.extension_oauth_client_id}
+                onChange={e=>setForm(f=>({...f, extension_oauth_client_id:e.target.value}))}
+                placeholder="123456789-yyy.apps.googleusercontent.com"/>
+            </Field>
+            <Field label="Public URL override (optional)">
+              <input className={INPUT} value={form.extension_public_url}
+                onChange={e=>setForm(f=>({...f, extension_public_url:e.target.value}))}
+                placeholder="Leave blank to use the active TLS domain"/>
+            </Field>
+          </div>
+          {saveError && <p className="text-red-500 text-xs mt-2">{saveError}</p>}
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={()=>setModal(null)} className="btn-secondary text-sm">Cancel</button>
+            <button onClick={save} disabled={saving} className="btn-primary text-sm">{saving ? 'Saving…' : 'Save'}</button>
+          </div>
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function ExtensionSection() {
+  const [copied, setCopied] = useState('');
+  const [extensionId, setExtensionId] = useState(null);
+  const serverUrl = window.location.origin;
+  const policy = JSON.stringify({ serverUrl }, null, 2);
+
+  const copy = (key, text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(''), 2000);
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card title="OAuth Client ID" icon="🔑" subtitle="Required before the extension can install on any device">
+        <ExtensionOAuthSection extensionId={extensionId} />
+      </Card>
+
+      <Card title="Deploy to Google Admin Console" icon="🧩" subtitle="One-time setup per district">
+        <div className="space-y-5">
+          <div>
+            <div className="text-sm font-semibold text-slate-700 mb-1">Step 1 — Get the extension's identity</div>
+            <p className="text-xs text-slate-500 mb-3">
+              Signed with a permanent key, so Chrome treats this as the same extension forever, even as the code
+              inside it changes. Copy the Extension ID and Update URL below.
+            </p>
+            <ExtensionIdentity serverUrl={serverUrl} onExtensionId={setExtensionId} />
+            <ExtensionDownloadStatus />
+          </div>
+
+          <div>
+            <div className="text-sm font-semibold text-slate-700 mb-1">Step 2 — Add it as a custom extension in Google Admin Console</div>
+            <p className="text-xs text-slate-500 mb-2">
+              Google Admin → Devices → Chrome → Apps &amp; Extensions → select your student OU → Add (+) → Add Chrome app or
+              extension by ID. Paste the Extension ID, then choose <strong>"From a custom URL"</strong> and paste the Update URL.
+            </p>
+          </div>
+
+          <div>
+            <div className="text-sm font-semibold text-slate-700 mb-1">Step 3 — Force-install and set managed storage</div>
+            <p className="text-xs text-slate-500 mb-2">
+              Set the install policy to <strong>Force install</strong>. In the same screen's Policy for extensions (JSON), paste:
+            </p>
+            <div className="relative">
+              <pre className="bg-slate-800 text-green-300 text-xs rounded p-3 overflow-auto leading-5">{policy}</pre>
+              <button
+                onClick={() => copy('policy', policy)}
+                className="absolute top-2 right-2 text-xs bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded"
+              >
+                {copied === 'policy' ? 'Copied!' : 'Copy'}
+              </button>
+            </div>
+            <p className="text-xs text-slate-400 mt-1">
+              The extension reads <code className="font-mono">chrome.storage.managed</code> at runtime to discover the
+              server URL, so you never need to rebuild it just because the address changes.
+            </p>
+          </div>
+
+          <div>
+            <div className="text-sm font-semibold text-slate-700 mb-1">Step 4 — Pre-authorize sign-in so students can't decline it</div>
+            <p className="text-xs text-slate-500 mb-2">
+              Without this, the extension's first run shows a Google "Allow access" consent prompt — and a
+              student who clicks <strong>Deny</strong> blocks monitoring/policy enforcement on that device entirely
+              until they accept (the extension retries every minute, but it can't force a click). Pre-authorizing
+              skips the prompt completely: Chrome grants access silently because the domain already consented on
+              the student's behalf.
+            </p>
+            <ol className="text-xs text-slate-500 space-y-1.5 list-decimal list-inside">
+              <li>
+                Google Workspace Admin Console → Security → Access and data control → API controls →{' '}
+                <strong>Manage third-party app access</strong>.
+              </li>
+              <li>Add app → search by <strong>OAuth Client ID</strong> → paste the Chrome Extension OAuth Client ID from the section above.</li>
+              <li>Select it, choose scopes <code className="font-mono">openid</code>, <code className="font-mono">email</code>, <code className="font-mono">profile</code>, and set access to <strong>Trusted</strong>.</li>
+              <li>Apply it to the same OU the extension is force-installed in.</li>
+            </ol>
+          </div>
+
+          <div className="bg-green-50 border border-green-200 rounded p-3 text-xs text-green-800">
+            <strong>Future code updates:</strong> bump the version in <code className="font-mono">chrome-extension/package.json</code>,
+            then on every node: <code className="font-mono">docker compose build extension-builder &amp;&amp; docker compose up -d extension-builder</code>.
+            Chrome checks the Update URL on its own schedule and installs automatically — no re-upload, no re-pasting the policy.
+            Config-only changes (the OAuth Client ID above, or the public URL) rebuild on their own within about a minute.
+          </div>
+        </div>
+      </Card>
     </div>
   );
 }
@@ -263,17 +853,36 @@ function GoogleSection({ status }) {
 function MosyleSection({ status }) {
   const qc = useQueryClient();
   const [modal, setModal] = useState(null);
-  const [token, setToken] = useState('');
+  const [form, setForm]   = useState({ mosyle_access_token: '', mosyle_email: '', mosyle_password: '' });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
   const configured = status?.mosyle?.configured;
+
+  const { data: appSettings } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn:  () => api.get('/settings').catch(() => ({})),
+  });
+
+  const openModal = () => {
+    setForm({
+      mosyle_access_token: '', // write-only — never prefilled
+      mosyle_email:         appSettings?.mosyle_email || '',
+      mosyle_password:      '', // write-only — never prefilled
+    });
+    setSaveError(null);
+    setModal(true);
+  };
 
   const save = async () => {
     setSaving(true);
     setSaveError(null);
     try {
-      await api.put('/settings', { mosyle_access_token: token });
+      const body = { ...form };
+      if (!body.mosyle_access_token) delete body.mosyle_access_token; // blank = keep current
+      if (!body.mosyle_password)     delete body.mosyle_password;     // blank = keep current
+      await api.put('/settings', body);
       qc.invalidateQueries({queryKey:['integrations-status']});
+      qc.invalidateQueries({queryKey:['app-settings']});
       setModal(null);
     } catch (e) {
       setSaveError(e.message || 'Save failed');
@@ -288,7 +897,7 @@ function MosyleSection({ status }) {
         <StatusDot ok={configured}/>
         <span className="text-sm text-slate-600">{configured ? 'Connected' : 'Not configured'}</span>
         <div className="ml-auto flex gap-2">
-          <button onClick={()=>{setSaveError(null);setModal(true);}} className="text-xs text-slate-500 hover:text-slate-700 underline">Settings</button>
+          <button onClick={openModal} className="text-xs text-slate-500 hover:text-slate-700 underline">Settings</button>
           {configured && <SyncButton label="Sync Apple devices" endpoint="/integrations/sync/mosyle"/>}
         </div>
       </div>
@@ -296,7 +905,27 @@ function MosyleSection({ status }) {
       {configured && <DevicesTable source="mosyle"/>}
       {modal && (
         <Modal title="Mosyle Settings" onClose={()=>setModal(null)}>
-          <Field label="Mosyle Access Token"><input type="password" className={INPUT} value={token} onChange={e=>setToken(e.target.value)}/></Field>
+          <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-700 mb-3">
+            Mosyle Manager's token-only auth is deprecated — an admin email/password is required too,
+            so we can trade them for a 24h session token automatically (re-logging in as needed). A
+            dedicated API-only admin account in Mosyle, rather than your personal login, is recommended.
+          </div>
+          <div className="flex flex-col gap-3">
+            <Field label="Access Token" hint="From My School/Organization → API Integration">
+              <input type="password" className={INPUT} value={form.mosyle_access_token}
+                onChange={e=>setForm(f=>({...f, mosyle_access_token:e.target.value}))}
+                placeholder="Leave blank to keep the currently saved token"/>
+            </Field>
+            <Field label="Admin Email">
+              <input className={INPUT} value={form.mosyle_email}
+                onChange={e=>setForm(f=>({...f, mosyle_email:e.target.value}))}/>
+            </Field>
+            <Field label="Admin Password">
+              <input type="password" className={INPUT} value={form.mosyle_password}
+                onChange={e=>setForm(f=>({...f, mosyle_password:e.target.value}))}
+                placeholder="Leave blank to keep the currently saved password"/>
+            </Field>
+          </div>
           {saveError && <p className="text-red-500 text-xs mt-2">{saveError}</p>}
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={()=>setModal(null)} className="btn-secondary text-sm">Cancel</button>
@@ -458,11 +1087,7 @@ function PhpipamSection() {
 // ---------------------------------------------------------------------------
 function AllDevicesTab() {
   const [sourceFilter, setSourceFilter] = useState('');
-  const { data: resp2 } = useQuery({
-    queryKey: ['int-devices-all', sourceFilter],
-    queryFn: () => api.get(`/integrations/devices${sourceFilter ? `?source=${sourceFilter}` : ''}`),
-  });
-  const devices = resp2?.devices ?? resp2 ?? [];
+  const [search, setSearch] = useState('');
 
   return (
     <div className="flex flex-col gap-3">
@@ -474,9 +1099,11 @@ function AllDevicesTab() {
           <option value="mosyle">Mosyle</option>
           <option value="snipeit">Snipe-IT</option>
         </select>
-        <span className="text-sm text-slate-500">{devices.length} devices</span>
+        <input value={search} onChange={e=>setSearch(e.target.value)}
+          placeholder="Search name, serial, or assigned user…"
+          className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm flex-1 max-w-sm focus:outline-none focus:ring-1 focus:ring-primary-500"/>
       </div>
-      <DevicesTable source={sourceFilter||null}/>
+      <DevicesTable source={sourceFilter||null} search={search||null}/>
     </div>
   );
 }
@@ -521,23 +1148,36 @@ export default function IntegrationsPage() {
 
       {tab==='Overview' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {integrations.map(i=>(
-            <Card key={i.id} title={i.label} icon={i.icon}
-              subtitle={status[i.id]?.lastSync ? `Last sync: ${new Date(status[i.id].lastSync).toLocaleString()}` : 'Never synced'}>
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <StatusDot ok={status[i.id]?.configured && !status[i.id]?.lastError}/>
-                  <span className="text-sm text-slate-600">
-                    {!status[i.id]?.configured ? 'Not configured' : status[i.id]?.lastError ? 'Sync failing' : 'Configured'}
-                  </span>
-                  {status[i.id]?.deviceCount !== undefined && (
-                    <span className="ml-auto text-xs text-slate-400">{status[i.id].deviceCount} devices</span>
-                  )}
+          {integrations.map(i=>{
+            // Google tracks directory sync (users/groups/OUs) and Chromebook
+            // device sync as two independent operations — merge them for this
+            // summary card; the Google Workspace tab shows them separately.
+            const s = i.id === 'google'
+              ? {
+                  configured: status.google?.configured,
+                  lastSync:   status.google?.lastSync || status.googleDevices?.lastSync,
+                  lastError:  status.google?.lastError || status.googleDevices?.lastError,
+                  deviceCount: status.googleDevices?.deviceCount,
+                }
+              : status[i.id];
+            return (
+              <Card key={i.id} title={i.label} icon={i.icon}
+                subtitle={s?.lastSync ? `Last sync: ${new Date(s.lastSync).toLocaleString()}` : 'Never synced'}>
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center gap-2">
+                    <StatusDot ok={s?.configured && !s?.lastError}/>
+                    <span className="text-sm text-slate-600">
+                      {!s?.configured ? 'Not configured' : s?.lastError ? 'Sync failing' : 'Configured'}
+                    </span>
+                    {s?.deviceCount !== undefined && (
+                      <span className="ml-auto text-xs text-slate-400">{s.deviceCount} devices</span>
+                    )}
+                  </div>
+                  <ErrorBanner message={s?.lastError}/>
                 </div>
-                <ErrorBanner message={status[i.id]?.lastError}/>
-              </div>
-            </Card>
-          ))}
+              </Card>
+            );
+          })}
           <Card title="PHPiPAM Migration" icon="🔄" subtitle="One-time import from your existing PHPiPAM instance">
             <p className="text-sm text-slate-600">Import IP address database, subnets, and VLANs into ClassGuard IPAM.</p>
           </Card>
@@ -545,7 +1185,7 @@ export default function IntegrationsPage() {
       )}
 
       {tab==='All Devices'        && <AllDevicesTab/>}
-      {tab==='Google Workspace'   && <GoogleSection status={status}/>}
+      {tab==='Google Workspace'   && <GoogleWorkspaceTab status={status}/>}
       {tab==='Mosyle'             && <MosyleSection status={status}/>}
       {tab==='Snipe-IT'           && <SnipeitSection status={status}/>}
       {tab==='Zammad'             && <ZammadSection status={status}/>}

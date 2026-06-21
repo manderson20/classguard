@@ -22,12 +22,14 @@ router.get('/status', ...auth, async (req, res) => {
       `SELECT key, value FROM settings
        WHERE key IN (
          'zammad_url','zammad_token',
-         'mosyle_access_token',
+         'mosyle_access_token','mosyle_email','mosyle_password',
          'snipeit_url','snipeit_token','snipeit_client_id','snipeit_client_secret',
          'phpipam_url','phpipam_app_id',
          'last_mosyle_sync','last_snipeit_sync','last_zammad_sync','last_google_sync',
          'last_mosyle_error','last_snipeit_error','last_zammad_error','last_google_error',
-         'google_client_id','google_client_secret'
+         'last_google_devices_sync','last_google_devices_error',
+         'google_client_id','google_client_secret',
+         'google_service_account_json','google_superadmin_email'
        )`
     ),
     pool.query(`SELECT source, COUNT(*) AS count FROM integration_devices GROUP BY source`),
@@ -35,11 +37,22 @@ router.get('/status', ...auth, async (req, res) => {
   const cfg = Object.fromEntries(rows.map(r => [r.key, r.value]));
   const deviceCount = Object.fromEntries(counts.map(r => [r.source, parseInt(r.count, 10)]));
 
+  // "configured" here means directory/device sync can actually run, which needs the
+  // service account + superadmin email — NOT the same as google_client_id/secret,
+  // which is the separate Web-application OAuth client used only for admin/teacher
+  // SSO login. A site can have SSO working with zero ability to sync devices, and
+  // vice versa.
+  const googleSyncConfigured = !!(
+    (cfg.google_service_account_json || process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH) &&
+    (cfg.google_superadmin_email || process.env.SUPERADMIN_EMAIL)
+  );
+
   res.json({
     zammad:   { configured: !!(cfg.zammad_url && cfg.zammad_token),    lastSync: cfg.last_zammad_sync  || null, lastError: cfg.last_zammad_error  || null },
-    mosyle:   { configured: !!cfg.mosyle_access_token,                 lastSync: cfg.last_mosyle_sync  || null, lastError: cfg.last_mosyle_error  || null, deviceCount: deviceCount.mosyle  ?? 0 },
+    mosyle:   { configured: !!(cfg.mosyle_access_token && cfg.mosyle_email && cfg.mosyle_password), lastSync: cfg.last_mosyle_sync  || null, lastError: cfg.last_mosyle_error  || null, deviceCount: deviceCount.mosyle  ?? 0 },
     snipeit:  { configured: !!(cfg.snipeit_url && (cfg.snipeit_token || (cfg.snipeit_client_id && cfg.snipeit_client_secret))), lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0 },
-    google:   { configured: !!(process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH || (cfg.google_client_id && cfg.google_client_secret)), lastSync: cfg.last_google_sync || null, lastError: cfg.last_google_error || null, deviceCount: deviceCount.google_admin ?? 0 },
+    google:   { configured: googleSyncConfigured, lastSync: cfg.last_google_sync || null, lastError: cfg.last_google_error || null },
+    googleDevices: { configured: googleSyncConfigured, lastSync: cfg.last_google_devices_sync || null, lastError: cfg.last_google_devices_error || null, deviceCount: deviceCount.google_admin ?? 0 },
     phpipam:  { configured: !!(cfg.phpipam_url && cfg.phpipam_app_id) },
   });
 });
@@ -150,32 +163,45 @@ router.post('/sync/google', ...auth, async (req, res) => {
 });
 
 // POST /api/v1/integrations/sync/google-devices  — sync Chromebook/device inventory
+// Separate error/timestamp tracking from 'google' (users/groups/OUs) above —
+// they're independent operations (one can fail while the other succeeds,
+// e.g. a directory-sync bug masking that devices already synced fine) and
+// sharing one key made the status UI show a stale/unrelated error.
 router.post('/sync/google-devices', ...auth, async (req, res) => {
   res.json({ status: 'started' });
-  recordSyncOutcome('google', syncGoogleDevices(req.user.id));
+  recordSyncOutcome('google_devices', syncGoogleDevices(req.user.id));
 });
+
+// Some Chrome device fields (e.g. tpmVersionInfo.vendorSpecific) come back
+// from the Admin SDK as raw binary leaked through as a JS "string", with
+// embedded NUL/control bytes — Postgres's jsonb input flatly rejects 
+// ("unsupported Unicode escape sequence"), which aborted this whole sync
+// partway through every time it reached the first such device.
+function stripControlChars(value) {
+  if (typeof value === 'string') return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
+  if (Array.isArray(value)) return value.map(stripControlChars);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, stripControlChars(v)]));
+  }
+  return value;
+}
 
 async function syncGoogleDevices(actorId) {
   const { google: googleLib } = require('googleapis');
-  const config = require('../config');
+  const { getServiceAccountAuth } = require('../services/google');
 
-  const keyPath    = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH;
-  const superadmin = process.env.SUPERADMIN_EMAIL;
-  if (!keyPath || !superadmin) throw new Error('Service account not configured');
+  const auth  = await getServiceAccountAuth(['https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly']);
+  const admin = googleLib.admin({ version: 'directory_v1', auth });
 
-  const auth = new googleLib.auth.GoogleAuth({
-    keyFile: keyPath,
-    scopes:  ['https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly'],
-    clientOptions: { subject: superadmin },
-  });
-
-  const admin   = googleLib.admin({ version: 'directory_v1', auth });
+  const { rows: [customerSetting] } = await pool.query(
+    `SELECT value FROM settings WHERE key = 'google_customer_id'`
+  );
   const devices = [];
   let pageToken;
 
   do {
     const res = await admin.chromeosdevices.list({
-      customerId:  process.env.GOOGLE_CUSTOMER_ID || 'my_customer',
+      customerId:  customerSetting?.value || process.env.GOOGLE_CUSTOMER_ID || 'my_customer',
       maxResults:  200,
       ...(pageToken ? { pageToken } : {}),
     });
@@ -209,9 +235,15 @@ async function syncGoogleDevices(actorId) {
        d.annotatedAssetId || d.deviceId, d.model,
        d.osVersion, d.lastEnrollmentTime ? d.annotatedUser || null : null,
        `{${ips.join(',')}}`,
-       d.status, d.lastSync ? new Date(d.lastSync) : null, JSON.stringify(d)]
+       d.status, d.lastSync ? new Date(d.lastSync) : null, JSON.stringify(stripControlChars(d))]
     );
   }
+
+  await pool.query(
+    `INSERT INTO settings (key, value, updated_at) VALUES ('last_google_devices_sync', $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [new Date().toISOString()]
+  );
 }
 
 // ---------------------------------------------------------------------------

@@ -1,41 +1,85 @@
 const axios  = require('axios');
 const { pool } = require('../db');
 
-const MOSYLE_API = 'https://businessapi.mosyle.com/v1';
+// Verified live against a real Mosyle Manager account (the "My School" /
+// education product — NOT Mosyle Business, a different product+API+base
+// URL that everything here was originally, wrongly, built against).
+const MOSYLE_API = 'https://managerapi.mosyle.com/v2';
 
 async function getConfig() {
   const { rows } = await pool.query(
-    `SELECT key, value FROM settings WHERE key IN ('mosyle_access_token')`
+    `SELECT key, value FROM settings WHERE key IN ('mosyle_access_token','mosyle_email','mosyle_password')`
   );
   const cfg = Object.fromEntries(rows.map(r => [r.key, r.value]));
-  return { token: process.env.MOSYLE_ACCESS_TOKEN || cfg.mosyle_access_token || null };
+  return {
+    token:    process.env.MOSYLE_ACCESS_TOKEN || cfg.mosyle_access_token || null,
+    email:    cfg.mosyle_email    || null,
+    password: cfg.mosyle_password || null,
+  };
 }
 
-// Since Feb 2024 Mosyle requires the access token to be a JWT sent via
-// "Authorization: Bearer", not the old accesstoken form-param style this
-// used to use. A token with no dots isn't JWT-shaped at all — almost
-// certainly copied from the wrong place (e.g. an old Manager API key) —
-// so fail fast with a specific message instead of a generic 401 from Mosyle.
-function assertJwtShaped(token) {
-  if (token.split('.').length !== 3) {
+// Mosyle Manager's token-only ("Basic Auth") mode is deprecated — confirmed
+// live, it 401s with "API Token or Bearer Token are incorrect" even with a
+// valid access token. The only working auth now is: POST the access token +
+// an admin email/password to /login, which returns a Bearer JWT in the
+// response's Authorization HEADER (not body), valid 24h. That Bearer token
+// (plus the access token, still in the body) is then required on every
+// other call. Cached in-process — a restart just re-logs-in on next use.
+let cachedBearer = null; // { token, expiresAt }
+
+async function getBearerToken(cfg) {
+  if (cachedBearer && cachedBearer.expiresAt > Date.now()) return cachedBearer.token;
+
+  if (!cfg.email || !cfg.password) {
     throw new Error(
-      'Mosyle access token doesn\'t look like a JWT. Since Feb 2024 Mosyle requires a JWT access ' +
-      'token generated from Organization → API Integration → Add new token in the Mosyle Business console.'
+      'Mosyle email/password not configured. Mosyle now requires a JWT login (their token-only ' +
+      '"Basic Auth" mode is deprecated) — add an admin email/password in Integrations → Mosyle.'
     );
   }
+
+  let res;
+  try {
+    res = await axios.post(`${MOSYLE_API}/login`, {
+      accessToken: cfg.token, email: cfg.email, password: cfg.password,
+    }, { headers: { 'Content-Type': 'application/json' }, timeout: 15_000 });
+  } catch (err) {
+    const detail = err.response?.data?.['error-description'] || err.response?.data?.error;
+    throw new Error(detail ? `Mosyle login failed: ${detail}` : `Mosyle login failed: ${err.message}`);
+  }
+
+  const bearer = res.headers['authorization'];
+  if (!bearer) throw new Error('Mosyle /login succeeded but returned no Authorization header');
+
+  // Refresh a bit before the real 24h expiry so a request never lands right at the edge.
+  cachedBearer = { token: bearer, expiresAt: Date.now() + 23 * 60 * 60 * 1000 };
+  return bearer;
 }
 
-async function apiRequest(endpoint, { operation, options = {} }) {
+async function apiRequest(endpoint, { options = {} } = {}) {
   const cfg = await getConfig();
-  if (!cfg.token) throw new Error('Mosyle is not configured. Add MOSYLE_ACCESS_TOKEN in Settings → Integrations.');
-  assertJwtShaped(cfg.token);
+  if (!cfg.token) throw new Error('Mosyle is not configured. Add the access token in Integrations → Mosyle.');
 
-  const res = await axios.post(`${MOSYLE_API}/${endpoint}`, { operation, options }, {
-    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${cfg.token}` },
-    timeout: 15_000,
-  });
+  const bearer = await getBearerToken(cfg);
 
-  if (res.data?.status !== 'OK') {
+  let res;
+  try {
+    res = await axios.post(`${MOSYLE_API}/${endpoint}`, { accessToken: cfg.token, options }, {
+      headers: { 'Content-Type': 'application/json', Authorization: bearer },
+      timeout: 15_000,
+    });
+  } catch (err) {
+    // A 401 here likely means the cached bearer expired early or was
+    // revoked — drop it so the *next* call re-logs-in instead of retrying
+    // the same dead token forever.
+    if (err.response?.status === 401) cachedBearer = null;
+    const detail = err.response?.data?.error || err.response?.data?.message || err.response?.data?.['error-description'];
+    throw new Error(detail ? `Mosyle API error: ${detail}` : err.message);
+  }
+
+  // Only Mosyle's outer envelope is checked here — res.data.response may
+  // carry its own nested "status" (e.g. DATA_WRONGFORMAT) for a specific
+  // operation, which callers should check themselves.
+  if (res.data?.status && res.data.status !== 'OK') {
     throw new Error(`Mosyle API error: ${res.data?.message || JSON.stringify(res.data)}`);
   }
   return res.data;
@@ -44,13 +88,20 @@ async function apiRequest(endpoint, { operation, options = {} }) {
 // ---------------------------------------------------------------------------
 // List all managed Apple devices
 // ---------------------------------------------------------------------------
-async function listDevices({ page = 0, type = 'ios' } = {}) {
+async function listDevices({ type = 'ios' } = {}) {
   // type: ios | mac | tvos | appletv
-  const data = await apiRequest('listdevices', {
-    operation: 'list',
-    options: { os: type, page },
-  });
-  return data.response?.[0]?.devices || data.response || [];
+  // response shape: { status: 'OK', response: { devices: [...], rows, page_size, page } }
+  const devices = [];
+  let page = 1;
+  for (;;) {
+    const data  = await apiRequest('listdevices', { options: { os: type, page } });
+    const batch = data.response?.devices || [];
+    devices.push(...batch);
+    const pageSize = data.response?.page_size || batch.length;
+    if (batch.length < pageSize || !batch.length) break;
+    page++;
+  }
+  return devices;
 }
 
 // Deliberately doesn't swallow per-type errors: an auth/server failure on
@@ -91,7 +142,7 @@ async function syncDevices() {
          os_version = EXCLUDED.os_version, assigned_email = EXCLUDED.assigned_email,
          ip_addresses = EXCLUDED.ip_addresses, status = EXCLUDED.status,
          raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
-      [serial || d.udid, serial, `{${macs.join(',')}}`, name, model,
+      [serial || d.deviceudid || d.udid, serial, `{${macs.join(',')}}`, name, model,
        osType, os, user, `{${ips.join(',')}}`, status, JSON.stringify(d)]
     );
     count++;

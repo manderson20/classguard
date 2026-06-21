@@ -7,6 +7,29 @@ require('dotenv').config({ path: '../.env' });
 const BACKEND_URL   = process.env.BACKEND_URL   || 'https://classguard.example.org';
 const GOOGLE_CLIENT = process.env.GOOGLE_CLIENT_ID || '';
 
+// An empty oauth2.client_id is not "OAuth disabled" — Chrome's manifest
+// parser rejects the whole package with "Invalid value for 'oauth2.client_id'"
+// and the extension never appears anywhere (not chrome://extensions, not
+// extensions-internals), with zero feedback to whoever force-installed it.
+// Shipped broken this way for a full release before being caught by a real
+// device install. Fail loudly instead, same pattern as EXTENSION_SIGNING_KEY.
+if (!GOOGLE_CLIENT) {
+  console.error(
+    '\n' + '='.repeat(78) + '\n' +
+    'GOOGLE_CLIENT_ID is not set — refusing to build.\n\n' +
+    "The extension's manifest declares an oauth2 key (chrome.identity login),\n" +
+    "and Chrome refuses to load ANY extension with an empty oauth2.client_id —\n" +
+    'silently, with no error visible wherever it was force-installed from.\n\n' +
+    'Create an OAuth client in Google Cloud Console: APIs & Services >\n' +
+    'Credentials > Create Credentials > OAuth client ID > Application type:\n' +
+    'Chrome Extension > Item ID: ihgnpfhfldlkkdhplcnojgoinbdpnbmd\n' +
+    '(or whatever extension-id.txt currently reports). Then set\n' +
+    'GOOGLE_CLIENT_ID=<that client id> in .env and rebuild.\n' +
+    '='.repeat(78) + '\n'
+  );
+  process.exit(1);
+}
+
 // ---------------------------------------------------------------------------
 // Shared define plugin — injects config into all bundles at build time
 // ---------------------------------------------------------------------------

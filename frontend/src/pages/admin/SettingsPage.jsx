@@ -23,216 +23,6 @@ function Field({ label, hint, children }) {
   );
 }
 
-function ExtensionDownloadStatus() {
-  const [status, setStatus] = useState('checking'); // checking | ready | missing
-  const [meta, setMeta] = useState(null);
-
-  useEffect(() => {
-    fetch('/downloads/classguard-extension.zip', { method: 'HEAD' })
-      .then((res) => {
-        if (!res.ok) { setStatus('missing'); return; }
-        setMeta({
-          size:         res.headers.get('content-length'),
-          lastModified: res.headers.get('last-modified'),
-        });
-        setStatus('ready');
-      })
-      .catch(() => setStatus('missing'));
-  }, []);
-
-  if (status === 'checking') {
-    return <p className="text-xs text-slate-400">Checking for a built extension package…</p>;
-  }
-
-  if (status === 'missing') {
-    return (
-      <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800">
-        No build found on this server yet. On the host, run:
-        <pre className="bg-slate-800 text-green-300 rounded p-2 mt-2 font-mono leading-5">docker compose build extension-builder{'\n'}docker compose run --rm extension-builder</pre>
-        Then refresh this page. Re-run the same command any time <strong>Google Client ID</strong> or the server's public URL changes.
-      </div>
-    );
-  }
-
-  const sizeMb = meta?.size ? (Number(meta.size) / (1024 * 1024)).toFixed(1) : null;
-  return (
-    <div className="flex items-center gap-3">
-      <a
-        href="/downloads/classguard-extension.crx"
-        download
-        className="inline-flex items-center gap-1.5 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium px-4 py-2 rounded-lg"
-      >
-        Download Extension (.crx)
-      </a>
-      <a
-        href="/downloads/classguard-extension.zip"
-        download
-        className="inline-flex items-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-medium px-4 py-2 rounded-lg"
-      >
-        Unpacked (.zip, for dev-mode sideloading)
-      </a>
-      <span className="text-xs text-slate-400">
-        {sizeMb && `${sizeMb} MB`}{meta?.lastModified && ` · built ${new Date(meta.lastModified).toLocaleString()}`}
-      </span>
-    </div>
-  );
-}
-
-function ExtensionIdentity({ serverUrl }) {
-  const [status, setStatus]         = useState('checking'); // checking | ready | missing
-  const [extensionId, setExtensionId] = useState(null);
-  const [copied, setCopied]         = useState('');
-
-  useEffect(() => {
-    fetch('/downloads/extension-id.txt')
-      .then((res) => {
-        if (!res.ok) { setStatus('missing'); return null; }
-        return res.text();
-      })
-      .then((text) => {
-        if (text == null) return;
-        setExtensionId(text.trim());
-        setStatus('ready');
-      })
-      .catch(() => setStatus('missing'));
-  }, []);
-
-  const updateUrl = `${serverUrl}/downloads/update.xml`;
-
-  const copy = (key, text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(key);
-    setTimeout(() => setCopied(''), 2000);
-  };
-
-  if (status === 'checking') return null;
-
-  if (status === 'missing') {
-    return (
-      <div className="bg-amber-50 border border-amber-200 rounded p-3 text-xs text-amber-800 mb-3">
-        No signed build found yet — auto-update requires a one-time signing key. On the host, run:
-        <pre className="bg-slate-800 text-green-300 rounded p-2 mt-2 font-mono leading-5">docker compose run --rm extension-builder node scripts/generate-key.js</pre>
-        then add the printed <code className="font-mono">EXTENSION_SIGNING_KEY</code> line to <code className="font-mono">.env</code> on every node
-        in this cluster, and rebuild <code className="font-mono">extension-builder</code>.
-      </div>
-    );
-  }
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
-      <div>
-        <div className="text-xs font-medium text-slate-500 mb-1">Extension ID</div>
-        <div className="flex items-center gap-1.5">
-          <code className="bg-slate-100 rounded px-2 py-1 text-xs font-mono flex-1 truncate">{extensionId}</code>
-          <button onClick={() => copy('id', extensionId)} className="text-xs bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded flex-shrink-0">
-            {copied === 'id' ? 'Copied!' : 'Copy'}
-          </button>
-        </div>
-      </div>
-      <div>
-        <div className="text-xs font-medium text-slate-500 mb-1">Update URL</div>
-        <div className="flex items-center gap-1.5">
-          <code className="bg-slate-100 rounded px-2 py-1 text-xs font-mono flex-1 truncate">{updateUrl}</code>
-          <button onClick={() => copy('update', updateUrl)} className="text-xs bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded flex-shrink-0">
-            {copied === 'update' ? 'Copied!' : 'Copy'}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ExtensionDeploySection({ googleClientId }) {
-  const [copied, setCopied] = useState('');
-  const serverUrl = window.location.origin;
-
-  const policy = JSON.stringify({
-    serverUrl,
-    googleClientId: googleClientId || '<paste-client-id-above>',
-  }, null, 2);
-
-  const copy = (key, text) => {
-    navigator.clipboard.writeText(text);
-    setCopied(key);
-    setTimeout(() => setCopied(''), 2000);
-  };
-
-  return (
-    <Section title="Chrome Extension — Google Admin Deployment">
-      <p className="text-xs text-slate-500 mb-4">
-        The extension is built specifically for this server (its Google OAuth client ID is baked into the
-        manifest), then self-configures its server URL per school via Google Admin Console managed storage.
-        Follow these steps to deploy it.
-      </p>
-
-      <div className="space-y-5">
-        {/* Step 1 */}
-        <div>
-          <div className="text-sm font-semibold text-slate-700 mb-1">Step 1 — Get the extension's identity</div>
-          <p className="text-xs text-slate-500 mb-3">
-            This build is signed with a permanent key, which is what makes auto-update possible — Chrome treats this
-            ID as the same extension forever, even as the code inside it changes. Copy the Extension ID and Update URL below.
-          </p>
-          <ExtensionIdentity serverUrl={serverUrl} />
-          <ExtensionDownloadStatus />
-        </div>
-
-        {/* Step 2 */}
-        <div>
-          <div className="text-sm font-semibold text-slate-700 mb-1">Step 2 — Add it as a custom extension in Google Admin Console</div>
-          <p className="text-xs text-slate-500 mb-2">
-            Google Admin → Devices → Chrome → Apps &amp; Extensions → select your student OU → Add (+) → Add Chrome app or
-            extension by ID. Paste the Extension ID, then choose <strong>"From a custom URL"</strong> and paste the Update URL.
-            This is a one-time step — once it's set, every future extension rebuild reaches devices automatically; there's
-            no more re-uploading a file per release.
-          </p>
-        </div>
-
-        {/* Step 3 */}
-        <div>
-          <div className="text-sm font-semibold text-slate-700 mb-1">Step 3 — Force-install and set managed storage</div>
-          <p className="text-xs text-slate-500 mb-2">
-            Set the install policy to <strong>Force install</strong>. Then, in the same screen's Policy for extensions (JSON),
-            paste:
-          </p>
-          <div className="relative">
-            <pre className="bg-slate-800 text-green-300 text-xs rounded p-3 overflow-auto leading-5">{policy}</pre>
-            <button
-              onClick={() => copy('policy', policy)}
-              className="absolute top-2 right-2 text-xs bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded"
-            >
-              {copied === 'policy' ? 'Copied!' : 'Copy'}
-            </button>
-          </div>
-          <p className="text-xs text-slate-400 mt-1">
-            <strong>serverUrl</strong> is pre-filled with this server's origin.{' '}
-            <strong>googleClientId</strong> comes from the Google Workspace Login section above — save that first.
-            The extension will self-configure on next device sync (usually within 15 minutes).
-          </p>
-        </div>
-
-        {/* What managed storage replaces */}
-        <div className="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-700">
-          <strong>How it works:</strong> The extension reads <code className="font-mono">chrome.storage.managed</code> at runtime to
-          discover the ClassGuard server URL, so you never need to rebuild it just because the server's address changes —
-          set <strong>serverUrl</strong> via the Google Admin policy below, exactly like GoGuardian's deployment model.
-          The <strong>Google Client ID</strong> is the one exception: Chrome requires it to be compiled into the
-          extension's manifest, so re-download and re-publish the extension if you ever change it.
-        </div>
-
-        {/* Auto-update */}
-        <div className="bg-green-50 border border-green-200 rounded p-3 text-xs text-green-800">
-          <strong>Future updates:</strong> after Steps 1–3 are done once, shipping new extension code is just: bump the
-          version in <code className="font-mono">chrome-extension/package.json</code>, then rebuild
-          (<code className="font-mono">docker compose run --rm extension-builder</code>) on every node in the cluster.
-          Chrome checks the Update URL on its own schedule and installs the new version on every enrolled device —
-          no re-upload, no re-pasting the policy.
-        </div>
-      </div>
-    </Section>
-  );
-}
-
 const PRESET_COLORS = [
   { label: 'Blue',    value: '#2563eb' },
   { label: 'Indigo',  value: '#4f46e5' },
@@ -486,11 +276,11 @@ function BlockPageBrandingSection({ appSettings, appLoading, saved, setSaved }) 
   );
 }
 
-const TABS = ['General', 'Branding', 'DNS & Retention', 'Monitoring', 'Extension', 'About'];
+const TABS = ['Branding', 'DNS & Retention', 'Monitoring', 'About'];
 
 export default function SettingsPage() {
   const qc = useQueryClient();
-  const [tab, setTab] = useState('General');
+  const [tab, setTab] = useState('Branding');
 
   const { data: dnsSettings = {}, isLoading: dnsLoading } = useQuery({
     queryKey: ['dns-settings'],
@@ -508,34 +298,14 @@ export default function SettingsPage() {
   });
 
   const [dns, setDns]     = useState({});
-  const [google, setGoogle] = useState({
-    google_client_id: '', google_client_secret: '', google_redirect_uri: '', google_workspace_domain: '',
-  });
   const [zabbixToken,  setZabbixToken]  = useState('');
-  const [youtubeApiKey, setYoutubeApiKey] = useState('');
   const [saved, setSaved] = useState('');
 
   useEffect(() => {
     if (appSettings && Object.keys(appSettings).length) {
-      setGoogle(g => ({
-        google_client_id:        appSettings.google_client_id        || '',
-        google_client_secret:    appSettings.google_client_secret    || '',
-        google_redirect_uri:     appSettings.google_redirect_uri     || '',
-        google_workspace_domain: appSettings.google_workspace_domain || '',
-      }));
       setZabbixToken(appSettings.zabbix_metrics_token || '');
-      setYoutubeApiKey(appSettings.youtube_api_key    || '');
     }
   }, [appSettings]);
-
-  const saveGoogle = useMutation({
-    mutationFn: () => api.put('/settings', google),
-    onSuccess:  () => {
-      qc.invalidateQueries({ queryKey: ['app-settings'] });
-      setSaved('google');
-      setTimeout(() => setSaved(''), 2500);
-    },
-  });
 
   useEffect(() => {
     if (dnsSettings && Object.keys(dnsSettings).length) {
@@ -577,115 +347,6 @@ export default function SettingsPage() {
           </button>
         ))}
       </div>
-
-      {tab === 'General' && (
-      <>
-      {/* Google OAuth */}
-      <Section title="Google Workspace Login">
-        <p className="text-xs text-slate-500 mb-4">
-          Configure Google OAuth to let teachers and students sign in with their school Google accounts.
-          <br />
-          <strong>Setup steps:</strong>{' '}
-          <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer"
-            className="text-primary-600 underline">Google Cloud Console</a>
-          {' '}→ APIs &amp; Services → Credentials → Create OAuth 2.0 Client ID (Web application).
-          Add <code className="bg-slate-100 px-1 rounded font-mono text-xs">{window.location.origin}/auth/callback</code> as
-          an Authorized redirect URI.
-        </p>
-        {appLoading ? <div className="text-slate-400 text-sm">Loading…</div> : (
-          <>
-            <Field label="Google Client ID" hint="Paste from Google Cloud Console">
-              <input
-                className="input text-sm font-mono"
-                value={google.google_client_id}
-                onChange={e => setGoogle(g => ({ ...g, google_client_id: e.target.value }))}
-                placeholder="123456789-xxx.apps.googleusercontent.com"
-              />
-            </Field>
-            <Field label="Google Client Secret" hint="Keep this secret">
-              <input
-                type="password"
-                className="input text-sm font-mono"
-                value={google.google_client_secret}
-                onChange={e => setGoogle(g => ({ ...g, google_client_secret: e.target.value }))}
-                placeholder="GOCSPX-…"
-              />
-            </Field>
-            <Field label="Authorized Redirect URI" hint="Must match what you entered in Google Cloud Console">
-              <input
-                className="input text-sm font-mono"
-                value={google.google_redirect_uri}
-                onChange={e => setGoogle(g => ({ ...g, google_redirect_uri: e.target.value }))}
-                placeholder={`${window.location.origin}/auth/callback`}
-              />
-            </Field>
-            <Field label="Workspace Domain" hint="Restrict login to this domain (e.g. school.org). Leave blank to allow any Google account.">
-              <input
-                className="input text-sm font-mono"
-                value={google.google_workspace_domain}
-                onChange={e => setGoogle(g => ({ ...g, google_workspace_domain: e.target.value }))}
-                placeholder="school.org"
-              />
-            </Field>
-            <div className="flex items-center gap-3 pt-4">
-              <button
-                className="btn-primary"
-                onClick={() => saveGoogle.mutate()}
-                disabled={saveGoogle.isPending}
-              >
-                {saveGoogle.isPending ? 'Saving…' : 'Save Google Settings'}
-              </button>
-              {saved === 'google' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
-            </div>
-          </>
-        )}
-      </Section>
-
-      {/* YouTube Data API */}
-      <Section title="YouTube Data API">
-        <p className="text-xs text-slate-500 mb-4">
-          Required for per-category and per-video YouTube filtering in policy rules.
-          The API key is stored server-side and never sent to student devices.
-          Video category lookups are cached 24 hours in Redis — 10,000 free quota units/day
-          covers a large school with heavy YouTube use.
-        </p>
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-700 mb-4">
-          <strong>Setup:</strong>{' '}
-          <a href="https://console.cloud.google.com" target="_blank" rel="noreferrer"
-            className="underline">Google Cloud Console</a>
-          {' '}→ APIs &amp; Services → Library → search <em>YouTube Data API v3</em> → Enable →
-          Credentials → Create API Key. Restrict the key to YouTube Data API v3 only.
-        </div>
-        {appLoading ? <div className="text-slate-400 text-sm">Loading…</div> : (
-          <>
-            <Field label="YouTube Data API Key" hint="Restricted to YouTube Data API v3 — never exposed to students">
-              <input
-                type="password"
-                className="input text-sm font-mono"
-                value={youtubeApiKey}
-                onChange={e => setYoutubeApiKey(e.target.value)}
-                placeholder="AIzaSy…"
-              />
-            </Field>
-            <div className="flex items-center gap-3 pt-4">
-              <button
-                className="btn-primary"
-                onClick={() => {
-                  api.put('/settings', { youtube_api_key: youtubeApiKey }).then(() => {
-                    setSaved('youtube');
-                    setTimeout(() => setSaved(''), 2500);
-                  });
-                }}
-              >
-                Save API Key
-              </button>
-              {saved === 'youtube' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
-            </div>
-          </>
-        )}
-      </Section>
-      </>
-      )}
 
       {tab === 'Branding' && (
         <BlockPageBrandingSection appSettings={appSettings} appLoading={appLoading} saved={saved} setSaved={setSaved} />
@@ -852,10 +513,6 @@ export default function SettingsPage() {
         </div>
       </Section>
       </>
-      )}
-
-      {tab === 'Extension' && (
-        <ExtensionDeploySection googleClientId={google.google_client_id} />
       )}
 
       {tab === 'About' && (
