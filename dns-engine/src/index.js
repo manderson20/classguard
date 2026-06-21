@@ -35,7 +35,7 @@ const dnsServer = DNS.createServer({
       // (everyone's queries, not just the TCP ones) from that point on.
       const sourceIp = typeof rinfo.address === 'function' ? rinfo.remoteAddress : rinfo.address;
       const result   = await resolveQuery(question.name, question.type, sourceIp);
-      const response = buildResponse(request, result);
+      const response = await buildResponse(request, result);
       send(response);
     } catch (err) {
       console.error('[dns] handler error:', err.message);

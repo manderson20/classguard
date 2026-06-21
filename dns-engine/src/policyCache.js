@@ -156,6 +156,51 @@ async function getForwardZones() {
 }
 
 // ---------------------------------------------------------------------------
+// DNS engine settings (Settings -> DNS & Retention) — upstream resolvers,
+// block-page IPs, cache TTL. These previously saved successfully to the
+// `dns.*` settings table via PUT /api/v1/dns/settings but were never
+// actually read by dns-engine anywhere — it only ever read the static
+// .env values baked in at container start. Fixed by reading live here,
+// same cached-fetch shape as getForwardZones above. Falls back to the
+// .env-sourced config.js defaults if the fetch fails or a value isn't set,
+// so an admin who's never touched this page gets identical behavior to
+// before this existed.
+// ---------------------------------------------------------------------------
+const DNS_SETTINGS_KEY = 'classguard:dns-engine-settings';
+const DNS_SETTINGS_TTL = 60;
+
+async function getDnsEngineSettings() {
+  const raw = await redis.get(DNS_SETTINGS_KEY).catch(() => null);
+  if (raw) {
+    try { return JSON.parse(raw); } catch {}
+  }
+  let fetched = {};
+  try {
+    const { data } = await axios.get(
+      `${config.backend.url}/api/v1/dns/settings`,
+      {
+        headers: { 'x-internal-secret': config.backend.internalSecret },
+        timeout: 2000,
+      }
+    );
+    fetched = data || {};
+  } catch {
+    // fall through to config.js defaults below
+  }
+
+  const settings = {
+    upstreamPrimary:   fetched.upstream_primary   || config.dns.upstreamPrimary,
+    upstreamSecondary: fetched.upstream_secondary || config.dns.upstreamSecondary,
+    upstreamIpv6:       fetched.upstream_ipv6       || null,
+    blockPageIp:        fetched.block_page_ip       || config.dns.blockPageIp,
+    blockPageIpv6:      fetched.block_page_ipv6     || config.dns.blockPageIpv6,
+    cacheTtl:           parseInt(fetched.cache_ttl, 10) || config.cache.ttl,
+  };
+  await redis.set(DNS_SETTINGS_KEY, JSON.stringify(settings), 'EX', DNS_SETTINGS_TTL).catch(() => {});
+  return settings;
+}
+
+// ---------------------------------------------------------------------------
 // Subnet-based policy lookup for devices without a registered student
 // (iPads, BYOD, guest networks — DNS filtering without the extension)
 // ---------------------------------------------------------------------------
@@ -295,6 +340,7 @@ module.exports = {
   getDevice, setDevice, getPolicy, invalidatePolicy,
   getGlobalAllowlist, invalidateGlobalAllowlist,
   getForwardZones,
+  getDnsEngineSettings,
   getSubnetPolicy, invalidateSubnetPolicies,
   getNetworkPolicy,
   getOverrideForIp,
