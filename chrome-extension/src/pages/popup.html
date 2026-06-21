@@ -21,7 +21,7 @@
       align-items: center;
       gap: 8px;
     }
-    header .logo { font-size: 20px; }
+    header .logo { width: 22px; height: 22px; display: block; }
     header h1    { font-size: 15px; font-weight: 700; }
     header .sub  { font-size: 11px; opacity: .8; margin-top: 1px; }
 
@@ -88,7 +88,7 @@
 </head>
 <body>
   <header>
-    <div class="logo">🛡️</div>
+    <img class="logo" src="icons/icon48.png" alt="ClassGuard">
     <div>
       <h1>ClassGuard</h1>
       <div class="sub" id="header-sub">Loading…</div>
@@ -99,7 +99,6 @@
 
   <footer>
     <button id="btn-sync" class="primary">Sync Policy</button>
-    <button id="btn-signout" class="danger">Sign Out</button>
   </footer>
 
   <!-- popup.bundle.js injected by HtmlWebpackPlugin -->
