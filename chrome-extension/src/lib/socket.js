@@ -11,7 +11,7 @@ let _socket = null;
 export async function connectSocket({
   jwt, onPolicyUpdated, onScreenshotRequest,
   onLockRequest, onUnlockRequest, onOpenTabRequest, onCloseTabRequest,
-  onChatMessage,
+  onChatMessage, onLiveViewRequest,
 }) {
   if (_socket && _socket.connected) return;
   if (_socket) _socket.disconnect();
@@ -34,6 +34,12 @@ export async function connectSocket({
   // Teacher-initiated screenshot request from backend
   _socket.on('screenshot:request', () => {
     if (typeof onScreenshotRequest === 'function') onScreenshotRequest('teacher_request');
+  });
+
+  // Admin Live View — same capture mechanism as a screenshot request, but
+  // never persisted server-side (see /extension/liveview-frame)
+  _socket.on('liveview:request', () => {
+    if (typeof onLiveViewRequest === 'function') onLiveViewRequest();
   });
 
   // Teacher-initiated remote device commands

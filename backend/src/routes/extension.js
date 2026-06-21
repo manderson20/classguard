@@ -12,6 +12,7 @@ const { authenticate }    = require('../middleware/auth');
 const { requireMinRole }  = require('../middleware/roles');
 const { resolvePolicy }   = require('../services/policyResolver');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
+const { logDeviceView }   = require('../services/deviceViewAudit');
 const events              = require('../events');
 
 // Screenshot storage directory (inside the Docker app-logs volume or local path)
@@ -540,6 +541,21 @@ async function analyseScreenshot(screenshotId, filePath, buffer) {
 router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, res) => {
   const { student_id, trigger, flagged, limit = 50, offset = 0 } = req.query;
 
+  // A teacher could previously browse ANY student's screenshots, not just
+  // their own roster — requireMinRole('teacher') only checked role, never
+  // ownership. Admins/superadmins are intentionally not roster-limited
+  // (that's the point of the Live View feature too), but a teacher is.
+  if (req.user.role === 'teacher') {
+    if (student_id) {
+      if (!(await teacherOwnsStudent(req.user.userId, student_id))) {
+        return res.status(403).json({ error: 'This student is not on one of your rosters' });
+      }
+    } else {
+      // No student_id filter: restrict the whole list to the teacher's roster
+      // rather than letting it return every student in the district.
+    }
+  }
+
   const conditions = [];
   const params     = [];
 
@@ -548,6 +564,14 @@ router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, 
   if (flagged !== undefined) {
     conditions.push(`s.ai_flagged = $${params.length+1}`);
     params.push(flagged === 'true');
+  }
+  if (req.user.role === 'teacher' && !student_id) {
+    conditions.push(`s.student_id IN (
+      SELECT cm.student_id FROM class_members cm
+      JOIN classes c ON c.id = cm.class_id
+      WHERE c.teacher_id = $${params.length+1}
+    )`);
+    params.push(req.user.userId);
   }
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
@@ -560,6 +584,18 @@ router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, 
      LIMIT $${params.length+1} OFFSET $${params.length+2}`,
     [...params, limit, offset]
   );
+
+  // Logged only for the targeted "this one student's screenshots" case —
+  // an unfiltered roster browse isn't the single-student-stalking risk
+  // this audit trail exists for, and doesn't map cleanly onto a schema
+  // that requires exactly one student per row.
+  if (student_id) {
+    logDeviceView({
+      viewerId: req.user.userId, studentId: student_id, action: 'screenshot_list_viewed',
+      detail: { count: rows.length, trigger: trigger || null },
+    }).catch(err => console.error('[device-view-audit] log failed:', err.message));
+  }
+
   res.json(rows);
 });
 
@@ -567,11 +603,20 @@ router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, 
 // GET /api/v1/extension/screenshots/:id/image  — stream the PNG file
 // ---------------------------------------------------------------------------
 router.get('/screenshots/:id/image', authenticate, requireMinRole('teacher'), async (req, res) => {
-  const { rows } = await pool.query('SELECT file_path FROM screenshots WHERE id = $1', [req.params.id]);
+  const { rows } = await pool.query('SELECT file_path, student_id FROM screenshots WHERE id = $1', [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'not found' });
+
+  if (req.user.role === 'teacher' && !(await teacherOwnsStudent(req.user.userId, rows[0].student_id))) {
+    return res.status(403).json({ error: 'This student is not on one of your rosters' });
+  }
 
   const abs = path.join(SCREENSHOT_DIR, rows[0].file_path);
   if (!fs.existsSync(abs)) return res.status(404).json({ error: 'file not found' });
+
+  logDeviceView({
+    viewerId: req.user.userId, studentId: rows[0].student_id, action: 'screenshot_viewed',
+    detail: { screenshot_id: req.params.id },
+  }).catch(err => console.error('[device-view-audit] log failed:', err.message));
 
   res.setHeader('Content-Type', 'image/png');
   res.setHeader('Cache-Control', 'private, max-age=3600');
@@ -610,6 +655,35 @@ router.post('/request-screenshot', authenticate, requireMinRole('teacher'), asyn
   });
 
   res.json({ ok: true, message: 'Screenshot request sent to device' });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/extension/liveview-frame
+// One frame for the admin Live View feature (routes/liveView.js). Unlike
+// POST /screenshot above, this is NEVER written to disk or the screenshots
+// table — it's relayed straight through to whoever's currently watching
+// (sockets/index.js's liveview:${studentId} room) and then discarded. A
+// continuous stream of permanently-stored images from this would be a much
+// bigger privacy footprint than the feature needs, and screenshots already
+// have no retention/cleanup job (see migration 015's comment) — this
+// deliberately doesn't add to that pile.
+// Body: { data_url, url, title }
+// ---------------------------------------------------------------------------
+router.post('/liveview-frame', authenticate, async (req, res) => {
+  const { data_url, url, title } = req.body;
+  if (!data_url || !/^data:image\/(png|jpeg|webp);base64,/.test(data_url)) {
+    return res.status(400).json({ error: 'invalid data_url format' });
+  }
+
+  events.emit('student:liveview_frame', {
+    studentId: req.user.userId,
+    dataUrl:   data_url,
+    url:       url || null,
+    title:     title || null,
+    capturedAt: new Date().toISOString(),
+  });
+
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------

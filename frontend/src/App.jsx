@@ -47,6 +47,7 @@ import RosterPage          from './pages/admin/RosterPage';
 import RadiusPage          from './pages/admin/RadiusPage';
 import ScreenshotsPage     from './pages/admin/ScreenshotsPage';
 import ChatAuditPage       from './pages/admin/ChatAuditPage';
+import DeviceViewAuditPage from './pages/admin/DeviceViewAuditPage';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
@@ -119,6 +120,7 @@ export default function App() {
           <Route path="/admin/radius"                 element={<RadiusPage />} />
           <Route path="/admin/screenshots"            element={<ScreenshotsPage />} />
           <Route path="/admin/chat"                   element={<ChatAuditPage />} />
+          <Route path="/admin/device-view-audit"      element={<DeviceViewAuditPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
           <Route path="/admin/system-health"           element={<SystemHealthPage />} />
         </Route>

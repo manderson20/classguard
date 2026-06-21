@@ -31,6 +31,7 @@ import {
   mdiChatOutline,
   mdiHistory,
   mdiPulse,
+  mdiEyeOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -73,6 +74,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/screenshots',       icon: mdiCameraOutline,  label: 'Screenshots'       },
       { to: '/admin/browser-history',   icon: mdiHistory,        label: 'Browser History'   },
       { to: '/admin/chat',              icon: mdiChatOutline,    label: 'Chat Audit'        },
+      { to: '/admin/device-view-audit', icon: mdiEyeOutline,     label: 'Device View Audit' },
       { to: '/admin/ai',                icon: mdiRobotOutline,   label: 'AI Classifier'     },
       { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true },
     ],

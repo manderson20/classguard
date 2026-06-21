@@ -34,6 +34,20 @@ const setupSockets = (io) => {
       socket.leave(`class:${classId}`);
     });
 
+    // Admin Live View (routes/liveView.js) — not roster-scoped like
+    // join:class above, so restricted to admin+ rather than any teacher.
+    // The actual permission/audit-logging gate is the HTTP /start route;
+    // this just controls who receives the relayed frames over the socket.
+    socket.on('join:liveview', (studentId) => {
+      if (['admin', 'superadmin'].includes(role)) {
+        socket.join(`liveview:${studentId}`);
+      }
+    });
+
+    socket.on('leave:liveview', (studentId) => {
+      socket.leave(`liveview:${studentId}`);
+    });
+
     socket.on('disconnect', () => {});
   });
 
@@ -97,6 +111,22 @@ const setupSockets = (io) => {
   events.on('teacher:screenshot_request', ({ studentId }) => {
     if (studentId) {
       io.to(`student:${studentId}`).emit('screenshot:request');
+    }
+  });
+
+  // Admin Live View: ask the student's extension for one frame, then relay
+  // whatever comes back to anyone currently watching that student. Nothing
+  // here touches the database — see /extension/liveview-frame's comment for
+  // why this is deliberately ephemeral.
+  events.on('admin:liveview_request', ({ studentId }) => {
+    if (studentId) {
+      io.to(`student:${studentId}`).emit('liveview:request');
+    }
+  });
+
+  events.on('student:liveview_frame', ({ studentId, dataUrl, url, title, capturedAt }) => {
+    if (studentId) {
+      io.to(`liveview:${studentId}`).emit('liveview:frame', { studentId, dataUrl, url, title, capturedAt });
     }
   });
 

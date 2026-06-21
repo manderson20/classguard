@@ -121,6 +121,7 @@ app.use('/api/v1/phones',        require('./routes/phones'));
 app.use('/api/v1/phones',        require('./routes/phoneChanges'));
 app.use('/api/v1/chat',          require('./routes/chat'));
 app.use('/api/v1/system',        require('./routes/systemHealth'));
+app.use('/api/v1/live-view',     require('./routes/liveView'));
 app.use('/metrics',              require('./routes/metrics'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
