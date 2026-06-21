@@ -63,7 +63,7 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await query(
     `SELECT u.id, u.full_name, u.given_name, u.email, u.role, u.google_ou, u.google_id,
-            u.created_at, u.last_synced_at
+            u.photo_url, u.created_at, u.last_synced_at
      FROM users u
      ${where}
      ORDER BY u.full_name`,
@@ -76,7 +76,7 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
 router.get('/:id', authenticate, requireMinRole('admin'), async (req, res) => {
   const { rows } = await query(
     `SELECT u.id, u.full_name, u.given_name, u.email, u.role, u.google_ou, u.google_id,
-            u.created_at, u.last_synced_at
+            u.photo_url, u.created_at, u.last_synced_at
      FROM users u WHERE u.id = $1`,
     [req.params.id]
   );

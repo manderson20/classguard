@@ -1,6 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
+import Avatar from '../../components/Avatar';
 
 const ACTION_COLORS = {
   allowed: 'text-green-600',
@@ -48,9 +49,7 @@ export default function UserDetail() {
         {/* Profile */}
         <div className="card p-5 space-y-3">
           <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center text-lg font-bold text-primary-700">
-              {(user.full_name || user.email)[0].toUpperCase()}
-            </div>
+            <Avatar photoUrl={user.photo_url} name={user.full_name} email={user.email} className="w-12 h-12 text-lg" />
             <div>
               <div className="font-semibold text-slate-900">{user.full_name || '—'}</div>
               <div className="text-sm text-slate-400">{user.email}</div>

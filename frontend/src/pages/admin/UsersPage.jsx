@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
+import Avatar from '../../components/Avatar';
 
 const ROLE_BADGE = {
   student:    'badge-slate',
@@ -84,9 +85,7 @@ export default function UsersPage() {
               <tr key={u.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
-                    <div className="w-7 h-7 rounded-full bg-primary-100 flex items-center justify-center text-xs font-bold text-primary-700 flex-shrink-0">
-                      {(u.full_name || u.email)[0].toUpperCase()}
-                    </div>
+                    <Avatar photoUrl={u.photo_url} name={u.full_name} email={u.email} />
                     <div>
                       <div className="font-medium text-slate-800">{u.full_name || '—'}</div>
                       <div className="text-xs text-slate-400">{u.email}</div>
