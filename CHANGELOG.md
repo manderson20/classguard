@@ -14,7 +14,49 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ## [Unreleased]
 
-> No changes staged yet.
+### Added
+
+- **Integrations → Google Workspace** restructured into sub-tabs (Device &
+  Directory Sync, SSO Login, Chrome Extension, YouTube Data API) so the
+  three distinct Google credential types (web-app SSO client, Chrome
+  Extension OAuth client, service account) aren't mixed together in one
+  form anymore. Google Workspace service account JSON, Chrome Extension
+  OAuth client ID, and Mosyle admin credentials are now all entered and
+  stored from the UI — no more hand-editing `.env` or key files on the host.
+- **Extension builds rebuild themselves automatically** — `extension-builder`
+  is now a persistent service that polls Settings every ~60s and rebuilds
+  whenever the OAuth client ID or public URL changes, instead of needing a
+  manual `docker compose run` after every config edit.
+- Trusted-app pre-authorization instructions added to the Chrome Extension
+  deployment steps, so students aren't shown (and can't decline) a Google
+  consent prompt on first run.
+- **Devices table pagination** — page-size selector and Prev/Next controls
+  plus a search box on Integrations → All Devices, instead of a hard 50-row
+  cap with no way to see the rest.
+
+### Fixed
+
+- Chrome extension shipped with an empty `oauth2.client_id` — Chrome
+  silently refuses to install *any* extension with this (no visible error
+  anywhere), which is why force-installed devices never showed the
+  extension despite a correct Google Admin Console policy.
+- Extension builds were baked from a private LAN IP over plain HTTP;
+  Chrome blocks self-hosted (non-Chrome-Web-Store) extension installs and
+  updates that aren't served over HTTPS.
+- Google Workspace device/directory sync was fully broken: the groups
+  upsert didn't match its own partial unique index, the users upsert
+  conflicted on a nullable column instead of email, and some Chromebooks'
+  TPM data contains raw binary that violates Postgres's `jsonb` NUL-byte
+  restriction and silently aborted the sync partway through every run.
+- Mosyle device sync was pointed at the wrong product's API entirely
+  (Mosyle Business instead of Mosyle Manager, the K-12 product actually in
+  use) and assumed a now-deprecated token-only auth mode. Now uses the
+  correct API and the required JWT login (admin email/password exchanged
+  for a 24h session token).
+- Integrations status badges conflated unrelated credentials (e.g. Google
+  SSO login vs. the service account needed for directory sync) and shared
+  error state between the directory sync and device sync, making
+  "configured"/error display misleading for both Google and Mosyle.
 
 ---
 

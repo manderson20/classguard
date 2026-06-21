@@ -251,8 +251,46 @@ router.get('/policy', authenticate, async (req, res) => {
 router.get('/managed-config', (req, res) => {
   res.json({
     serverUrl:      config.appUrl || process.env.APP_URL || '',
-    googleClientId: config.google?.clientId || '',
     version:        config.version,
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/extension/build-config
+// Internal-only (x-internal-secret) — polled by the extension-builder's
+// watch loop so the Chrome extension's OAuth client ID and public URL come
+// from Settings > Integrations > Chrome Extension (stored in Postgres,
+// already replicated across HA nodes) instead of per-node .env editing.
+//
+// publicUrl resolution order: explicit override -> the live TLS domain (the
+// one actually serving HTTPS, since chrome.identity/CRX downloads require it)
+// -> APP_URL as a last-resort dev fallback.
+// ---------------------------------------------------------------------------
+router.get('/build-config', authenticate, requireMinRole('admin'), async (req, res) => {
+  const { rows } = await query(
+    `SELECT key, value FROM settings WHERE key IN ('extension_oauth_client_id','extension_public_url')`
+  );
+  const map = Object.fromEntries(rows.map(r => [r.key, r.value]));
+
+  let publicUrl = map.extension_public_url || null;
+  let urlSource  = 'override';
+  if (!publicUrl) {
+    const { rows: tls } = await query(
+      `SELECT domain FROM tls_config WHERE enabled = true AND domain IS NOT NULL LIMIT 1`
+    );
+    if (tls[0]?.domain) {
+      publicUrl = `https://${tls[0].domain}`;
+      urlSource = 'tls_config';
+    } else {
+      publicUrl = process.env.APP_URL || '';
+      urlSource = 'app_url_fallback';
+    }
+  }
+
+  res.json({
+    googleClientId: map.extension_oauth_client_id || '',
+    publicUrl,
+    urlSource,
   });
 });
 

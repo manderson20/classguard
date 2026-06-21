@@ -80,26 +80,28 @@ services:
       - classguard-net
 
   # ---------------------------------------------------------------------------
-  # Chrome extension builder — runs once and exits.
-  # Bakes this server's APP_URL + GOOGLE_CLIENT_ID into the extension build
-  # (chrome.identity.getAuthToken requires the OAuth client_id to be static in
-  # manifest.json, so the extension can't be a single universal binary the way
-  # the backend-URL discovery via chrome.storage.managed is) and zips dist/ to
-  # the extension-dist volume, where nginx serves it for the Settings page
-  # "Download Extension" button. Re-run after changing GOOGLE_CLIENT_ID/APP_URL:
-  #   docker compose build extension-builder && docker compose run --rm extension-builder
+  # Chrome extension builder — long-running poller (scripts/watch.js).
+  # Bakes the OAuth client_id into manifest.json (chrome.identity.getAuthToken
+  # requires it to be static there, so the extension can't be a single
+  # universal binary the way the backend-URL discovery via chrome.storage.managed
+  # is) and zips dist/ to the extension-dist volume, where nginx serves it.
+  # Polls Settings > Integrations > Chrome Extension (via the backend, stored
+  # in Postgres) every ~60s and rebuilds automatically when it changes — no
+  # more manually re-running this after editing .env on every HA node.
+  # A code/version change (not just config) still needs an image rebuild:
+  #   docker compose build extension-builder && docker compose up -d extension-builder
   # ---------------------------------------------------------------------------
   extension-builder:
     build:
       context:    ./chrome-extension
       dockerfile: Dockerfile
     container_name: classguard-extension-builder
-    restart: "no"
+    restart: unless-stopped
     env_file: .env
-    environment:
-      BACKEND_URL: ${APP_URL:-https://classguard.example.org}
     volumes:
       - extension-dist:/output
+    depends_on:
+      - api
     networks:
       - classguard-net
 

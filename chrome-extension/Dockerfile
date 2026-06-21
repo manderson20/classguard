@@ -4,4 +4,4 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm install
 COPY . .
-CMD ["node", "scripts/build.js"]
+CMD ["node", "scripts/watch.js"]

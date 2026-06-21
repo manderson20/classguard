@@ -3,21 +3,59 @@
  *
  * Prerequisites — Domain-Wide Delegation setup:
  *   1. In Google Cloud Console, create a Service Account and download the JSON key.
- *      Set GOOGLE_SERVICE_ACCOUNT_KEY_PATH to the absolute path of that file.
+ *      Paste its full contents into Integrations > Google Workspace > Device & Directory
+ *      Sync in the admin UI (stored in Postgres — replicated across HA nodes, unlike a
+ *      key file on one node's disk).
  *   2. In Google Workspace Admin Console → Security → API Controls →
- *      Domain-wide Delegation, add the service account's client ID with these scopes:
+ *      Domain-wide Delegation, add the service account's numeric Client ID (not its
+ *      email) with these scopes:
  *        https://www.googleapis.com/auth/admin.directory.user.readonly
  *        https://www.googleapis.com/auth/admin.directory.group.readonly
  *        https://www.googleapis.com/auth/admin.directory.orgunit.readonly
- *   3. Set SUPERADMIN_EMAIL to a Google Workspace super-admin address; the service
- *      account will impersonate that account to call the Admin SDK.
- *   4. Optional Classroom scopes (add to delegation if used):
- *        https://www.googleapis.com/auth/classroom.courses.readonly
- *        https://www.googleapis.com/auth/classroom.rosters.readonly
+ *        https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly
+ *   3. Set the Superadmin Email (same admin UI section) to a Google Workspace
+ *      super-admin address; the service account impersonates them to call the Admin SDK.
+ *
+ * This is a distinct credential from both the "Google Workspace Login" OAuth client
+ * (Web application type, used for admin/teacher SSO) and the Chrome Extension's OAuth
+ * client (chrome.identity) — none of the three are interchangeable.
  */
 
 const { google }  = require('googleapis');
 const { pool }    = require('../db');
+
+async function getSetting(key) {
+  const { rows } = await pool.query('SELECT value FROM settings WHERE key = $1', [key]);
+  return rows[0]?.value || null;
+}
+
+// Shared by initGoogleAdmin() below and routes/integrations.js's Chromebook sync —
+// same service account, different scopes per call.
+async function getServiceAccountAuth(scopes) {
+  const serviceAccountJson = await getSetting('google_service_account_json');
+  const superadmin         = await getSetting('google_superadmin_email') || process.env.SUPERADMIN_EMAIL;
+
+  if (!superadmin) {
+    throw new Error('Superadmin email not configured — set it under Integrations > Google Workspace > Device & Directory Sync');
+  }
+
+  if (serviceAccountJson) {
+    let credentials;
+    try {
+      credentials = JSON.parse(serviceAccountJson);
+    } catch {
+      throw new Error('Stored Google service account JSON is not valid JSON — re-paste it under Integrations > Google Workspace');
+    }
+    return new google.auth.GoogleAuth({ credentials, scopes, clientOptions: { subject: superadmin } });
+  }
+
+  // Fall back to a key file on disk, for installs set up before this moved to the DB.
+  const keyPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH;
+  if (!keyPath) {
+    throw new Error('Service account not configured — paste the service account JSON under Integrations > Google Workspace > Device & Directory Sync');
+  }
+  return new google.auth.GoogleAuth({ keyFile: keyPath, scopes, clientOptions: { subject: superadmin } });
+}
 
 const ADMIN_SCOPES = [
   'https://www.googleapis.com/auth/admin.directory.user.readonly',
@@ -48,23 +86,8 @@ async function withBackoff(fn, maxAttempts = 5) {
 // ---------------------------------------------------------------------------
 // Build an authenticated Admin SDK client
 // ---------------------------------------------------------------------------
-function initGoogleAdmin() {
-  const keyPath     = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH;
-  const superadmin  = process.env.SUPERADMIN_EMAIL;
-
-  if (!keyPath || !superadmin) {
-    throw new Error(
-      'GOOGLE_SERVICE_ACCOUNT_KEY_PATH and SUPERADMIN_EMAIL must be set for Google Workspace sync — ' +
-      'see the domain-wide delegation setup instructions at the top of this file'
-    );
-  }
-
-  const auth = new google.auth.GoogleAuth({
-    keyFile: keyPath,
-    scopes:  ADMIN_SCOPES,
-    clientOptions: { subject: superadmin },
-  });
-
+async function initGoogleAdmin() {
+  const auth = await getServiceAccountAuth(ADMIN_SCOPES);
   return google.admin({ version: 'directory_v1', auth });
 }
 
@@ -94,8 +117,8 @@ async function paginate(fn, params = {}) {
 // syncUsers
 // ---------------------------------------------------------------------------
 async function syncUsers(admin, actorId) {
-  const domain = process.env.GOOGLE_WORKSPACE_DOMAIN;
-  if (!domain) throw new Error('GOOGLE_WORKSPACE_DOMAIN env var required for user sync');
+  const domain = await getSetting('google_workspace_domain') || process.env.GOOGLE_WORKSPACE_DOMAIN;
+  if (!domain) throw new Error('Workspace Domain not set — configure it under Integrations > Google Workspace');
 
   const googleUsers = await paginate(
     (p) => admin.users.list(p),
@@ -107,12 +130,18 @@ async function syncUsers(admin, actorId) {
   for (const gu of googleUsers) {
     googleIds.add(gu.id);
 
+    // Conflict target is email, not google_id: google_id is nullable (e.g. a
+    // user created earlier via OneRoster import has it NULL), and Postgres
+    // treats every NULL as distinct for a unique constraint, so ON CONFLICT
+    // (google_id) silently never matches those rows — it tried a fresh
+    // INSERT instead and hit the separate email-uniqueness violation.
+    // email is NOT NULL + UNIQUE for every row, so it's the reliable match.
     await pool.query(
       `INSERT INTO users
          (google_id, email, full_name, given_name, photo_url, google_ou, last_synced_at, updated_at)
        VALUES ($1,$2,$3,$4,$5,$6,NOW(),NOW())
-       ON CONFLICT (google_id) DO UPDATE SET
-         email          = EXCLUDED.email,
+       ON CONFLICT (email) DO UPDATE SET
+         google_id      = EXCLUDED.google_id,
          full_name      = EXCLUDED.full_name,
          given_name     = EXCLUDED.given_name,
          photo_url      = EXCLUDED.photo_url,
@@ -149,8 +178,8 @@ async function syncUsers(admin, actorId) {
 // syncGroups
 // ---------------------------------------------------------------------------
 async function syncGroups(admin, actorId) {
-  const domain = process.env.GOOGLE_WORKSPACE_DOMAIN;
-  if (!domain) throw new Error('GOOGLE_WORKSPACE_DOMAIN env var required for group sync');
+  const domain = await getSetting('google_workspace_domain') || process.env.GOOGLE_WORKSPACE_DOMAIN;
+  if (!domain) throw new Error('Workspace Domain not set — configure it under Integrations > Google Workspace');
 
   const googleGroups = await paginate(
     (p) => admin.groups.list(p),
@@ -162,7 +191,7 @@ async function syncGroups(admin, actorId) {
     const { rows } = await pool.query(
       `INSERT INTO groups (name, description, google_group_email)
        VALUES ($1, $2, $3)
-       ON CONFLICT (google_group_email) DO UPDATE SET
+       ON CONFLICT (google_group_email) WHERE google_group_email IS NOT NULL DO UPDATE SET
          name        = EXCLUDED.name,
          description = EXCLUDED.description
        RETURNING id`,
@@ -200,7 +229,7 @@ async function syncGroups(admin, actorId) {
 // syncOrgUnits
 // ---------------------------------------------------------------------------
 async function syncOrgUnits(admin, actorId) {
-  const customerId = process.env.GOOGLE_CUSTOMER_ID || 'my_customer';
+  const customerId = await getSetting('google_customer_id') || process.env.GOOGLE_CUSTOMER_ID || 'my_customer';
 
   const response = await withBackoff(() =>
     admin.orgunits.list({ customerId, type: 'all' })
@@ -231,7 +260,7 @@ async function syncOrgUnits(admin, actorId) {
 // syncAll — orchestrates the full sync and updates last_google_sync
 // ---------------------------------------------------------------------------
 async function syncAll(actorId = null) {
-  const admin = initGoogleAdmin();
+  const admin = await initGoogleAdmin();
 
   const [userCount, groupCount, ouCount] = await Promise.all([
     syncUsers(admin, actorId),
@@ -266,4 +295,4 @@ async function _auditLog(actorId, action, details) {
   }
 }
 
-module.exports = { initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits };
+module.exports = { initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits, getServiceAccountAuth };

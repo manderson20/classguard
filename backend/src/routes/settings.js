@@ -11,11 +11,23 @@ const auth = [authenticate, requireMinRole('admin')];
 const ALLOWED_KEYS = new Set([
   'google_client_id', 'google_client_secret', 'google_redirect_uri',
   'google_workspace_domain', 'google_customer_id',
+  // Service account for Admin SDK directory/device sync (Integrations >
+  // Google Workspace > Device & Directory Sync) — a third, distinct Google
+  // credential from google_client_id/secret above (Web app OAuth, SSO login)
+  // and extension_oauth_client_id below (Chrome Extension OAuth, chrome.identity).
+  'google_service_account_json', 'google_superadmin_email',
+  // Chrome extension build config (Integrations > Chrome Extension) — a
+  // separate OAuth client from google_client_id above: chrome.identity
+  // requires an "Chrome Extension"-type client tied to the extension's ID,
+  // not the "Web application"-type client used for admin/teacher SSO login.
+  'extension_oauth_client_id', 'extension_public_url',
   'default_policy_id', 'blocklist_sync_cron', 'dns_log_retention_days',
   'last_google_sync', 'google_ous',
   // Integrations
   'zammad_url', 'zammad_token',
-  'mosyle_access_token',
+  // mosyle_email/password: Mosyle Manager's token-only auth is deprecated;
+  // an admin login is required for the JWT /login exchange (see services/mosyle.js).
+  'mosyle_access_token', 'mosyle_email', 'mosyle_password',
   'snipeit_url', 'snipeit_token', 'snipeit_client_id', 'snipeit_client_secret',
   'phpipam_url', 'phpipam_app_id', 'phpipam_username', 'phpipam_password', 'phpipam_verify_ssl',
   'phpipam_auth_mode', 'phpipam_app_code',
