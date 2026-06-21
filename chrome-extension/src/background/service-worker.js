@@ -54,6 +54,7 @@ async function init() {
       jwt,
       onPolicyUpdated:   () => syncPolicy(),
       onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
+      onLiveViewRequest: () => captureForLiveView(),
       onLockRequest:     (data) => lockScreen(data?.message),
       onUnlockRequest:   () => unlockScreen(),
       onOpenTabRequest:  (data) => openTab(data?.url),
@@ -103,6 +104,7 @@ async function authenticate() {
       jwt: token,
       onPolicyUpdated:   () => syncPolicy(),
       onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
+      onLiveViewRequest: () => captureForLiveView(),
       onLockRequest:     (data) => lockScreen(data?.message),
       onUnlockRequest:   () => unlockScreen(),
       onOpenTabRequest:  (data) => openTab(data?.url),
@@ -232,6 +234,35 @@ async function captureAndUpload({ trigger = 'manual', triggerDetail = null, tabI
 }
 
 // ---------------------------------------------------------------------------
+// Live View capture — same chrome.tabs.captureVisibleTab() mechanism as
+// captureAndUpload above, but posts to /extension/liveview-frame instead of
+// /extension/screenshot: that endpoint relays the frame straight to whoever's
+// watching and never writes it to disk or a database row. Deliberately a
+// separate function rather than a flag on captureAndUpload, so the two
+// storage paths (permanent + audited vs ephemeral) can never be mixed up by
+// a future edit to one of them.
+// ---------------------------------------------------------------------------
+async function captureForLiveView() {
+  const jwt = await getStoredJWT();
+  if (!jwt) return;
+
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    if (!tab || !tab.url?.startsWith('http')) return;
+
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 60 });
+
+    await apiFetch('/extension/liveview-frame', {
+      method: 'POST',
+      jwt,
+      body: { data_url: dataUrl, url: tab.url, title: tab.title || '' },
+    });
+  } catch (err) {
+    console.error('[ClassGuard] Live View capture failed:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Alarms
 // ---------------------------------------------------------------------------
 async function onAlarm(alarm) {
@@ -247,6 +278,7 @@ async function onAlarm(alarm) {
           jwt,
           onPolicyUpdated:   () => syncPolicy(),
           onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
+      onLiveViewRequest: () => captureForLiveView(),
           onLockRequest:     (data) => lockScreen(data?.message),
           onUnlockRequest:   () => unlockScreen(),
           onOpenTabRequest:  (data) => openTab(data?.url),

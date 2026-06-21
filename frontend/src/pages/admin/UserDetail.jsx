@@ -1,7 +1,12 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import Avatar from '../../components/Avatar';
+import { useAuth } from '../../contexts/AuthContext';
+import LiveViewModal from '../../components/LiveViewModal';
+
+const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 const ACTION_COLORS = {
   allowed: 'text-green-600',
@@ -16,6 +21,9 @@ const HISTORY_ACTION_COLORS = {
 
 export default function UserDetail() {
   const { userId } = useParams();
+  const { user: viewer } = useAuth();
+  const [liveViewOpen, setLiveViewOpen] = useState(false);
+  const canLiveView = (ROLES[viewer?.role] ?? 0) >= ROLES.admin;
 
   const { data: user, isLoading: uLoading } = useQuery({
     queryKey: ['user', userId],
@@ -74,6 +82,15 @@ export default function UserDetail() {
             <Row label="OU"    value={<span className="font-mono text-xs">{user.google_ou || '—'}</span>} />
             <Row label="Joined" value={new Date(user.created_at).toLocaleDateString()} />
           </div>
+
+          {canLiveView && user.role === 'student' && (
+            <button
+              onClick={() => setLiveViewOpen(true)}
+              className="btn-secondary text-sm w-full mt-1"
+            >
+              View Browser
+            </button>
+          )}
         </div>
 
         {/* Effective policy */}
@@ -203,6 +220,10 @@ export default function UserDetail() {
           )}
         </div>
       </div>
+
+      {liveViewOpen && (
+        <LiveViewModal student={user} onClose={() => setLiveViewOpen(false)} />
+      )}
     </div>
   );
 }
