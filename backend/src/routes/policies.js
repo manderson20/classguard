@@ -665,30 +665,40 @@ router.delete('/:id/assignments/:assignmentId', async (req, res) => {
 // (must come before /:id to avoid route collision)
 // ---------------------------------------------------------------------------
 router.post('/simulate', async (req, res) => {
-  const { student_id, domain: rawDomain } = req.body;
+  const { student_id, policy_id, domain: rawDomain } = req.body;
   if (!rawDomain) return res.status(400).json({ error: 'domain required' });
 
   const domain = rawDomain.trim().toLowerCase().replace(/\.$/, '').replace(/^https?:\/\//, '').split('/')[0];
   const trace  = [];
 
-  // Resolve the effective policy — must mirror dns-engine/src/resolver.js's
-  // own fallback exactly (lines ~67-78): a student's OU policy only applies
-  // while it's in lesson/penalty_box mode; otherwise (and always, for an
-  // unidentified device — no student_id) the network-wide DNS floor policy
-  // is what actually gets enforced. resolvePolicy(null) on its own returns
-  // a much narrower "default passthrough" with no domain rules at all, which
-  // made every "no student selected" simulation diverge from real traffic.
-  const { resolvePolicy, resolveNetworkPolicy } = require('../services/policyResolver');
+  const { resolvePolicy, resolveNetworkPolicy, buildResolvedPolicy } = require('../services/policyResolver');
   let policy;
-  if (student_id) {
+  if (policy_id) {
+    // Explicit policy override — test a domain against one specific policy
+    // directly, skipping student/network resolution entirely. Useful for
+    // checking a policy's own rules in isolation before assigning it to
+    // anyone (e.g. while still drafting it).
+    const { rows: policyRows } = await query('SELECT * FROM policies WHERE id = $1', [policy_id]);
+    if (!policyRows[0]) return res.status(404).json({ error: 'Policy not found' });
+    policy = await buildResolvedPolicy(policyRows[0]);
+    trace.push({ step: 'policy_resolved', policy_name: policy.name, mode: policy.mode || 'standard', detail: 'Manually selected — student/network resolution skipped' });
+  } else if (student_id) {
+    // Resolve the effective policy — must mirror dns-engine/src/resolver.js's
+    // own fallback exactly (lines ~67-78): a student's OU policy only applies
+    // while it's in lesson/penalty_box mode; otherwise (and always, for an
+    // unidentified device — no student_id) the network-wide DNS floor policy
+    // is what actually gets enforced. resolvePolicy(null) on its own returns
+    // a much narrower "default passthrough" with no domain rules at all, which
+    // made every "no student selected" simulation diverge from real traffic.
     const ouPolicy = await resolvePolicy(student_id);
     policy = (ouPolicy?.mode === 'lesson' || ouPolicy?.mode === 'penalty_box')
       ? ouPolicy
       : await resolveNetworkPolicy();
+    trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(network floor)', mode: policy?.mode || 'standard' });
   } else {
     policy = await resolveNetworkPolicy();
+    trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(network floor)', mode: policy?.mode || 'standard' });
   }
-  trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(network floor)', mode: policy?.mode || 'standard' });
 
   // Global allowlist (admin "AI/Allowlist" overrides) — checked first, before
   // even lesson_mode/penalty_box, same precedence as resolver.js step 4.

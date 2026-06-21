@@ -291,4 +291,5 @@ async function invalidateNetworkPolicy() {
 module.exports = {
   resolvePolicy, invalidatePolicy, invalidatePoliciesForClass,
   resolveNetworkPolicy, invalidateNetworkPolicy,
+  buildResolvedPolicy,
 };
