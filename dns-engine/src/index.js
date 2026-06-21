@@ -23,7 +23,18 @@ const dnsServer = DNS.createServer({
     }
 
     try {
-      const result   = await resolveQuery(question.name, question.type, rinfo.address);
+      // dns2's TCP server hands the handler the raw net.Socket as `rinfo`,
+      // not a {address, port} dict like UDP gets — rinfo.address is then
+      // Socket.prototype.address (a function returning the *local* bound
+      // address), not the peer's IP. Socket.remoteAddress is the actual
+      // client IP for that case. Confirmed live: TCP-retried queries (large
+      // responses that exceeded the UDP truncation threshold) were logging
+      // a stringified function body as sourceIp, which Postgres's inet
+      // column rejected — and since that one bad row poisons the whole
+      // unnest() batch insert, it silently blocked the entire DNS log drain
+      // (everyone's queries, not just the TCP ones) from that point on.
+      const sourceIp = typeof rinfo.address === 'function' ? rinfo.remoteAddress : rinfo.address;
+      const result   = await resolveQuery(question.name, question.type, sourceIp);
       const response = buildResponse(request, result);
       send(response);
     } catch (err) {

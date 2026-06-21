@@ -134,6 +134,92 @@ async function drainDnsLog() {
 }
 
 // ---------------------------------------------------------------------------
+// Browser history drain — every 5 seconds
+// Reads tab-navigation events from the Redis stream 'classguard:tab-events'
+// (written by routes/extension.js's /tab-event, which also still emits the
+// existing live-teacher-view socket event) and bulk-inserts them into
+// browser_history. That stream already existed for the live view but was
+// never drained anywhere durable — capped at ~50k entries, oldest dropped.
+// Mirrors the DNS log drain above exactly, including the HA forward-to-
+// primary behavior on a standby node.
+// ---------------------------------------------------------------------------
+
+const TAB_STREAM        = 'classguard:tab-events';
+const TAB_CURSOR_KEY     = 'classguard:tab-events:cursor';
+const TAB_DRAIN_BATCH    = 10_000;
+
+async function insertBrowserHistoryBatch(records) {
+  const userIds      = records.map(r => r.student_id   || null);
+  const deviceIds     = records.map(r => r.device_id    || null);
+  const urls          = records.map(r => r.url          || '');
+  const titles        = records.map(r => r.title        || null);
+  const actions       = records.map(r => r.action       || null);
+  const blockReasons  = records.map(r => r.block_reason || null);
+  const visitedAts    = records.map(r =>
+    r.ts ? new Date(parseInt(r.ts, 10)) : new Date()
+  );
+
+  await query(
+    `INSERT INTO browser_history (user_id, device_id, url, title, action, block_reason, visited_at)
+     SELECT * FROM unnest(
+       $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[]
+     )
+     ON CONFLICT DO NOTHING`,
+    [userIds, deviceIds, urls, titles, actions, blockReasons, visitedAts]
+  );
+}
+
+async function insertOrForwardBrowserHistory(records) {
+  await ensureInternalSecretSeeded();
+
+  const { rows: [{ in_recovery }] } = await query('SELECT pg_is_in_recovery() AS in_recovery');
+  if (!in_recovery) {
+    return insertBrowserHistoryBatch(records);
+  }
+
+  const { rows: [primary] } = await query(
+    `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+  );
+  const { rows: [secretRow] } = await query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
+  if (!primary?.api_url || !secretRow?.value) {
+    throw new Error('cannot forward browser history to primary — node/secret not found in replicated data yet');
+  }
+
+  await axios.post(`${primary.api_url}/api/v1/extension/internal/tab-events/bulk`, { records }, {
+    headers: { 'x-internal-secret': secretRow.value },
+    timeout: 8000,
+  });
+}
+
+async function drainTabEvents() {
+  let cursor = (await redis.get(TAB_CURSOR_KEY)) || '0';
+  let total  = 0;
+
+  while (true) {
+    const result = await redis.xread('COUNT', TAB_DRAIN_BATCH, 'STREAMS', TAB_STREAM, cursor);
+    if (!result || result.length === 0) break;
+
+    const [, entries] = result[0];
+    if (!entries || entries.length === 0) break;
+
+    const records = entries.map(([id, fields]) => ({ id, ...parseStreamEntry(fields) }));
+
+    await insertOrForwardBrowserHistory(records);
+
+    cursor = entries[entries.length - 1][0];
+    total += entries.length;
+
+    await redis.xtrim(TAB_STREAM, 'MINID', cursor).catch(() => {});
+
+    if (entries.length < TAB_DRAIN_BATCH) break;
+  }
+
+  if (total > 0) {
+    await redis.set(TAB_CURSOR_KEY, cursor);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Penalty box expiry  — every 5 minutes
 // Releases records whose expires_at has passed and invalidates policy cache.
 // ---------------------------------------------------------------------------
@@ -197,6 +283,13 @@ function startScheduler() {
   // Harmless no-op on a node that isn't serving DNS; the stream is just empty.
   cron.schedule('*/5 * * * * *', () => {
     drainDnsLog().catch(err => console.error('[scheduler] dns-log drain error:', err.message));
+  });
+
+  // Same reasoning as the DNS drain above — runs on every node regardless of
+  // RUN_CRON_JOBS, since any node's API could have received extension
+  // /tab-event calls into its own local Redis stream.
+  cron.schedule('*/5 * * * * *', () => {
+    drainTabEvents().catch(err => console.error('[scheduler] tab-events drain error:', err.message));
   });
 
   if (!config.node.runCronJobs) {
@@ -296,4 +389,7 @@ function startScheduler() {
   });
 }
 
-module.exports = { startScheduler, drainDnsLog, expirePenaltyBox, syncGoogleWorkspace, insertDnsLogBatch };
+module.exports = {
+  startScheduler, drainDnsLog, expirePenaltyBox, syncGoogleWorkspace, insertDnsLogBatch,
+  drainTabEvents, insertBrowserHistoryBatch,
+};

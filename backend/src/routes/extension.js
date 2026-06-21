@@ -186,25 +186,24 @@ router.post('/tab-event', authenticate, async (req, res) => {
   if (!url) return res.status(400).json({ error: 'url required' });
 
   const studentId = req.user.userId;
+  const ip        = req.ip || req.socket.remoteAddress;
 
   const ts = Date.now();
 
-  // Write to Redis stream for persistence / audit
-  await redis.xadd(
-    'classguard:tab-events',
-    'MAXLEN', '~', 10000,
-    '*',
-    'student_id', studentId,
-    'url',        url.substring(0, 1000),
-    'title',      title.substring(0, 200),
-    'event',      event,
-    'ts',         ts.toString()
-  ).catch(() => {});
+  // device_id from the same Redis device:{ip} mapping heartbeat maintains —
+  // browser_history is keyed the same way dns_logs already is, so a
+  // student's history and DNS history can be correlated by device.
+  let deviceId = null;
+  try {
+    const cached = await redis.get(`device:${ip}`);
+    if (cached) deviceId = JSON.parse(cached).deviceId || null;
+  } catch { /* not fatal — history just won't have a device_id for this row */ }
 
   // For an actual navigation (not a tab-closed report), look up the most
-  // recent matching dns_logs row so the teacher's live view can show WHY a
-  // domain was blocked without a separate polling endpoint — the DNS engine
-  // already decided allow/block before the browser ever got here.
+  // recent matching dns_logs row so both the teacher's live view AND the
+  // persisted browser_history row can show WHY a domain was blocked,
+  // without a separate polling endpoint — the DNS engine already decided
+  // allow/block before the browser ever got here.
   let action = null, block_reason = null;
   if (event === 'navigation') {
     try {
@@ -219,6 +218,23 @@ router.post('/tab-event', authenticate, async (req, res) => {
     } catch { /* malformed URL — skip the lookup, not fatal */ }
   }
 
+  // Write to Redis stream — drained to browser_history by
+  // scheduler.js's drainTabEvents() every 5s. MAXLEN is just a safety cap in
+  // case the drain falls behind/is down; normal operation never gets close.
+  await redis.xadd(
+    'classguard:tab-events',
+    'MAXLEN', '~', 50000,
+    '*',
+    'student_id',   studentId,
+    'device_id',    deviceId || '',
+    'url',          url.substring(0, 1000),
+    'title',        title.substring(0, 200),
+    'event',        event,
+    'action',       action || '',
+    'block_reason', block_reason || '',
+    'ts',           ts.toString()
+  ).catch(() => {});
+
   // Emit to teacher dashboards via the Socket.io bridge
   events.emit('student:activity', {
     studentId,
@@ -231,6 +247,100 @@ router.post('/tab-event', authenticate, async (req, res) => {
   });
 
   res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/extension/internal/tab-events/bulk
+// Internal-secret only. A standby node forwards browser-history events here
+// when its own Postgres is a read-only streaming replica — see
+// services/scheduler.js's insertOrForwardBrowserHistory. Same role as
+// routes/dns.js's /internal/dns-logs/bulk for dns_logs.
+// ---------------------------------------------------------------------------
+router.post('/internal/tab-events/bulk', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { records } = req.body;
+  if (!Array.isArray(records) || records.length === 0) {
+    return res.status(400).json({ error: 'records (non-empty array) is required' });
+  }
+  try {
+    const { insertBrowserHistoryBatch } = require('../services/scheduler');
+    await insertBrowserHistoryBatch(records);
+    res.json({ inserted: records.length });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/extension/browser-history
+// Persisted tab-navigation history (browser_history, drained from the same
+// Redis stream that powers the live teacher view). Mirrors routes/dns.js's
+// GET /dns/logs filtering/pagination/teacher-scoping shape.
+//
+// Query params: student_id, url (substring match), action, from, to, page, limit
+// ---------------------------------------------------------------------------
+router.get('/browser-history', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const {
+    student_id, url, action,
+    from, to,
+    page = 1, limit = 50,
+  } = req.query;
+
+  const PAGE_LIMIT = Math.min(parseInt(limit, 10) || 50, 500);
+  const OFFSET     = (Math.max(parseInt(page, 10) || 1, 1) - 1) * PAGE_LIMIT;
+
+  const conditions = [];
+  const values     = [];
+
+  const fromTs = from ? new Date(from) : new Date(Date.now() - 86400_000);
+  const toTs   = to   ? new Date(to)   : new Date();
+
+  conditions.push(`visited_at >= $${values.length + 1}`); values.push(fromTs);
+  conditions.push(`visited_at <= $${values.length + 1}`); values.push(toTs);
+
+  if (student_id) {
+    conditions.push(`user_id = $${values.length + 1}`);
+    values.push(student_id);
+  }
+  if (url) {
+    conditions.push(`url ILIKE $${values.length + 1}`);
+    values.push(`%${url}%`);
+  }
+  if (action && ['allowed', 'blocked'].includes(action)) {
+    conditions.push(`action = $${values.length + 1}`);
+    values.push(action);
+  }
+
+  // Teachers can only see their own students — same scoping as dns.js's /logs
+  if (req.user.role === 'teacher') {
+    conditions.push(`user_id IN (
+      SELECT cm.student_id FROM class_members cm
+      JOIN classes c ON c.id = cm.class_id
+      WHERE c.teacher_id = $${values.length + 1}
+    )`);
+    values.push(req.user.userId);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const [{ rows: history }, { rows: countRow }] = await Promise.all([
+    query(
+      `SELECT bh.*, u.full_name AS student_name, u.email AS student_email
+       FROM browser_history bh
+       LEFT JOIN users u ON u.id = bh.user_id
+       ${where}
+       ORDER BY bh.visited_at DESC
+       LIMIT ${PAGE_LIMIT} OFFSET ${OFFSET}`,
+      values
+    ),
+    query(`SELECT COUNT(*) AS total FROM browser_history ${where}`, values),
+  ]);
+
+  res.json({
+    total:   parseInt(countRow[0].total, 10),
+    page:    parseInt(page, 10),
+    limit:   PAGE_LIMIT,
+    results: history,
+  });
 });
 
 // ---------------------------------------------------------------------------
