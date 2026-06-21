@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
+import Avatar from '../components/Avatar';
 
 function ChatPanel({ threadId, onClose, socket, selfId }) {
   const qc = useQueryClient();
@@ -148,6 +149,7 @@ function StudentTile({ student, activity, selected, onToggleSelect, onRestrict, 
         <div className="flex items-center gap-1.5 min-w-0">
           <input type="checkbox" checked={!!selected} onChange={() => onToggleSelect(student.id)}
             className="flex-shrink-0" />
+          <Avatar photoUrl={student.photo_url} name={student.full_name} email={student.email} className="w-5 h-5 text-[10px]" />
           <div className="font-semibold text-sm text-slate-800 truncate">
             {student.given_name || student.name?.split(' ')[0] || student.email}
           </div>

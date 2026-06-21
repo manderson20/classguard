@@ -44,7 +44,7 @@ router.get('/:id', async (req, res) => {
   }
 
   const { rows: members } = await query(
-    `SELECT u.id, u.full_name, u.email, u.google_ou
+    `SELECT u.id, u.full_name, u.email, u.google_ou, u.photo_url
      FROM class_members cm
      JOIN users u ON u.id = cm.student_id
      WHERE cm.class_id = $1
