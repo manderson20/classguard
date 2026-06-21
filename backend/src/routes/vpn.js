@@ -9,6 +9,7 @@ const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const ca = require('../services/ca');
 
 const auth      = [authenticate, requireMinRole('admin')];
 const superauth = [authenticate, requireMinRole('superadmin')];
@@ -18,24 +19,29 @@ async function getVpnConfig() {
   return rows[0] || {};
 }
 
-// GET /api/v1/vpn/config
+// GET /api/v1/vpn/config — never returns ca_private_key_pem; the admin UI
+// only needs the public cert (to show fingerprint/expiry and offer a
+// download) plus the challenge to copy into Mosyle's SCEP profile.
 router.get('/config', ...auth, async (req, res) => {
   try {
-    res.json(await getVpnConfig());
+    const { ca_private_key_pem, ...cfg } = await getVpnConfig();
+    if (cfg.ca_cert_pem) cfg.ca_info = ca.certInfo(cfg.ca_cert_pem);
+    res.json(cfg);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// PUT /api/v1/vpn/config — superadmin only: this includes the CA trust
-// relationship (mosyle_ca_pem), same sensitivity tier as ntp's server-config.
+// PUT /api/v1/vpn/config — superadmin only. CA material itself is never set
+// here — that's POST /generate-ca only — this is for the VPN's own network
+// config plus toggling the SCEP service on/off once a CA exists.
 router.put('/config', ...superauth, async (req, res) => {
-  const { enabled, mosyle_ca_pem, client_subnet, dns_servers, restrict_to_subnets } = req.body;
+  const { enabled, scep_enabled, client_subnet, dns_servers, restrict_to_subnets } = req.body;
   try {
     const { rows } = await pool.query(
       `UPDATE vpn_config SET
          enabled             = COALESCE($1, enabled),
-         mosyle_ca_pem       = COALESCE($2, mosyle_ca_pem),
+         scep_enabled        = COALESCE($2, scep_enabled),
          client_subnet       = COALESCE($3, client_subnet),
          dns_servers         = COALESCE($4, dns_servers),
          restrict_to_subnets = COALESCE($5, restrict_to_subnets),
@@ -43,13 +49,34 @@ router.put('/config', ...superauth, async (req, res) => {
        RETURNING *`,
       [
         enabled ?? null,
-        mosyle_ca_pem ?? null,
+        scep_enabled ?? null,
         client_subnet ?? null,
         dns_servers ?? null,
         restrict_to_subnets ?? null,
       ]
     );
-    res.json(rows[0]);
+    const { ca_private_key_pem, ...cfg } = rows[0];
+    res.json(cfg);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/v1/vpn/generate-ca — superadmin only. One-time (or deliberate
+// rotation): generates ClassGuard's own CA + a SCEP challenge secret and
+// overwrites whatever was there before. Rotating invalidates every
+// previously issued client cert, by design — there's no selective
+// revocation in this build (see migration 053's comment), so this is the
+// only "revoke everything" lever that exists.
+router.post('/generate-ca', ...superauth, async (req, res) => {
+  try {
+    const { ca_cert_pem, ca_private_key_pem } = ca.generateCa();
+    const scep_challenge = ca.generateChallenge();
+    await pool.query(
+      `UPDATE vpn_config SET ca_cert_pem = $1, ca_private_key_pem = $2, scep_challenge = $3, updated_at = NOW()`,
+      [ca_cert_pem, ca_private_key_pem, scep_challenge]
+    );
+    res.json({ ca_cert_pem, scep_challenge, info: ca.certInfo(ca_cert_pem) });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -57,10 +84,30 @@ router.put('/config', ...superauth, async (req, res) => {
 
 // GET /api/v1/vpn/bootstrap — internal-secret only (vpn-agent.py, polling
 // every 30s). requireMinRole passes naturally for that caller, same pattern
-// as ntp.js's /internal/clients.
+// as ntp.js's /internal/clients. Still excludes the CA private key — the
+// VPN server only ever needs to trust the CA's public cert, never sign
+// anything with it.
 router.get('/bootstrap', authenticate, requireMinRole('superadmin'), async (req, res) => {
   try {
-    res.json(await getVpnConfig());
+    const { ca_private_key_pem, ...cfg } = await getVpnConfig();
+    res.json(cfg);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/vpn/scep-bootstrap — internal-secret only. Unlike /bootstrap
+// above, the SCEP server legitimately needs the private key — it's the one
+// thing in this whole system that actually signs certs with it.
+router.get('/scep-bootstrap', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  try {
+    const cfg = await getVpnConfig();
+    res.json({
+      enabled:            cfg.scep_enabled,
+      ca_cert_pem:        cfg.ca_cert_pem,
+      ca_private_key_pem: cfg.ca_private_key_pem,
+      scep_challenge:     cfg.scep_challenge,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

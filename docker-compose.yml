@@ -226,7 +226,9 @@ services:
 
   # ---------------------------------------------------------------------------
   # StrongSwan IKEv2 VPN — staff remote access. Certificate-based auth,
-  # trusting Mosyle's own SCEP-issued client certs (see VPN admin page).
+  # trusting ClassGuard's own CA (services/ca.js, see migration 053) — the
+  # same CA the scep service below issues client certs from via Mosyle's
+  # SCEP profile. Not Mosyle's own cert; Mosyle never had one to give.
   #
   # network_mode: host, unlike every other service here — IKEv2/ESP need
   # direct access to the host's real interfaces and routing table to bind
@@ -254,6 +256,29 @@ services:
     cap_add:
       - NET_ADMIN
       - NET_RAW
+
+  # ---------------------------------------------------------------------------
+  # SCEP server — issues the client certs the vpn service above trusts, from
+  # ClassGuard's own CA, when a Mosyle-managed device enrolls via its SCEP
+  # profile (URL/challenge generated on the VPN admin page).
+  #
+  # Unlike vpn, this is a plain HTTP server with no need to touch interfaces
+  # or routing — normal classguard-net bridge service, reached publicly only
+  # through nginx's /scep/ proxy (frontend/nginx.conf), riding the existing
+  # domain and Let's Encrypt cert. Never publishes a host port directly.
+  # ---------------------------------------------------------------------------
+  scep:
+    build:
+      context:    ./infrastructure/scep
+      dockerfile: Dockerfile
+    container_name: classguard-scep
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    env_file: .env
+    networks:
+      - classguard-net
 
   # ---------------------------------------------------------------------------
   # Frontend — React app built with Vite, served by nginx
