@@ -18,6 +18,44 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.0] - 2026-06-22
+
+### Added
+
+- **Direct-IP browsing can now be blocked per policy.** DNS filtering can't
+  see a navigation straight to a literal IP address — no DNS query ever
+  happens — so this is enforced entirely by the Chrome extension instead.
+  New "Block direct-IP browsing" toggle in a policy's Safety Options;
+  on-LAN/private IP ranges are always allowed regardless of the setting.
+
+### Fixed
+
+- **Domain and URL-path rules now reject malformed input** when adding them
+  to a policy (manual add, CSV bulk import, and GoGuardian import all
+  share the same check now). This closes a real correctness gap, not just
+  a validation nicety: an invalid URL-path pattern used to make Chrome's
+  `declarativeNetRequest` API reject its *entire* rule batch, silently
+  disabling every block/allow/lesson/penalty rule for every device under
+  that policy. Wildcards (`*.example.com`, `example.com*`) are unaffected.
+- **Scheduling/cancelling a software update from a standby node's own UI**
+  (rather than the primary's) failed with "cannot execute INSERT in a
+  read-only transaction" — that table only exists on the primary's
+  writable database, and unlike the rest of the update flow, scheduling
+  never relayed through to it. Now it does, regardless of which node's UI
+  you're using.
+- **HA Nodes page showed a confusing phantom node** named after the
+  literal Docker container hostname (identical on every node), and
+  separately, **any node with a real TLS certificate permanently showed
+  "Slow"** even when perfectly healthy — its own live-status check got
+  redirected to HTTPS and failed certificate validation against a bare IP
+  address. Both fixed.
+- A standby node deliberately never runs the SCEP (VPN enrollment)
+  service, but nginx tried to resolve it at startup anyway — meaning any
+  standby pulling this update would have its entire web server fail to
+  start, not just the SCEP-specific page. Fixed to resolve lazily instead.
+
+---
+
 ## [0.5.0] - 2026-06-21
 
 ### Added
