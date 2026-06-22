@@ -101,6 +101,7 @@ const ADMIN_SECTIONS = [
     items: [
       { to: '/admin',                 icon: mdiViewDashboardOutline,   label: 'Dashboard',      end: true },
       { to: '/admin/staff-analytics', icon: mdiChartLine,              label: 'Staff Analytics' },
+      { to: '/admin/screen-time',     icon: mdiClockOutline,           label: 'Screen Time'     },
       { to: '/admin/users',           icon: mdiAccountMultipleOutline, label: 'Users'           },
     ],
   },

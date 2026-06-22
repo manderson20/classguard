@@ -21,7 +21,7 @@ router.get('/staff', authenticate, requireMinRole('admin'), async (req, res) => 
       COUNT(DISTINCT c.id)::int                              AS class_count,
 
       -- total students across all their classes
-      COUNT(DISTINCT cm.user_id)::int                        AS student_count,
+      COUNT(DISTINCT cm.student_id)::int                     AS student_count,
 
       -- lessons started in the last 30 days
       COUNT(DISTINCT l.id) FILTER (
@@ -36,7 +36,7 @@ router.get('/staff', authenticate, requireMinRole('admin'), async (req, res) => 
     FROM users u
     LEFT JOIN classes     c  ON c.teacher_id = u.id
     LEFT JOIN class_members cm ON cm.class_id = c.id
-    LEFT JOIN lessons     l  ON l.class_id = c.id
+    LEFT JOIN lesson_sessions l ON l.class_id = c.id
     LEFT JOIN penalty_box pb ON pb.placed_by = u.id
 
     WHERE u.role IN ('teacher','admin','superadmin')

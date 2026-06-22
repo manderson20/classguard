@@ -178,15 +178,74 @@ router.post('/register', authenticate, async (req, res) => {
 // Body: { url?, title?, socket? }
 // ---------------------------------------------------------------------------
 router.post('/heartbeat', authenticate, async (req, res) => {
-  const studentId = req.user.userId;
-  const ip        = req.ip || req.socket.remoteAddress;
+  const studentId  = req.user.userId;
+  const ip         = req.ip || req.socket.remoteAddress;
+  const idleState  = req.body.idle_state;
 
   const deviceId = await registerDevice(studentId, ip).catch(() => null);
   // Refresh IP → student mapping
   await redis.set(`device:${ip}`, JSON.stringify({ studentId, deviceId }), 'EX', 8 * 60 * 60);
 
+  if (idleState) {
+    recordScreenTimeHeartbeat(studentId, deviceId, idleState).catch(
+      err => console.error('[screen-time]', err.message)
+    );
+  }
+
   res.json({ ok: true });
 });
+
+// ---------------------------------------------------------------------------
+// Screen Time — stitches consecutive 'active' heartbeats (every 30s, see
+// chrome-extension's ALARM_HEARTBEAT) into continuous intervals rather than
+// storing one row per heartbeat. 'idle'/'locked' closes the open interval;
+// a gap bigger than SCREEN_TIME_GAP_THRESHOLD_MS (e.g. the laptop was
+// suspended and missed several beats) closes the stale interval at its
+// last known heartbeat instead of counting the dead gap as active time.
+// Pure recording — no limits/enforcement, per explicit design decision.
+// ---------------------------------------------------------------------------
+const SCREEN_TIME_GAP_THRESHOLD_MS = 90 * 1000; // ~1 missed 30s beat of tolerance
+
+async function recordScreenTimeHeartbeat(studentId, deviceId, idleState) {
+  const isActive = idleState === 'active';
+  const now = new Date();
+
+  const { rows } = await query(
+    `SELECT id, last_heartbeat_at FROM screen_time_intervals
+     WHERE student_id = $1 AND ${deviceId ? 'device_id = $2' : 'device_id IS NULL'} AND ended_at IS NULL
+     LIMIT 1`,
+    deviceId ? [studentId, deviceId] : [studentId]
+  );
+  const open = rows[0];
+
+  if (!open) {
+    if (isActive) {
+      await query(
+        `INSERT INTO screen_time_intervals (student_id, device_id, started_at, last_heartbeat_at) VALUES ($1,$2,$3,$3)`,
+        [studentId, deviceId, now]
+      );
+    }
+    return;
+  }
+
+  const gapMs = now - new Date(open.last_heartbeat_at);
+  if (gapMs > SCREEN_TIME_GAP_THRESHOLD_MS) {
+    await query(`UPDATE screen_time_intervals SET ended_at = last_heartbeat_at WHERE id = $1`, [open.id]);
+    if (isActive) {
+      await query(
+        `INSERT INTO screen_time_intervals (student_id, device_id, started_at, last_heartbeat_at) VALUES ($1,$2,$3,$3)`,
+        [studentId, deviceId, now]
+      );
+    }
+    return;
+  }
+
+  if (isActive) {
+    await query(`UPDATE screen_time_intervals SET last_heartbeat_at = $2 WHERE id = $1`, [open.id, now]);
+  } else {
+    await query(`UPDATE screen_time_intervals SET ended_at = $2 WHERE id = $1`, [open.id, now]);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // POST /api/v1/extension/tab-event

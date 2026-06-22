@@ -16,6 +16,7 @@ const BRANDING_TS_KEY    = 'cg_branding_ts';
 const ALARM_POLICY_SYNC  = 'cg-policy-sync';
 const ALARM_HEARTBEAT    = 'cg-heartbeat';
 const ALARM_KEYWORD_SYNC = 'cg-keyword-sync';
+const IDLE_THRESHOLD_SECONDS = 60;
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -41,6 +42,12 @@ async function init() {
   await chrome.alarms.create(ALARM_POLICY_SYNC,  { periodInMinutes: 1 });
   await chrome.alarms.create(ALARM_HEARTBEAT,    { periodInMinutes: 0.5 });
   await chrome.alarms.create(ALARM_KEYWORD_SYNC, { periodInMinutes: 360 }); // every 6 hours
+
+  // Screen-time tracking — IDLE_THRESHOLD_SECONDS is both the detection
+  // window passed to queryState() below and Chrome's own idle-state
+  // granularity; 60s keeps it well above the 30s heartbeat interval so a
+  // single missed beat can't flip the state spuriously.
+  chrome.idle.setDetectionInterval(IDLE_THRESHOLD_SECONDS);
 
   chrome.alarms.onAlarm.addListener(onAlarm);
   chrome.tabs.onUpdated.addListener(onTabUpdated);
@@ -429,12 +436,17 @@ async function broadcastChatMessage(data) {
 // ---------------------------------------------------------------------------
 // Heartbeat
 // ---------------------------------------------------------------------------
+function queryIdleState() {
+  return new Promise((resolve) => chrome.idle.queryState(IDLE_THRESHOLD_SECONDS, resolve));
+}
+
 async function sendHeartbeat() {
   const jwt = await getStoredJWT();
   if (!jwt) return;
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const idleState = await queryIdleState(); // 'active' | 'idle' | 'locked'
     await apiFetch('/extension/heartbeat', {
       method: 'POST',
       jwt,
@@ -442,6 +454,7 @@ async function sendHeartbeat() {
         url:    tab?.url   || null,
         title:  tab?.title || null,
         socket: isConnected(),
+        idle_state: idleState,
       },
     });
   } catch {}
