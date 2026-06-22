@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import Avatar from '../../components/Avatar';
@@ -25,6 +26,19 @@ function ActivityBar({ value, max }) {
   );
 }
 
+function UtilizationBar({ pct }) {
+  if (pct == null) return <span className="text-xs text-slate-300">No data</span>;
+  const color = pct >= 60 ? 'bg-amber-500' : pct >= 25 ? 'bg-primary-500' : 'bg-slate-300';
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
+      <span className="text-xs text-slate-500 w-10 text-right">{pct}%</span>
+    </div>
+  );
+}
+
 function RelativeTime({ ts }) {
   if (!ts) return <span className="text-slate-400">Never</span>;
   const diff   = Date.now() - new Date(ts).getTime();
@@ -47,16 +61,31 @@ export default function StaffAnalyticsPage() {
     refetchInterval: 60_000,
   });
 
-  const teachers   = data?.teachers   ?? [];
+  const { data: utilData } = useQuery({
+    queryKey: ['staff-utilization'],
+    queryFn:  () => api.get('/analytics/staff/utilization'),
+    refetchInterval: 60_000,
+  });
+
+  const utilByTeacher = new Map((utilData?.teachers ?? []).map(t => [t.id, t]));
+
+  const teachers   = (data?.teachers ?? []).map(t => {
+    const u = utilByTeacher.get(t.id);
+    const utilization_pct = u && Number(u.possible_student_seconds) > 0
+      ? Math.round((Number(u.active_student_seconds) / Number(u.possible_student_seconds)) * 100)
+      : null;
+    return { ...t, utilization_pct };
+  });
   const summary    = data?.summary    ?? {};
   const maxLessons = Math.max(1, ...teachers.map(t => t.lessons_30d ?? 0));
   const maxPenalty = Math.max(1, ...teachers.map(t => t.penalty_actions_30d ?? 0));
 
   const sorted = [...teachers].sort((a, b) => {
-    if (sort === 'last_login') return new Date(b.last_login_at ?? 0) - new Date(a.last_login_at ?? 0);
-    if (sort === 'lessons')    return (b.lessons_30d ?? 0) - (a.lessons_30d ?? 0);
-    if (sort === 'students')   return (b.student_count ?? 0) - (a.student_count ?? 0);
-    if (sort === 'penalty')    return (b.penalty_actions_30d ?? 0) - (a.penalty_actions_30d ?? 0);
+    if (sort === 'last_login')   return new Date(b.last_login_at ?? 0) - new Date(a.last_login_at ?? 0);
+    if (sort === 'lessons')      return (b.lessons_30d ?? 0) - (a.lessons_30d ?? 0);
+    if (sort === 'students')     return (b.student_count ?? 0) - (a.student_count ?? 0);
+    if (sort === 'penalty')      return (b.penalty_actions_30d ?? 0) - (a.penalty_actions_30d ?? 0);
+    if (sort === 'utilization')  return (b.utilization_pct ?? -1) - (a.utilization_pct ?? -1);
     return 0;
   });
 
@@ -64,7 +93,11 @@ export default function StaffAnalyticsPage() {
     <div className="p-6 max-w-6xl mx-auto">
       <div className="mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Staff Analytics</h1>
-        <p className="text-slate-500 text-sm mt-0.5">Teacher usage and classroom activity — last 30 days</p>
+        <p className="text-slate-500 text-sm mt-0.5">
+          Teacher usage and classroom activity — last 30 days. "Device activity" measures how much of each
+          teacher's scheduled periods their students actually spent active on a device, independent of
+          whether a lesson was started — configure periods on the <Link to="/admin/bell-schedule" className="text-primary-600 hover:underline">Bell Schedule</Link> page.
+        </p>
       </div>
 
       {/* Summary cards */}
@@ -86,6 +119,7 @@ export default function StaffAnalyticsPage() {
               { key: 'lessons',    label: 'Lessons'     },
               { key: 'students',   label: 'Students'    },
               { key: 'penalty',    label: 'Penalty box' },
+              { key: 'utilization', label: 'Device activity' },
             ].map(opt => (
               <button
                 key={opt.key}
@@ -119,6 +153,7 @@ export default function StaffAnalyticsPage() {
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Students</th>
                 <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide w-40">Lessons (30d)</th>
                 <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide w-40">Penalty box (30d)</th>
+                <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide w-44">Device activity (scheduled periods)</th>
                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">OU</th>
               </tr>
             </thead>
@@ -144,6 +179,9 @@ export default function StaffAnalyticsPage() {
                   </td>
                   <td className="px-4 py-3">
                     <ActivityBar value={t.penalty_actions_30d ?? 0} max={maxPenalty} />
+                  </td>
+                  <td className="px-4 py-3">
+                    <UtilizationBar pct={t.utilization_pct} />
                   </td>
                   <td className="px-4 py-3 text-xs text-slate-400 truncate max-w-[160px]">
                     {t.google_ou || <span className="text-slate-300">—</span>}

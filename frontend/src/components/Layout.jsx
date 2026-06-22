@@ -138,6 +138,7 @@ const ADMIN_SECTIONS = [
     label: 'System',
     items: [
       { to: '/admin/roster',       icon: mdiAccountSyncOutline, label: 'Roster Sync'  },
+      { to: '/admin/bell-schedule', icon: mdiClockOutline,      label: 'Bell Schedule' },
       { to: '/admin/integrations', icon: mdiPuzzleOutline,      label: 'Integrations' },
       { to: '/admin/ha',           icon: mdiSwapHorizontal,     label: 'HA Cluster'   },
       { to: '/admin/vpn',          icon: mdiVpn,                label: 'VPN'          },
