@@ -249,23 +249,6 @@ async function expirePenaltyBox() {
 }
 
 // ---------------------------------------------------------------------------
-// Node heartbeat  — every 30 seconds
-// Upserts this node's record in the nodes table for HA visibility.
-// ---------------------------------------------------------------------------
-
-async function heartbeat() {
-  const hostname = require('os').hostname();
-  await query(`
-    INSERT INTO nodes (hostname, ip, role, last_heartbeat, is_active)
-    VALUES ($1, $2, $3, NOW(), true)
-    ON CONFLICT (hostname) DO UPDATE SET
-      last_heartbeat = NOW(),
-      is_active      = true,
-      role           = EXCLUDED.role
-  `, [hostname, process.env.NODE_IP || '0.0.0.0', config.node.role]).catch(() => {});
-}
-
-// ---------------------------------------------------------------------------
 // Google Workspace sync stub  — nightly 2am
 // Real implementation added in Phase 8.
 // ---------------------------------------------------------------------------
@@ -305,11 +288,6 @@ function startScheduler() {
   // Penalty box expiry — every 5 minutes
   cron.schedule('*/5 * * * *', () => {
     expirePenaltyBox().catch(err => console.error('[scheduler] penalty-box expiry error:', err.message));
-  });
-
-  // Node heartbeat — every 30 seconds
-  cron.schedule('*/30 * * * * *', () => {
-    heartbeat().catch(() => {}); // silent — non-critical
   });
 
   // Blocklist sync — configurable (default: 2am daily)
