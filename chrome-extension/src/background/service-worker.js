@@ -346,10 +346,18 @@ async function onTabUpdated(tabId, changeInfo, tab) {
   const jwt = await getStoredJWT();
   if (!jwt) return;
 
+  // The backend may ask for a screenshot right here — a proactive
+  // ("risky_category") check on the domain itself, independent of the
+  // in-page keyword scanner, for content that scanner can't see (images,
+  // or pages on domains we've never categorized yet).
   apiFetch('/extension/tab-event', {
     method: 'POST',
     jwt,
     body: { url: tab.url, title: tab.title || '' },
+  }).then((res) => {
+    if (res?.requestScreenshot) {
+      captureAndUpload({ trigger: 'risky_category', triggerDetail: res.riskCategory, tabId });
+    }
   }).catch(() => {});
   rememberTab(tabId, tab.url, tab.title || '').catch(() => {});
 
