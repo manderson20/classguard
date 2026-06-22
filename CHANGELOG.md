@@ -18,6 +18,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.10] - 2026-06-22
+
+### Added
+- **Teacher Live View Phase 3**: session-scoped history + filter simulator, from the active-lesson view.
+  - `dns_logs` and `browser_history` rows are now tagged with the active `lesson_session_id` (when one applies), threaded through the same Redis-stream pipeline `device_id` already used. Strictly scoped — clears to `NULL` the moment a lesson ends.
+  - Each student tile in the live lesson view gained a **History** toggle showing just that student's activity during the current lesson session, with an inline "why was this blocked" trace on flagged rows.
+  - The filter simulator (`POST /policies/simulate`) is now teacher-accessible (scoped to their own roster, no raw `policy_id` probing) — each student tile also gained a **Test URL** quick-check.
+
+---
+
 ## [0.6.9] - 2026-06-22
 
 ### Added
