@@ -260,6 +260,103 @@ async function defaultPassthrough() {
 }
 
 // ---------------------------------------------------------------------------
+// Explain the precedence chain for a student — same tiers resolvePolicy()
+// walks (lesson > penalty_box > student > group > OU > district default),
+// but returns every candidate it checked instead of short-circuiting at the
+// first match. Display-only (the "why was this blocked" UI); never called
+// from the hot DNS-query path, so it's fine that this duplicates
+// resolvePolicy()'s queries rather than refactoring that latency-sensitive
+// function to collect a trace it doesn't otherwise need.
+// ---------------------------------------------------------------------------
+async function explainPolicyChain(studentId, location = 'any') {
+  if (!LOCATIONS.includes(location)) location = 'any';
+  if (!studentId) return null;
+
+  const { rows: lessonRows } = await query(
+    `SELECT ls.id FROM lesson_sessions ls
+     JOIN class_members cm ON cm.class_id = ls.class_id
+     WHERE cm.student_id = $1 AND ls.is_active = true
+     ORDER BY ls.started_at DESC LIMIT 1`,
+    [studentId]
+  );
+  const { rows: pbRows } = await query(
+    `SELECT id FROM penalty_box
+     WHERE student_id = $1 AND released_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
+     LIMIT 1`,
+    [studentId]
+  );
+  const { rows: studentRows } = await query(
+    `SELECT p.id, p.name FROM policies p
+     JOIN policy_assignments pa ON pa.policy_id = p.id
+     WHERE pa.target_type = 'student' AND pa.target_id = $1 AND pa.location IN ($2, 'any')
+     ORDER BY (pa.location = $2) DESC, pa.priority DESC LIMIT 1`,
+    [studentId, location]
+  );
+  const { rows: groupRows } = await query(
+    `SELECT p.id, p.name, g.name AS group_name FROM policies p
+     JOIN policy_assignments pa ON pa.policy_id = p.id
+     JOIN group_members gm     ON gm.group_id   = pa.target_id
+     JOIN groups g             ON g.id          = pa.target_id
+     WHERE pa.target_type = 'group' AND gm.user_id = $1 AND pa.location IN ($2, 'any')
+     ORDER BY (pa.location = $2) DESC, pa.priority DESC LIMIT 1`,
+    [studentId, location]
+  );
+  const { rows: userRows } = await query('SELECT google_ou FROM users WHERE id = $1', [studentId]);
+  const ou = userRows[0]?.google_ou || null;
+  let ouRow = null;
+  if (ou) {
+    const { rows: ouRows } = await query(
+      `SELECT p.id, p.name, pa.target_ou FROM policies p
+       JOIN policy_assignments pa ON pa.policy_id = p.id
+       WHERE pa.target_type = 'ou' AND $1 LIKE pa.target_ou || '%' AND pa.location IN ($2, 'any')
+       ORDER BY LENGTH(pa.target_ou) DESC, (pa.location = $2) DESC LIMIT 1`,
+      [ou, location]
+    );
+    ouRow = ouRows[0] || null;
+  }
+  const { rows: settingRows } = await query("SELECT value FROM settings WHERE key = 'default_policy_id'");
+  let defaultRow = null;
+  if (settingRows[0]?.value) {
+    const { rows: defRows } = await query('SELECT id, name FROM policies WHERE id = $1', [settingRows[0].value]);
+    defaultRow = defRows[0] || null;
+  }
+
+  const lessonActive = !!lessonRows[0];
+  const penaltyActive = !lessonActive && !!pbRows[0];
+  const studentTier = studentRows[0] || null;
+  const groupTier   = !studentTier ? (groupRows[0] || null) : null;
+  const ouTier       = !studentTier && !groupTier ? ouRow : null;
+  const defaultTier  = !studentTier && !groupTier && !ouTier ? defaultRow : null;
+
+  const resolvedTier =
+    lessonActive ? 'lesson' :
+    penaltyActive ? 'penalty_box' :
+    studentTier ? 'student' :
+    groupTier ? 'group' :
+    ouTier ? 'ou' :
+    defaultTier ? 'default' : 'none';
+
+  return {
+    resolved_tier: resolvedTier,
+    tiers: [
+      { tier: 'lesson',      label: 'Active lesson session',  active: lessonActive },
+      { tier: 'penalty_box', label: 'Active penalty box',     active: penaltyActive },
+      { tier: 'student',     label: 'Student-assigned policy', policy: studentTier },
+      { tier: 'group',       label: groupRows[0]?.group_name ? `Group policy (${groupRows[0].group_name})` : 'Group policy', policy: groupRows[0] || null },
+      { tier: 'ou',          label: ou ? `OU policy (${ou})` : 'OU policy', policy: ouRow },
+      { tier: 'default',     label: 'District default policy', policy: defaultRow },
+    ],
+    note: (resolvedTier === 'lesson' || resolvedTier === 'penalty_box')
+      ? null
+      : 'This precedence chain only controls DNS-level blocking while a lesson or penalty box is active. ' +
+        'Otherwise the network-wide DNS floor (shown in the trace above) decides DNS blocks for everyone; ' +
+        (resolvedTier === 'none'
+          ? "this student has no assigned policy at any tier (no student/group/OU/default match)."
+          : `the student's own resolved policy (the "${resolvedTier}" tier above) is enforced separately by the Chrome extension, not DNS.`),
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Network-wide DNS floor — a single policy enforced for EVERY DNS query
 // regardless of identity (students, staff, unidentified devices alike).
 // Selected via the dns_network_policy_id setting; falls back to the bare
@@ -291,5 +388,5 @@ async function invalidateNetworkPolicy() {
 module.exports = {
   resolvePolicy, invalidatePolicy, invalidatePoliciesForClass,
   resolveNetworkPolicy, invalidateNetworkPolicy,
-  buildResolvedPolicy,
+  buildResolvedPolicy, explainPolicyChain,
 };

@@ -1,7 +1,12 @@
-import { useState } from 'react';
+import { useState, Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../lib/api';
+import WhyBlockedTrace from '../../components/WhyBlockedTrace';
+
+function hostnameOf(url) {
+  try { return new URL(url).hostname; } catch { return null; }
+}
 
 const ACTION_COLORS = {
   allowed: 'badge-green',
@@ -25,6 +30,7 @@ export default function BrowserHistoryPage() {
     to:         toLocalInput(Date.now()),
   });
   const [page, setPage] = useState(1);
+  const [whyKey, setWhyKey] = useState(null);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['browser-history', filters, page],
@@ -117,7 +123,8 @@ export default function BrowserHistoryPage() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {results.map(row => (
-              <tr key={row.id} className="hover:bg-slate-50">
+              <Fragment key={row.id}>
+              <tr className="hover:bg-slate-50">
                 <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">
                   {new Date(row.visited_at).toLocaleString()}
                 </td>
@@ -137,13 +144,28 @@ export default function BrowserHistoryPage() {
                   )}
                 </td>
                 <td className="px-4 py-2.5">
-                  {row.action ? (
-                    <span className={ACTION_COLORS[row.action] || 'badge-slate'}>{row.action}</span>
-                  ) : (
-                    <span className="badge-slate">unknown</span>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {row.action ? (
+                      <span className={ACTION_COLORS[row.action] || 'badge-slate'}>{row.action}</span>
+                    ) : (
+                      <span className="badge-slate">unknown</span>
+                    )}
+                    {row.action === 'blocked' && hostnameOf(row.url) && (
+                      <button
+                        className="text-xs text-slate-500 hover:underline whitespace-nowrap"
+                        onClick={() => setWhyKey(whyKey === row.id ? null : row.id)}
+                        title="Show why this was blocked"
+                      >
+                        Why?
+                      </button>
+                    )}
+                  </div>
                 </td>
               </tr>
+              {whyKey === row.id && (
+                <WhyBlockedTrace studentId={row.user_id} domain={hostnameOf(row.url)} colSpan={4} />
+              )}
+              </Fragment>
             ))}
             {!isLoading && results.length === 0 && (
               <tr>
