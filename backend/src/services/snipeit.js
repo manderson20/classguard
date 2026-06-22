@@ -142,17 +142,25 @@ async function syncAssets() {
     const status  = a.status_label?.name || null;
     const osType  = a.category?.name || null;
 
+    // Snipe-IT has no first-class MAC field — most districts track it in a
+    // custom field instead (naming varies, hence the fuzzy match on the
+    // field label rather than a fixed key).
+    const customMac = Object.values(a.custom_fields || {})
+      .find(f => /mac/i.test(f.field || '') && f.value)?.value;
+    const macs = [a.mac_address, customMac].filter(Boolean);
+
     await pool.query(
       `INSERT INTO integration_devices
-         (source, external_id, serial_number, device_name, device_model,
+         (source, external_id, serial_number, mac_addresses, device_name, device_model,
           os_type, assigned_user, assigned_email, status, raw_data, synced_at)
-       VALUES ('snipeit',$1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+       VALUES ('snipeit',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
        ON CONFLICT (source, external_id) DO UPDATE SET
-         serial_number = EXCLUDED.serial_number, device_name = EXCLUDED.device_name,
+         serial_number = EXCLUDED.serial_number, mac_addresses = EXCLUDED.mac_addresses,
+         device_name = EXCLUDED.device_name,
          device_model = EXCLUDED.device_model, os_type = EXCLUDED.os_type,
          assigned_user = EXCLUDED.assigned_user, assigned_email = EXCLUDED.assigned_email,
          status = EXCLUDED.status, raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
-      [String(a.id), serial, name, model, osType, user, user, status, JSON.stringify(a)]
+      [String(a.id), serial, `{${macs.join(',')}}`, name, model, osType, user, user, status, JSON.stringify(a)]
     );
     count++;
   }

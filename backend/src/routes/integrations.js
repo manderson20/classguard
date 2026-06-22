@@ -206,82 +206,8 @@ router.post('/google/backfill-roles', ...auth, async (req, res) => {
 // sharing one key made the status UI show a stale/unrelated error.
 router.post('/sync/google-devices', ...auth, async (req, res) => {
   res.json({ status: 'started' });
-  recordSyncOutcome('google_devices', syncGoogleDevices(req.user.id));
+  recordSyncOutcome('google_devices', google.syncDevices(req.user.id));
 });
-
-// Some Chrome device fields (e.g. tpmVersionInfo.vendorSpecific) come back
-// from the Admin SDK as raw binary leaked through as a JS "string", with
-// embedded NUL/control bytes — Postgres's jsonb input flatly rejects 
-// ("unsupported Unicode escape sequence"), which aborted this whole sync
-// partway through every time it reached the first such device.
-function stripControlChars(value) {
-  if (typeof value === 'string') return value.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g, '');
-  if (Array.isArray(value)) return value.map(stripControlChars);
-  if (value && typeof value === 'object') {
-    return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, stripControlChars(v)]));
-  }
-  return value;
-}
-
-async function syncGoogleDevices(actorId) {
-  const { google: googleLib } = require('googleapis');
-  const { getServiceAccountAuth } = require('../services/google');
-
-  const auth  = await getServiceAccountAuth(['https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly']);
-  const admin = googleLib.admin({ version: 'directory_v1', auth });
-
-  const { rows: [customerSetting] } = await pool.query(
-    `SELECT value FROM settings WHERE key = 'google_customer_id'`
-  );
-  const devices = [];
-  let pageToken;
-
-  do {
-    const res = await admin.chromeosdevices.list({
-      customerId:  customerSetting?.value || process.env.GOOGLE_CUSTOMER_ID || 'my_customer',
-      maxResults:  200,
-      ...(pageToken ? { pageToken } : {}),
-    });
-    devices.push(...(res.data.chromeosdevices || []));
-    pageToken = res.data.nextPageToken;
-  } while (pageToken);
-
-  for (const d of devices) {
-    // lastKnownNetwork holds the device's most recent LAN (ipAddress) and
-    // WAN/public (wanIpAddress) addresses — a Chromebook taken home reports
-    // its home router's public IP here, not anything on our network. Both
-    // get stored; services/integrationDeviceIpamSync.js decides which (if
-    // any) actually fall inside a documented IPAM subnet before registering
-    // anything — see the "offsite devices" discussion this came from.
-    const net = (d.lastKnownNetwork || [])[0] || {};
-    const ips = [...new Set([net.ipAddress, net.wanIpAddress].filter(Boolean))];
-
-    await pool.query(
-      `INSERT INTO integration_devices
-         (source, external_id, serial_number, mac_addresses, device_name, device_model,
-          os_type, os_version, assigned_email, ip_addresses, status, last_seen, raw_data, synced_at)
-       VALUES ('google_admin',$1,$2,$3,$4,$5,'ChromeOS',$6,$7,$8,$9,$10,$11,NOW())
-       ON CONFLICT (source, external_id) DO UPDATE SET
-         serial_number = EXCLUDED.serial_number, mac_addresses = EXCLUDED.mac_addresses,
-         device_name = EXCLUDED.device_name, os_version = EXCLUDED.os_version,
-         assigned_email = EXCLUDED.assigned_email, ip_addresses = EXCLUDED.ip_addresses,
-         status = EXCLUDED.status,
-         last_seen = EXCLUDED.last_seen, raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
-      [d.deviceId, d.serialNumber,
-       `{${[d.macAddress, d.ethernetMacAddress].filter(Boolean).join(',')}}`,
-       d.annotatedAssetId || d.deviceId, d.model,
-       d.osVersion, d.lastEnrollmentTime ? d.annotatedUser || null : null,
-       `{${ips.join(',')}}`,
-       d.status, d.lastSync ? new Date(d.lastSync) : null, JSON.stringify(stripControlChars(d))]
-    );
-  }
-
-  await pool.query(
-    `INSERT INTO settings (key, value, updated_at) VALUES ('last_google_devices_sync', $1, NOW())
-     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
-    [new Date().toISOString()]
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Zammad tickets
