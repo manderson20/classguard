@@ -18,6 +18,20 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.9] - 2026-06-22
+
+### Added
+
+- New **Artificial Intelligence** filter category — chatbots (ChatGPT,
+  Claude, Gemini, Character.AI, Copilot, Perplexity, etc.), paraphrasing/
+  essay tools (QuillBot, Jasper, Copy.ai), and image/video/voice
+  generators (Midjourney, RunwayML, ElevenLabs). Hand-curated since
+  neither upstream blocklist source covers AI tools. Opt-in, not blocked
+  by default — same tier as Social Media/Gaming/Streaming; add a block
+  rule per-policy under Categories if you want it enforced.
+
+---
+
 ## [0.6.8] - 2026-06-22
 
 ### Fixed
