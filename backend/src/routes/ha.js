@@ -53,12 +53,19 @@ async function registerSelf() {
     return relayToPrimary({ node_id: nodeId, hostname, ha_role: haRole, api_url: apiUrl, version });
   }
 
-  // ON CONFLICT on hostname (existing unique constraint) — also stamps node_id
+  // ON CONFLICT on node_id, same as the join-flow's INSERT below — node_id
+  // (from NODE_ID) is the real stable identity; hostname used to BE that
+  // identity before NODE_ID existed, so a node registered under the old
+  // scheme has a stale hostname that this upsert needs to correct, not just
+  // match against. Conflicting on hostname instead (as this used to) means
+  // a node_id match alone never updates anything — it throws a *separate*
+  // nodes_node_id_unique violation not covered by this ON CONFLICT clause,
+  // silently swallowed below, leaving the stale hostname stuck forever.
   await pool.query(
     `INSERT INTO nodes (node_id, hostname, ip, role, ha_role, api_url, version, last_seen, is_active)
      VALUES ($1, $2, '0.0.0.0', $3, $4, $5, $6, NOW(), true)
-     ON CONFLICT (hostname) DO UPDATE SET
-       node_id   = EXCLUDED.node_id,
+     ON CONFLICT (node_id) WHERE node_id IS NOT NULL DO UPDATE SET
+       hostname  = EXCLUDED.hostname,
        ha_role   = EXCLUDED.ha_role,
        api_url   = EXCLUDED.api_url,
        version   = EXCLUDED.version,
@@ -702,11 +709,55 @@ router.get('/check-update', ...auth, async (req, res) => {
   }
 });
 
+// Looks up the primary's api_url + internal_secret from our own (replicated)
+// data — same lookup used by update-status/update-complete above. Returns
+// null if either isn't replicated yet (primary not joined, or too new).
+async function findPrimary() {
+  const { rows: [primary] } = await pool.query(
+    `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+  );
+  const { rows: [secretRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
+  if (!primary?.api_url || !secretRow?.value) return null;
+  return { apiUrl: primary.api_url, secret: secretRow.value };
+}
+
+// Actual write, run only on the primary (called either directly below, when
+// we already are the primary, or by the *-for relay target a standby hits).
+async function doScheduleUpdate(scheduledAt, targetVersion, requestedBy) {
+  const { rows: nodeRows } = await pool.query(`SELECT node_id FROM nodes WHERE is_active = true`);
+  const results = [];
+  for (const { node_id } of nodeRows) {
+    const { rows } = await pool.query(
+      `INSERT INTO update_schedule (node_id, target_version, scheduled_at, requested_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (node_id) WHERE status IN ('pending', 'in_progress')
+       DO UPDATE SET scheduled_at = EXCLUDED.scheduled_at, target_version = EXCLUDED.target_version
+       RETURNING *`,
+      [node_id, targetVersion, scheduledAt, requestedBy || null]
+    );
+    results.push(rows[0]);
+  }
+  return results;
+}
+
+async function doCancelSchedule(nodeId) {
+  const { rows } = await pool.query(
+    `UPDATE update_schedule SET status = 'failed', log = 'Cancelled by admin', completed_at = NOW()
+     WHERE node_id = $1 AND status IN ('pending', 'in_progress') RETURNING id`,
+    [nodeId]
+  );
+  return rows;
+}
+
 // ---------------------------------------------------------------------------
-// POST /api/v1/ha/schedule-update — runs ON the primary. Writes one
-// update_schedule row per active node directly (this table only exists on
-// the primary's writable DB) — no relay needed on this side, since each
-// secondary picks its own row up later via GET /update-status.
+// POST /api/v1/ha/schedule-update — update_schedule only exists on the
+// primary's writable DB, but an admin can be logged into ANY node's UI
+// (e.g. browsed directly to a standby's IP rather than the VRRP VIP) — so
+// this has to relay to the primary exactly like update-status/update-complete
+// do, instead of assuming "this request landed on the primary" like it used
+// to. Without this, scheduling from a standby's UI hit that standby's own
+// read-only replica and failed with "cannot execute INSERT in a read-only
+// transaction".
 // ---------------------------------------------------------------------------
 router.post('/schedule-update', ...superauth, async (req, res) => {
   const { scheduled_at, target_version } = req.body;
@@ -714,33 +765,69 @@ router.post('/schedule-update', ...superauth, async (req, res) => {
     return res.status(400).json({ error: 'scheduled_at and target_version are required' });
   }
   try {
-    const { rows: nodeRows } = await pool.query(`SELECT node_id FROM nodes WHERE is_active = true`);
-    const results = [];
-    for (const { node_id } of nodeRows) {
-      const { rows } = await pool.query(
-        `INSERT INTO update_schedule (node_id, target_version, scheduled_at, requested_by)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (node_id) WHERE status IN ('pending', 'in_progress')
-         DO UPDATE SET scheduled_at = EXCLUDED.scheduled_at, target_version = EXCLUDED.target_version
-         RETURNING *`,
-        [node_id, target_version, scheduled_at, req.user.userId || null]
-      );
-      results.push(rows[0]);
+    if (config.node.role === 'primary') {
+      const results = await doScheduleUpdate(scheduled_at, target_version, req.user.userId);
+      return res.status(201).json({ scheduled: results });
     }
+
+    const primary = await findPrimary();
+    if (!primary) {
+      return res.status(503).json({ error: 'Primary node not found in replicated data yet — try again shortly.' });
+    }
+    const { data } = await axios.post(`${primary.apiUrl}/api/v1/ha/schedule-update-for`,
+      { scheduled_at, target_version, requested_by: req.user.userId },
+      { headers: { 'x-internal-secret': primary.secret }, timeout: 10000 }
+    );
+    res.status(201).json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/v1/ha/schedule-update-for — internal-secret only, the primary-side
+// target of the relay above
+router.post('/schedule-update-for', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { scheduled_at, target_version, requested_by } = req.body;
+  if (!scheduled_at || !target_version) {
+    return res.status(400).json({ error: 'scheduled_at and target_version are required' });
+  }
+  try {
+    const results = await doScheduleUpdate(scheduled_at, target_version, requested_by);
     res.status(201).json({ scheduled: results });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// DELETE /api/v1/ha/schedule-update/:nodeId — cancel a pending/in_progress schedule for one node
+// DELETE /api/v1/ha/schedule-update/:nodeId — cancel a pending/in_progress
+// schedule for one node. Same relay requirement as POST above.
 router.delete('/schedule-update/:nodeId', ...superauth, async (req, res) => {
   try {
-    const { rows } = await pool.query(
-      `UPDATE update_schedule SET status = 'failed', log = 'Cancelled by admin', completed_at = NOW()
-       WHERE node_id = $1 AND status IN ('pending', 'in_progress') RETURNING id`,
-      [req.params.nodeId]
+    if (config.node.role === 'primary') {
+      const rows = await doCancelSchedule(req.params.nodeId);
+      if (!rows.length) return res.status(404).json({ error: 'No active schedule for that node' });
+      return res.json({ cancelled: true });
+    }
+
+    const primary = await findPrimary();
+    if (!primary) {
+      return res.status(503).json({ error: 'Primary node not found in replicated data yet — try again shortly.' });
+    }
+    const { data } = await axios.delete(`${primary.apiUrl}/api/v1/ha/schedule-update-for/${req.params.nodeId}`,
+      { headers: { 'x-internal-secret': primary.secret }, timeout: 10000 }
     );
+    res.json(data);
+  } catch (err) {
+    if (err.response) return res.status(err.response.status).json(err.response.data);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/v1/ha/schedule-update-for/:nodeId — internal-secret only, the
+// primary-side target of the relay above
+router.delete('/schedule-update-for/:nodeId', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  try {
+    const rows = await doCancelSchedule(req.params.nodeId);
     if (!rows.length) return res.status(404).json({ error: 'No active schedule for that node' });
     res.json({ cancelled: true });
   } catch (err) {
@@ -782,15 +869,10 @@ router.get('/update-status', async (req, res) => {
       return res.json({ pending: rows[0] || null });
     }
 
-    const { rows: [primary] } = await pool.query(
-      `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
-    );
-    const { rows: [secretRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
-    if (!primary?.api_url || !secretRow?.value) {
-      return res.json({ pending: null });
-    }
-    const { data } = await axios.get(`${primary.api_url}/api/v1/ha/update-status-for/${nodeId}`, {
-      headers: { 'x-internal-secret': secretRow.value },
+    const primary = await findPrimary();
+    if (!primary) return res.json({ pending: null });
+    const { data } = await axios.get(`${primary.apiUrl}/api/v1/ha/update-status-for/${nodeId}`, {
+      headers: { 'x-internal-secret': primary.secret },
       timeout: 5000,
     });
     res.json(data);
@@ -840,15 +922,12 @@ router.post('/update-complete', async (req, res) => {
       return res.json({ updated: true });
     }
 
-    const { rows: [primary] } = await pool.query(
-      `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
-    );
-    const { rows: [secretRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
-    if (!primary?.api_url || !secretRow?.value) {
+    const primary = await findPrimary();
+    if (!primary) {
       return res.status(503).json({ error: 'primary/secret not found in replicated data yet' });
     }
-    await axios.post(`${primary.api_url}/api/v1/ha/update-complete-for/${nodeId}`, { status, log }, {
-      headers: { 'x-internal-secret': secretRow.value },
+    await axios.post(`${primary.apiUrl}/api/v1/ha/update-complete-for/${nodeId}`, { status, log }, {
+      headers: { 'x-internal-secret': primary.secret },
       timeout: 5000,
     });
     res.json({ forwarded: true });
