@@ -80,10 +80,26 @@ export async function enforcePolicy(policy) {
   const newRules = buildRules(policy, activeOverrides.map(o => o.domain));
   const existing = await chrome.declarativeNetRequest.getDynamicRules();
 
-  await chrome.declarativeNetRequest.updateDynamicRules({
-    removeRuleIds: existing.map(r => r.id),
-    addRules:      newRules,
-  });
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: existing.map(r => r.id),
+      addRules:      newRules,
+    });
+  } catch (err) {
+    // The backend validates policy_url_rules patterns before they're saved,
+    // but if one ever slips through (or DNR rejects something else about
+    // this batch), updateDynamicRules() throws and rejects the *entire*
+    // batch — silently dropping every block/allow rule for this device, not
+    // just the bad one. Retry without the URL-path rules (id 4000-19999,
+    // see the range map above) so domain/category/lesson/penalty
+    // enforcement still applies; losing one extension-only rule is far
+    // better than losing all of them.
+    console.error('[rules] updateDynamicRules failed, retrying without URL-path rules:', err);
+    await chrome.declarativeNetRequest.updateDynamicRules({
+      removeRuleIds: existing.map(r => r.id),
+      addRules:      newRules.filter(r => r.id < 4000 || r.id >= 20000),
+    });
+  }
 }
 
 function buildRules(policy, overrideDomains = []) {

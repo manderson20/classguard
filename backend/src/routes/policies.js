@@ -4,7 +4,7 @@ const { query, withTransaction } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { invalidatePolicy, invalidateNetworkPolicy } = require('../services/policyResolver');
-const { parseCsv, classifyRows, classifyUrl } = require('../services/goguardianImport');
+const { parseCsv, classifyRows, classifyUrl, isValidUrlPattern } = require('../services/goguardianImport');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
@@ -387,6 +387,14 @@ router.post('/:id/rules', async (req, res) => {
   // or a wildcard in the middle) would silently never match anything if saved
   // here, so reject it and point at URL-Path Rules instead.
   const classified = classifyUrl(domain);
+  if (classified.kind === 'invalid') {
+    return res.status(400).json({ error: classified.reason });
+  }
+  if (classified.kind === 'skip' && classified.reason === 'ip-address') {
+    return res.status(400).json({
+      error: `"${domain}" is an IP address, not a domain — DNS filtering only matches domain names. Use the "Block direct-IP browsing" option in Safety Options instead.`,
+    });
+  }
   if (classified.kind !== 'domain') {
     return res.status(400).json({
       error: `"${domain}" isn't a plain domain DNS filtering can match. For a URL path or wildcard like that, add it under URL-Path Rules instead (extension-only).`,
@@ -423,14 +431,19 @@ router.post('/:id/rules/import', async (req, res) => {
 
   let imported = 0, skipped = 0;
   for (const row of rows) {
-    const domain    = (row.domain || '').trim().toLowerCase().replace(/\.$/, '');
+    const rawDomain = (row.domain || '').trim();
     const rule_type = (row.rule_type || row.action || '').toLowerCase();
-    if (!domain || !['allow','deny'].includes(rule_type)) { skipped++; continue; }
+    if (!rawDomain || !['allow','deny'].includes(rule_type)) { skipped++; continue; }
+    // Same classifier as the manual single-add path and the GoGuardian
+    // import — this bulk-CSV path used to insert whatever string was in the
+    // "domain" column with zero validation.
+    const classified = classifyUrl(rawDomain);
+    if (classified.kind !== 'domain') { skipped++; continue; }
     await query(
       `INSERT INTO policy_domain_rules (policy_id, domain, rule_type, added_by)
        VALUES ($1,$2,$3,$4)
        ON CONFLICT (policy_id, domain) DO UPDATE SET rule_type = EXCLUDED.rule_type`,
-      [req.params.id, domain, rule_type, req.user?.id || null]
+      [req.params.id, classified.value, rule_type, req.user?.id || null]
     ).catch(() => { skipped++; return null; });
     imported++;
   }
@@ -474,6 +487,16 @@ router.post('/:id/url-rules', async (req, res) => {
     return res.status(400).json({ error: 'rule_type must be allow or deny' });
   }
   const clean = pattern.trim().toLowerCase();
+  // This becomes a chrome.declarativeNetRequest urlFilter pattern verbatim —
+  // an invalid one doesn't just fail to match, it makes the extension's
+  // updateDynamicRules() throw on every device under this policy. Reject it
+  // here rather than finding out live. '*' (and DNR's '^'/'|') are allowed —
+  // they're not "exceptions", they're the whole point of a pattern.
+  if (!isValidUrlPattern(clean)) {
+    return res.status(400).json({
+      error: `"${pattern.trim()}" isn't a valid URL pattern. Use letters, numbers, and standard URL characters — "*" works as a wildcard for any part of it.`,
+    });
+  }
   const { rows: [rule] } = await query(
     `INSERT INTO policy_url_rules (policy_id, pattern, rule_type, added_by)
      VALUES ($1,$2,$3,$4)
