@@ -2,6 +2,7 @@ import { useState, Fragment } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import api from '../../lib/api';
+import WhyBlockedTrace from '../../components/WhyBlockedTrace';
 
 function AllowDomainModal({ domain, onClose }) {
   const { data: policies = [], isLoading } = useQuery({
@@ -134,6 +135,7 @@ export default function DnsLogs() {
   });
   const [page, setPage] = useState(1);
   const [lookupKey, setLookupKey] = useState(null);
+  const [whyKey, setWhyKey] = useState(null);
   const [allowDomain, setAllowDomain] = useState(null);
 
   const { data, isLoading, error } = useQuery({
@@ -263,18 +265,28 @@ export default function DnsLogs() {
                     <div className="flex items-center gap-2">
                       <span className={ACTION_COLORS[row.action] || 'badge-slate'}>{row.action}</span>
                       {row.action === 'blocked' && (
-                        <button
-                          className="text-xs text-primary-600 hover:underline whitespace-nowrap"
-                          onClick={() => setAllowDomain(row.domain)}
-                          title="Add this domain to the allow list on one or more policies"
-                        >
-                          + Allow
-                        </button>
+                        <>
+                          <button
+                            className="text-xs text-slate-500 hover:underline whitespace-nowrap"
+                            onClick={() => setWhyKey(whyKey === key ? null : key)}
+                            title="Show why this was blocked"
+                          >
+                            Why?
+                          </button>
+                          <button
+                            className="text-xs text-primary-600 hover:underline whitespace-nowrap"
+                            onClick={() => setAllowDomain(row.domain)}
+                            title="Add this domain to the allow list on one or more policies"
+                          >
+                            + Allow
+                          </button>
+                        </>
                       )}
                     </div>
                   </td>
                 </tr>
                 {lookupKey === key && <ResolveRow domain={row.domain} />}
+                {whyKey === key && <WhyBlockedTrace studentId={row.user_id} domain={row.domain} colSpan={5} />}
               </Fragment>
               );
             })}

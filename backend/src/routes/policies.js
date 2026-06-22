@@ -694,7 +694,13 @@ router.post('/simulate', async (req, res) => {
   const domain = rawDomain.trim().toLowerCase().replace(/\.$/, '').replace(/^https?:\/\//, '').split('/')[0];
   const trace  = [];
 
-  const { resolvePolicy, resolveNetworkPolicy, buildResolvedPolicy } = require('../services/policyResolver');
+  const { resolvePolicy, resolveNetworkPolicy, buildResolvedPolicy, explainPolicyChain } = require('../services/policyResolver');
+  // Display-only context for "why was this blocked" UIs — the precedence
+  // chain (student/group/OU/default) this student resolves to, independent
+  // of which policy actually decided the block below (see explainPolicyChain's
+  // own `note` field for why those usually differ).
+  const policyChain = student_id ? await explainPolicyChain(student_id) : null;
+
   let policy;
   if (policy_id) {
     // Explicit policy override — test a domain against one specific policy
@@ -729,7 +735,7 @@ router.post('/simulate', async (req, res) => {
   const globalOverrideMatch = globalAllowRows.find(r => domain === r.domain || domain.endsWith(`.${r.domain}`));
   if (globalOverrideMatch) {
     trace.push({ step: 'global_allowlist', result: 'allowed', matched: globalOverrideMatch.domain });
-    return res.json({ blocked: false, reason: 'global_allowlist', domain, trace });
+    return res.json({ blocked: false, reason: 'global_allowlist', domain, trace, policy_chain: policyChain });
   }
   trace.push({ step: 'global_allowlist', result: 'no_match' });
 
@@ -738,23 +744,23 @@ router.post('/simulate', async (req, res) => {
     const allowed = (policy.resolvedAllowDomains || []).some(e => domain === e || domain.endsWith(`.${e}`));
     if (!allowed) {
       trace.push({ step: 'lesson_mode', result: 'blocked', reason: 'Not in lesson allow-list' });
-      return res.json({ blocked: true, reason: 'lesson_mode', domain, trace });
+      return res.json({ blocked: true, reason: 'lesson_mode', domain, trace, policy_chain: policyChain });
     }
     trace.push({ step: 'lesson_mode', result: 'allowed', reason: 'Domain in lesson allow-list' });
-    return res.json({ blocked: false, reason: 'lesson_allow', domain, trace });
+    return res.json({ blocked: false, reason: 'lesson_allow', domain, trace, policy_chain: policyChain });
   }
 
   // Penalty box
   if (policy?.mode === 'penalty_box') {
     trace.push({ step: 'penalty_box', result: 'blocked' });
-    return res.json({ blocked: true, reason: 'penalty_box', domain, trace });
+    return res.json({ blocked: true, reason: 'penalty_box', domain, trace, policy_chain: policyChain });
   }
 
   // Per-policy allow-list
   const globalAllow = (policy?.resolvedAllowDomains || []).some(e => domain === e || domain.endsWith(`.${e}`));
   if (globalAllow) {
     trace.push({ step: 'allow_list', result: 'allowed', matched: domain });
-    return res.json({ blocked: false, reason: 'allow_list', domain, trace });
+    return res.json({ blocked: false, reason: 'allow_list', domain, trace, policy_chain: policyChain });
   }
   trace.push({ step: 'allow_list', result: 'no_match' });
 
@@ -762,7 +768,7 @@ router.post('/simulate', async (req, res) => {
   const denyMatch = (policy?.resolvedDenyDomains || []).find(e => domain === e || domain.endsWith(`.${e}`));
   if (denyMatch) {
     trace.push({ step: 'deny_list', result: 'blocked', matched: denyMatch });
-    return res.json({ blocked: true, reason: 'deny_list', matched: denyMatch, domain, trace });
+    return res.json({ blocked: true, reason: 'deny_list', matched: denyMatch, domain, trace, policy_chain: policyChain });
   }
   trace.push({ step: 'deny_list', result: 'no_match' });
 
@@ -777,7 +783,7 @@ router.post('/simulate', async (req, res) => {
     if (inList) { blocklisted = true; trace.push({ step: 'blocklist', result: 'blocked', matched: check }); break; }
   }
   if (!blocklisted) trace.push({ step: 'blocklist', result: 'no_match' });
-  if (blocklisted) return res.json({ blocked: true, reason: 'blocklist', domain, trace });
+  if (blocklisted) return res.json({ blocked: true, reason: 'blocklist', domain, trace, policy_chain: policyChain });
 
   // Category check
   const CATEGORY_KEY = 'classguard:domain:category';
@@ -792,7 +798,7 @@ router.post('/simulate', async (req, res) => {
     const allowedCats = policy?.allowedCategories || [];
     if (blockedCats.includes(category)) {
       trace.push({ step: 'category', result: 'blocked', category });
-      return res.json({ blocked: true, reason: `category:${category}`, category, domain, trace });
+      return res.json({ blocked: true, reason: `category:${category}`, category, domain, trace, policy_chain: policyChain });
     }
     if (allowedCats.includes(category)) {
       trace.push({ step: 'category', result: 'allowed', category });
@@ -804,7 +810,7 @@ router.post('/simulate', async (req, res) => {
   }
 
   trace.push({ step: 'upstream', result: 'allowed' });
-  res.json({ blocked: false, reason: 'allowed', category, domain, trace });
+  res.json({ blocked: false, reason: 'allowed', category, domain, trace, policy_chain: policyChain });
 });
 
 module.exports = router;
