@@ -5,11 +5,13 @@
 //   • Extension   — enforces lesson whitelists, penalty box, and per-policy custom rules
 //
 // Rule ID ranges:
-//   1     — catch-all block/redirect (lesson / penalty_box modes)
+//   1     — catch-all block/redirect (lesson / penalty_box / lockdown modes)
 //   2     — catch-all block for non-main-frame resources
 //   10–9  — reserved
 //   100+  — per-domain block rules (standard mode deny list, batched 100/rule)
 //   2000+ — per-domain allow rules (overrides, lesson whitelist)
+//   2010–2012 — lockdown mode: exact test-URL allow (main_frame + sub-resources)
+//           plus a fixed Google support-domain allow for sub-resources only
 //   3000  — YouTube-Restrict header injection
 //   4000+ — per-pattern URL-path rules (e.g. GoGuardian import) — one rule
 //           per pattern since urlFilter has no multi-pattern batching
@@ -25,6 +27,35 @@ const SUB_TYPES     = ALL_RESOURCE_TYPES.filter(t => t !== 'main_frame');
 const BLOCK_ALL_MAIN   = 1;
 const BLOCK_ALL_SUB    = 2;
 const YT_RESTRICT_RULE = 3000;   // YouTube-Restrict header injection
+
+// A Chrome extension can only filter network requests — it has no concept
+// of "this is the same test" beyond the URL itself, so the test page's own
+// dependencies (icons, fonts, the embedded Google sign-in widget) need an
+// explicit allow. Sub-resources only, never main_frame, so this can't be
+// used to navigate the locked tab itself somewhere else.
+const LOCKDOWN_SUPPORT_DOMAINS = [
+  'www.gstatic.com', 'fonts.gstatic.com', 'fonts.googleapis.com',
+  'ssl.gstatic.com', 'accounts.google.com', 'apis.google.com', 'www.google.com',
+];
+
+// Google Forms (and similarly-shaped quiz tools) serve viewing and
+// submission from sibling paths under the same form-id "directory"
+// (.../viewform vs .../formResponse) — truncating to the parent path lets
+// both work under one prefix allow rule. If the URL has no real subpath
+// beyond the bare domain, fall back to an exact match rather than risk
+// allowing an entire domain.
+function deriveLockdownPrefix(targetUrl) {
+  try {
+    const u = new URL(targetUrl);
+    const lastSlash = u.pathname.lastIndexOf('/');
+    if (lastSlash > 0) {
+      return `${u.origin}${u.pathname.slice(0, lastSlash + 1)}`;
+    }
+    return targetUrl;
+  } catch {
+    return targetUrl;
+  }
+}
 
 // Build a redirect rule for main_frame to the blocked page
 function redirectRule(id, condition, reason) {
@@ -106,7 +137,40 @@ function buildRules(policy, overrideDomains = []) {
   const rules = [];
   const { mode = 'standard', resolvedAllowDomains = [], resolvedDenyDomains = [] } = policy;
 
-  if (mode === 'lesson') {
+  if (mode === 'lockdown') {
+    // Single-URL test lock: block everything, then allow only the test
+    // page's own prefix (main_frame + sub-resources) plus a fixed set of
+    // Google support domains for sub-resources. This is a SOFT lock — DNR
+    // has no concept of tabs/windows, so escape-prevention (new tab/window,
+    // tab switching, focus loss) is handled separately in the service
+    // worker, not here.
+    rules.push(redirectRule(BLOCK_ALL_MAIN, { urlFilter: '|http' }, 'lockdown'));
+    rules.push(blockRule(BLOCK_ALL_SUB,     { urlFilter: '|http' }));
+
+    const targetUrl = policy?.lockdownTargetUrl;
+    if (targetUrl) {
+      const prefix = deriveLockdownPrefix(targetUrl);
+      rules.push({
+        id:        2010,
+        priority:  10,
+        action:    { type: 'allow' },
+        condition: { urlFilter: `|${prefix}`, resourceTypes: PAGE_TYPES },
+      });
+      rules.push({
+        id:        2011,
+        priority:  10,
+        action:    { type: 'allow' },
+        condition: { urlFilter: `|${prefix}`, resourceTypes: SUB_TYPES },
+      });
+      rules.push({
+        id:        2012,
+        priority:  10,
+        action:    { type: 'allow' },
+        condition: { requestDomains: LOCKDOWN_SUPPORT_DOMAINS, resourceTypes: SUB_TYPES },
+      });
+    }
+
+  } else if (mode === 'lesson') {
     // Whitelist mode: block everything, then allow specific domains
     rules.push(redirectRule(BLOCK_ALL_MAIN, { urlFilter: '|http' }, 'lesson'));
     rules.push(blockRule(BLOCK_ALL_SUB,     { urlFilter: '|http' }));

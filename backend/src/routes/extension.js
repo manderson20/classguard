@@ -248,6 +248,45 @@ async function recordScreenTimeHeartbeat(studentId, deviceId, idleState) {
 }
 
 // ---------------------------------------------------------------------------
+// POST /api/v1/extension/lockdown/:sessionId/event
+// Fire-and-forget escape-attempt log from a student's extension during an
+// active lockdown test (new_tab, new_window, tab_switch, tab_closed,
+// focus_loss) — a Chrome extension can't actually prevent most of these
+// (OS-level app switching is outside its reach), so this is a "log it for
+// the teacher" signal rather than enforcement.
+// Body: { event_type, detail? }
+// ---------------------------------------------------------------------------
+router.post('/lockdown/:sessionId/event', authenticate, async (req, res) => {
+  const { sessionId } = req.params;
+  const { event_type, detail = null } = req.body;
+  const VALID_TYPES = ['new_tab', 'new_window', 'tab_switch', 'tab_closed', 'focus_loss'];
+  if (!VALID_TYPES.includes(event_type)) {
+    return res.status(400).json({ error: 'invalid event_type' });
+  }
+
+  const { rows } = await query(
+    `SELECT student_id, class_id FROM lockdown_sessions WHERE id = $1 AND student_id = $2 AND status = 'active'`,
+    [sessionId, req.user.userId]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'No active session found for this student' });
+
+  await query(
+    `INSERT INTO lockdown_events (lockdown_session_id, event_type, detail) VALUES ($1,$2,$3)`,
+    [sessionId, event_type, detail]
+  );
+
+  events.emit('lockdown:event', {
+    studentId: rows[0].student_id,
+    classId:   rows[0].class_id,
+    sessionId,
+    eventType: event_type,
+    detail,
+  });
+
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/v1/extension/tab-event
 // Reports a student's browser navigation to the backend.
 // Teachers can see this in real-time via the dashboard (Phase 6).

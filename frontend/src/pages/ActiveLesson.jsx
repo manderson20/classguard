@@ -107,7 +107,32 @@ function ChatPanel({ threadId, onClose, socket, selfId }) {
   );
 }
 
-function StudentTile({ student, activity, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab }) {
+function LockdownForm({ count, onClose, onStart }) {
+  const [targetUrl, setTargetUrl] = useState('');
+  const [duration, setDuration]   = useState('');
+
+  return (
+    <div className="bg-amber-50 border-b border-amber-200 px-6 py-3 flex items-center gap-3">
+      <span className="text-sm text-amber-800 font-medium whitespace-nowrap">🔒 Lock {count} student{count > 1 ? 's' : ''} to —</span>
+      <input value={targetUrl} onChange={e => setTargetUrl(e.target.value)}
+        placeholder="https://docs.google.com/forms/d/e/…/viewform"
+        className="flex-1 max-w-lg text-sm border border-slate-300 rounded-lg px-3 py-1.5" />
+      <input value={duration} onChange={e => setDuration(e.target.value)}
+        type="number" min="1" placeholder="Minutes (optional)"
+        className="w-40 text-sm border border-slate-300 rounded-lg px-3 py-1.5" />
+      <button
+        onClick={() => onStart(targetUrl.trim(), duration ? parseInt(duration, 10) : null)}
+        disabled={!targetUrl.trim()}
+        className="btn btn-sm bg-amber-600 text-white hover:bg-amber-700 border-0 disabled:opacity-40 whitespace-nowrap"
+      >
+        Start Lockdown
+      </button>
+      <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-sm whitespace-nowrap">Cancel</button>
+    </div>
+  );
+}
+
+function StudentTile({ student, activity, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, lockdownSession, lockdownEventCount, onEndLockdown }) {
   const [highlight, setHighlight]   = useState(false);
   const [locked, setLocked]         = useState(false);
   const [urlInputOpen, setUrlInputOpen] = useState(false);
@@ -162,6 +187,17 @@ function StudentTile({ student, activity, selected, onToggleSelect, onRestrict, 
           </button>
         )}
       </div>
+
+      {lockdownSession && (
+        <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-md px-2 py-1 mb-2">
+          <span className="text-xs text-amber-700 font-medium truncate">
+            🔒 Locked test{lockdownEventCount > 0 ? ` · ${lockdownEventCount} escape attempt${lockdownEventCount > 1 ? 's' : ''}` : ''}
+          </span>
+          <button onClick={() => onEndLockdown(lockdownSession.id)} className="text-xs text-amber-700 hover:underline flex-shrink-0 ml-1">
+            End
+          </button>
+        </div>
+      )}
 
       <div className="min-h-[36px]">
         {isRestricted ? (
@@ -225,6 +261,8 @@ export default function ActiveLesson() {
   const [selected, setSelected] = useState(new Set());
   const [chatThreadId, setChatThreadId] = useState(null);
   const [chatChoiceOpen, setChatChoiceOpen] = useState(false);
+  const [lockdownFormOpen, setLockdownFormOpen] = useState(false);
+  const [lockdownEventCounts, setLockdownEventCounts] = useState({});
 
   const toggleSelect = (studentId) => {
     setSelected(prev => {
@@ -262,14 +300,46 @@ export default function ActiveLesson() {
     refetchInterval: 15_000,
   });
 
+  const { data: lockdownSessions = [] } = useQuery({
+    queryKey:        ['lockdown-active', classId],
+    queryFn:         () => api.get('/lockdown/active'),
+    refetchInterval: 10_000,
+    select:          (rows) => rows.filter(r => r.class_id === classId),
+  });
+  const lockdownByStudent = new Map(lockdownSessions.map(s => [s.student_id, s]));
+
   // Real-time feed
   useEffect(() => {
     if (!socket) return;
     socket.emit('join:class', classId);
     const handler = (data) => setActivity(prev => ({ ...prev, [data.studentId]: data }));
     socket.on('student:activity', handler);
-    return () => { socket.off('student:activity', handler); socket.emit('leave:class', classId); };
+    const lockdownHandler = (data) => {
+      setLockdownEventCounts(prev => ({ ...prev, [data.studentId]: (prev[data.studentId] || 0) + 1 }));
+    };
+    socket.on('lockdown:event', lockdownHandler);
+    return () => {
+      socket.off('student:activity', handler);
+      socket.off('lockdown:event', lockdownHandler);
+      socket.emit('leave:class', classId);
+    };
   }, [socket, classId]);
+
+  const startLockdown = useMutation({
+    mutationFn: ({ studentIds, targetUrl, durationMinutes }) => api.post('/lockdown', {
+      student_ids: studentIds, class_id: classId, target_url: targetUrl, duration_minutes: durationMinutes,
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['lockdown-active', classId] });
+      setSelected(new Set());
+      setLockdownFormOpen(false);
+    },
+  });
+
+  const endLockdown = useMutation({
+    mutationFn: (sessionId) => api.delete(`/lockdown/${sessionId}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['lockdown-active', classId] }),
+  });
 
   const endLesson = useMutation({
     mutationFn: (lessonId) => api.delete(`/classes/${classId}/lessons/${lessonId}`),
@@ -328,6 +398,13 @@ export default function ActiveLesson() {
             💬 Chat {selected.size > 0 && `(${selected.size})`}
           </button>
           <button
+            onClick={() => setLockdownFormOpen(true)}
+            disabled={selected.size === 0}
+            className="btn btn-sm bg-amber-600 text-white hover:bg-amber-700 border-0 disabled:opacity-40"
+          >
+            🔒 Lockdown Test {selected.size > 0 && `(${selected.size})`}
+          </button>
+          <button
             onClick={() => lesson && endLesson.mutate(lesson.id)}
             disabled={endLesson.isPending || !lesson}
             className="btn btn-sm bg-red-600 text-white hover:bg-red-700 border-0"
@@ -364,6 +441,17 @@ export default function ActiveLesson() {
         </div>
       )}
 
+      {/* Lockdown test form */}
+      {lockdownFormOpen && (
+        <LockdownForm
+          count={selected.size}
+          onClose={() => setLockdownFormOpen(false)}
+          onStart={(targetUrl, durationMinutes) => startLockdown.mutate({
+            studentIds: Array.from(selected), targetUrl, durationMinutes,
+          })}
+        />
+      )}
+
       {/* Student grid */}
       <div className="flex-1 overflow-auto p-5">
         {members.length === 0 ? (
@@ -386,6 +474,9 @@ export default function ActiveLesson() {
                 onOpenTab={(id) => openTab.mutate(id)}
                 onOpenTabUrl={(id, url) => openTabUrl.mutate({ studentId: id, url })}
                 onCloseTab={(id) => closeTab.mutate(id)}
+                lockdownSession={lockdownByStudent.get(student.id)}
+                lockdownEventCount={lockdownEventCounts[student.id] || 0}
+                onEndLockdown={(sessionId) => endLockdown.mutate(sessionId)}
               />
             ))}
           </div>

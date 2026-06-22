@@ -54,8 +54,29 @@ async function resolvePolicy(studentId, location = 'any') {
   let mode   = null;
   let resolvedAllowDomains = [];
   let resolvedDenyDomains  = [];
+  let lockdown = null;
 
-  // 1. Active lesson session (teacher override — highest priority)
+  // 0. Active lockdown test session — outranks even a lesson, since a
+  // teacher starting a test lock means business: it should pin the student
+  // to the test page regardless of whatever domain whitelist the class's
+  // lesson session has active.
+  const { rows: lockdownRows } = await query(
+    `SELECT id, target_url, ends_at FROM lockdown_sessions
+     WHERE student_id = $1 AND status = 'active'
+     LIMIT 1`,
+    [studentId]
+  );
+  if (lockdownRows[0]) {
+    mode = 'lockdown';
+    lockdown = {
+      sessionId: lockdownRows[0].id,
+      targetUrl: lockdownRows[0].target_url,
+      endsAt:    lockdownRows[0].ends_at,
+    };
+  }
+
+  // 1. Active lesson session (teacher override — highest priority short of
+  // an active lockdown)
   const { rows: lessonRows } = await query(
     `SELECT ls.id, ls.allowed_domains, ls.teacher_id
      FROM lesson_sessions ls
@@ -67,7 +88,7 @@ async function resolvePolicy(studentId, location = 'any') {
     [studentId]
   );
 
-  if (lessonRows[0]) {
+  if (!mode && lessonRows[0]) {
     mode = 'lesson';
     resolvedAllowDomains = lessonRows[0].allowed_domains || [];
   }
@@ -154,6 +175,11 @@ async function resolvePolicy(studentId, location = 'any') {
   }
 
   const result = await buildResolvedPolicy(policy, mode, resolvedAllowDomains, resolvedDenyDomains);
+  if (lockdown) {
+    result.lockdownSessionId = lockdown.sessionId;
+    result.lockdownTargetUrl = lockdown.targetUrl;
+    result.lockdownEndsAt    = lockdown.endsAt;
+  }
 
   // Cache the resolved policy
   await redis.set(policyKey(studentId, location), JSON.stringify(result), 'EX', POLICY_TTL);
@@ -272,6 +298,10 @@ async function explainPolicyChain(studentId, location = 'any') {
   if (!LOCATIONS.includes(location)) location = 'any';
   if (!studentId) return null;
 
+  const { rows: lockdownRows } = await query(
+    `SELECT id, target_url FROM lockdown_sessions WHERE student_id = $1 AND status = 'active' LIMIT 1`,
+    [studentId]
+  );
   const { rows: lessonRows } = await query(
     `SELECT ls.id FROM lesson_sessions ls
      JOIN class_members cm ON cm.class_id = ls.class_id
@@ -321,14 +351,16 @@ async function explainPolicyChain(studentId, location = 'any') {
     defaultRow = defRows[0] || null;
   }
 
-  const lessonActive = !!lessonRows[0];
-  const penaltyActive = !lessonActive && !!pbRows[0];
+  const lockdownActive = !!lockdownRows[0];
+  const lessonActive = !lockdownActive && !!lessonRows[0];
+  const penaltyActive = !lockdownActive && !lessonActive && !!pbRows[0];
   const studentTier = studentRows[0] || null;
   const groupTier   = !studentTier ? (groupRows[0] || null) : null;
   const ouTier       = !studentTier && !groupTier ? ouRow : null;
   const defaultTier  = !studentTier && !groupTier && !ouTier ? defaultRow : null;
 
   const resolvedTier =
+    lockdownActive ? 'lockdown' :
     lessonActive ? 'lesson' :
     penaltyActive ? 'penalty_box' :
     studentTier ? 'student' :
@@ -339,6 +371,7 @@ async function explainPolicyChain(studentId, location = 'any') {
   return {
     resolved_tier: resolvedTier,
     tiers: [
+      { tier: 'lockdown',    label: 'Active lockdown test',   active: lockdownActive, target_url: lockdownRows[0]?.target_url || null },
       { tier: 'lesson',      label: 'Active lesson session',  active: lessonActive },
       { tier: 'penalty_box', label: 'Active penalty box',     active: penaltyActive },
       { tier: 'student',     label: 'Student-assigned policy', policy: studentTier },
@@ -346,7 +379,7 @@ async function explainPolicyChain(studentId, location = 'any') {
       { tier: 'ou',          label: ou ? `OU policy (${ou})` : 'OU policy', policy: ouRow },
       { tier: 'default',     label: 'District default policy', policy: defaultRow },
     ],
-    note: (resolvedTier === 'lesson' || resolvedTier === 'penalty_box')
+    note: (resolvedTier === 'lockdown' || resolvedTier === 'lesson' || resolvedTier === 'penalty_box')
       ? null
       : 'This precedence chain only controls DNS-level blocking while a lesson or penalty box is active. ' +
         'Otherwise the network-wide DNS floor (shown in the trace above) decides DNS blocks for everyone; ' +

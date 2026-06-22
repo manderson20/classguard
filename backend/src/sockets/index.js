@@ -101,6 +101,13 @@ const setupSockets = (io) => {
     }
   });
 
+  // Lockdown escape attempt: forward to the owning class room so the
+  // teacher's live ActiveLesson view shows it as it happens.
+  events.on('lockdown:event', ({ studentId, classId, sessionId, eventType, detail }) => {
+    if (!classId) return;
+    io.to(`class:${classId}`).emit('lockdown:event', { studentId, sessionId, eventType, detail, ts: Date.now() });
+  });
+
   // Screenshot captured: notify all class rooms the student belongs to
   events.on('student:screenshot', async ({ studentId, screenshotId, url, trigger, created_at }) => {
     if (!studentId) return;

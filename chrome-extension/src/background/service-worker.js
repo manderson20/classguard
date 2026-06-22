@@ -5,6 +5,7 @@
 import { getGoogleToken, getStoredJWT, getStoredUser, storeAuth, clearAuth } from '../lib/auth.js';
 import { apiFetch, getServerUrl }  from '../lib/api.js';
 import { enforcePolicy }           from '../lib/rules.js';
+import { applyLockdownState }      from '../lib/lockdownGuard.js';
 import { classifyPublicIpLiteral } from '../lib/directIp.js';
 import { connectSocket, isConnected } from '../lib/socket.js';
 
@@ -147,11 +148,15 @@ async function syncPolicy(jwtOverride) {
       [POLICY_SYNC_TS_KEY]: Date.now(),
     });
     await enforcePolicy(policy);
+    await applyLockdownState(policy);
     chrome.runtime.sendMessage({ type: 'CG_POLICY_UPDATED', policy }).catch(() => {});
   } catch (err) {
     console.error('[ClassGuard] Policy sync failed:', err.message);
     const cached = await getCachedPolicy();
-    if (cached) await enforcePolicy(cached);
+    if (cached) {
+      await enforcePolicy(cached);
+      await applyLockdownState(cached);
+    }
   }
 }
 

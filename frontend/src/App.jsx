@@ -14,6 +14,7 @@ import Classes      from './pages/Classes';
 import ClassDetail  from './pages/ClassDetail';
 import ActiveLesson from './pages/ActiveLesson';
 import PenaltyBox   from './pages/PenaltyBox';
+import LockdownTests from './pages/LockdownTests';
 
 // Admin pages
 import AdminDashboard  from './pages/admin/AdminDashboard';
@@ -91,6 +92,7 @@ export default function App() {
         <Route path="/classes/:classId"        element={<ClassDetail />} />
         <Route path="/classes/:classId/lesson" element={<ActiveLesson />} />
         <Route path="/penalty-box"             element={<PenaltyBox />} />
+        <Route path="/lockdown"                element={<LockdownTests />} />
 
         {/* Admin routes */}
         <Route element={<RequireAuth minRole="admin"><Outlet /></RequireAuth>}>
