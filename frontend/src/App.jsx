@@ -51,6 +51,7 @@ import DeviceViewAuditPage from './pages/admin/DeviceViewAuditPage';
 import VpnPage             from './pages/admin/VpnPage';
 import Ipv6Page             from './pages/admin/Ipv6Page';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
+import ScreenTimePage      from './pages/admin/ScreenTimePage';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
@@ -94,6 +95,7 @@ export default function App() {
         <Route element={<RequireAuth minRole="admin"><Outlet /></RequireAuth>}>
           <Route path="/admin"                        element={<AdminDashboard />} />
           <Route path="/admin/staff-analytics"        element={<StaffAnalyticsPage />} />
+          <Route path="/admin/screen-time"            element={<ScreenTimePage />} />
           <Route path="/admin/users"                  element={<UsersPage />} />
           <Route path="/admin/users/:userId"          element={<UserDetail />} />
           <Route path="/admin/policies"               element={<PoliciesPage />} />

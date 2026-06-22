@@ -21,7 +21,8 @@
     "alarms",
     "activeTab",
     "scripting",
-    "webNavigation"
+    "webNavigation",
+    "idle"
   ],
 
   "storage": {
