@@ -199,7 +199,18 @@ export default function UnblockRequestsPage() {
                     {r.source_ip && <div className="text-xs text-slate-400">{r.source_ip}</div>}
                   </td>
                   <td className="px-4 py-3">
-                    <div className="font-medium text-slate-700">{r.student_name || r.requester_name || '—'}</div>
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-medium text-slate-700">{r.student_name || r.requester_name || '—'}</span>
+                      {r.student_id ? (
+                        <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium" title="Cryptographically verified via the signed-in Google account, not a typed name">
+                          Verified
+                        </span>
+                      ) : (
+                        <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium" title="Self-reported from the block page directly — no extension/sign-in to verify this identity">
+                          Self-reported
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-400">{r.student_email || r.requester_email || r.student_ou}</div>
                   </td>
                   <td className="px-4 py-3 text-slate-500 max-w-xs">

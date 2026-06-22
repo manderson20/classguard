@@ -474,6 +474,26 @@ async function handleMessage(msg, sender) {
       return { ok: true };
     }
 
+    // The DNS block page (frontend/public/blocked-dns.html) asks the content
+    // script to submit an unblock request on its behalf, via this handler —
+    // never the page's own fetch(). apiFetch attaches the real student JWT
+    // automatically (default behavior, same as every other call here), so
+    // the backend can verify student_id cryptographically instead of trusting
+    // a typed name/email. A student editing the page's own JS can't forge
+    // this: the JWT itself never leaves the extension's trusted contexts.
+    case 'CG_SUBMIT_UNBLOCK_REQUEST': {
+      const { domain, reason } = msg;
+      try {
+        const result = await apiFetch('/unblock-requests', {
+          method: 'POST',
+          body:   { domain, reason },
+        });
+        return { ok: true, request: result };
+      } catch (err) {
+        return { ok: false, error: err.message };
+      }
+    }
+
     // Content script detected a keyword match — capture screenshot
     case 'CG_KEYWORD_VIOLATION': {
       const { keyword, category, url, title, tabId } = msg;

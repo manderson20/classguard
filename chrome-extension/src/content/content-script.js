@@ -7,14 +7,20 @@
 
   // ---------------------------------------------------------------------------
   // Identity bridge — lets ClassGuard's OWN pages (e.g. the DNS-level block
-  // page, frontend/public/blocked-dns.html) ask "who's signed in?" without a
-  // new auth flow. Needed because a DNS-sinkholed page keeps the ORIGINAL
-  // blocked domain in the address bar (e.g. "pornhub.com") — there is no
-  // reliable hostname check that says "this is ClassGuard's page", so the
-  // page itself announces readiness via a custom event instead, and gets a
-  // postMessage reply. Only name/email/photo are exposed (never the JWT) —
-  // this is purely a form-autofill convenience, not a new auth boundary; the
-  // unblock-request submission itself is unchanged.
+  // page, frontend/public/blocked-dns.html) ask "who's signed in?" and submit
+  // an unblock request AS that signed-in identity, without a new auth flow.
+  // Needed because a DNS-sinkholed page keeps the ORIGINAL blocked domain in
+  // the address bar (e.g. "pornhub.com") — there is no reliable hostname
+  // check that says "this is ClassGuard's page", so the page announces
+  // itself via custom events instead, and gets a postMessage reply.
+  //
+  // CG_GET_STATUS only exposes name/email/photo for display (never the JWT)
+  // — display alone proves nothing, a student could still type a teacher's
+  // name into a plain text field. The actual anti-impersonation guarantee is
+  // CG_SUBMIT_UNBLOCK_REQUEST below: the JWT itself never leaves this
+  // extension's trusted contexts (content script → service worker → backend),
+  // so the backend can verify student_id cryptographically instead of
+  // trusting whatever the page's own JS sent.
   // ---------------------------------------------------------------------------
   window.addEventListener('classguard:request-identity', () => {
     chrome.runtime.sendMessage({ type: 'CG_GET_STATUS' }, (status) => {
@@ -23,6 +29,17 @@
         source: 'classguard-extension',
         type:   'classguard:identity',
         user:   user ? { name: user.name, email: user.email, photoUrl: user.photoUrl } : null,
+      }, window.location.origin);
+    });
+  });
+
+  window.addEventListener('classguard:submit-unblock-request', (e) => {
+    const { domain, reason } = e.detail || {};
+    chrome.runtime.sendMessage({ type: 'CG_SUBMIT_UNBLOCK_REQUEST', domain, reason }, (result) => {
+      window.postMessage({
+        source: 'classguard-extension',
+        type:   'classguard:unblock-request-result',
+        ...(result || { ok: false, error: 'No response from extension' }),
       }, window.location.origin);
     });
   });
