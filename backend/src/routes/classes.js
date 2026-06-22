@@ -121,6 +121,47 @@ router.delete('/:id/members/:userId', async (req, res) => {
 // Lesson sessions — teacher controls
 // ---------------------------------------------------------------------------
 
+// GET /api/v1/classes/:id/lessons  — past lesson sessions for this class
+// (Teacher Live View Phase 4 — "teacher's own history page"). Basic summary
+// only: participant/activity/blocked counts come from browser_history's
+// lesson_session_id tag (Phase 3) — no new join against teacher_actions/
+// chat_threads/lockdown_sessions, which aren't lesson-session-tagged today.
+router.get('/:id/lessons', async (req, res) => {
+  const { role, userId } = req.user;
+  const classId = req.params.id;
+  const page  = Math.max(parseInt(req.query.page, 10)  || 1, 1);
+  const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+  const offset = (page - 1) * limit;
+
+  const { rows: cls } = await query('SELECT teacher_id FROM classes WHERE id = $1', [classId]);
+  if (!cls[0]) return res.status(404).json({ error: 'Class not found' });
+  if (role === 'teacher' && cls[0].teacher_id !== userId) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  const [{ rows: lessons }, { rows: countRow }] = await Promise.all([
+    query(
+      `SELECT ls.*,
+              (SELECT COUNT(DISTINCT user_id) FROM browser_history WHERE lesson_session_id = ls.id) AS participant_count,
+              (SELECT COUNT(*) FROM browser_history WHERE lesson_session_id = ls.id) AS activity_count,
+              (SELECT COUNT(*) FROM browser_history WHERE lesson_session_id = ls.id AND action = 'blocked') AS blocked_count
+       FROM lesson_sessions ls
+       WHERE ls.class_id = $1
+       ORDER BY ls.started_at DESC
+       LIMIT $2 OFFSET $3`,
+      [classId, limit, offset]
+    ),
+    query('SELECT COUNT(*) AS total FROM lesson_sessions WHERE class_id = $1', [classId]),
+  ]);
+
+  res.json({
+    total:   parseInt(countRow[0].total, 10),
+    page,
+    limit,
+    results: lessons,
+  });
+});
+
 // POST /api/v1/classes/:id/lessons  — start a lesson
 router.post('/:id/lessons', async (req, res) => {
   const { role, userId } = req.user;
