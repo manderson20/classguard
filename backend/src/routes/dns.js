@@ -66,7 +66,7 @@ router.get('/resolve', authenticate, requireMinRole('teacher'), async (req, res)
 // ---------------------------------------------------------------------------
 router.get('/logs', authenticate, requireMinRole('teacher'), async (req, res) => {
   const {
-    student_id, domain, action,
+    student_id, domain, action, lesson_session_id,
     from, to,
     page = 1, limit = 50,
   } = req.query;
@@ -94,6 +94,10 @@ router.get('/logs', authenticate, requireMinRole('teacher'), async (req, res) =>
   if (action && ['allowed','blocked','unknown'].includes(action)) {
     conditions.push(`action = $${values.length + 1}`);
     values.push(action);
+  }
+  if (lesson_session_id) {
+    conditions.push(`lesson_session_id = $${values.length + 1}`);
+    values.push(lesson_session_id);
   }
 
   // Teachers can only see their own students

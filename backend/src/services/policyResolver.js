@@ -31,6 +31,21 @@ async function invalidatePoliciesForClass(classId) {
   return rows.map(r => r.student_id);
 }
 
+// Active lesson session for a student, if any — shared by resolvePolicy(),
+// explainPolicyChain() (which used to each inline this same join), and
+// routes/extension.js's /tab-event (to tag browser_history with the session
+// it happened in).
+async function getActiveLessonSessionId(studentId) {
+  const { rows } = await query(
+    `SELECT ls.id FROM lesson_sessions ls
+     JOIN class_members cm ON cm.class_id = ls.class_id
+     WHERE cm.student_id = $1 AND ls.is_active = true
+     ORDER BY ls.started_at DESC LIMIT 1`,
+    [studentId]
+  );
+  return rows[0]?.id || null;
+}
+
 // ---------------------------------------------------------------------------
 // Core resolver — full precedence chain
 // location: 'on_campus' | 'off_campus' | 'any' (default) — determined by the
@@ -88,8 +103,10 @@ async function resolvePolicy(studentId, location = 'any') {
     [studentId]
   );
 
+  let lessonSessionId = null;
   if (!mode && lessonRows[0]) {
     mode = 'lesson';
+    lessonSessionId = lessonRows[0].id;
     resolvedAllowDomains = lessonRows[0].allowed_domains || [];
   }
 
@@ -175,6 +192,9 @@ async function resolvePolicy(studentId, location = 'any') {
   }
 
   const result = await buildResolvedPolicy(policy, mode, resolvedAllowDomains, resolvedDenyDomains);
+  if (lessonSessionId) {
+    result.lessonSessionId = lessonSessionId;
+  }
   if (lockdown) {
     result.lockdownSessionId = lockdown.sessionId;
     result.lockdownTargetUrl = lockdown.targetUrl;
@@ -302,13 +322,7 @@ async function explainPolicyChain(studentId, location = 'any') {
     `SELECT id, target_url FROM lockdown_sessions WHERE student_id = $1 AND status = 'active' LIMIT 1`,
     [studentId]
   );
-  const { rows: lessonRows } = await query(
-    `SELECT ls.id FROM lesson_sessions ls
-     JOIN class_members cm ON cm.class_id = ls.class_id
-     WHERE cm.student_id = $1 AND ls.is_active = true
-     ORDER BY ls.started_at DESC LIMIT 1`,
-    [studentId]
-  );
+  const activeLessonSessionId = await getActiveLessonSessionId(studentId);
   const { rows: pbRows } = await query(
     `SELECT id FROM penalty_box
      WHERE student_id = $1 AND released_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())
@@ -352,7 +366,7 @@ async function explainPolicyChain(studentId, location = 'any') {
   }
 
   const lockdownActive = !!lockdownRows[0];
-  const lessonActive = !lockdownActive && !!lessonRows[0];
+  const lessonActive = !lockdownActive && !!activeLessonSessionId;
   const penaltyActive = !lockdownActive && !lessonActive && !!pbRows[0];
   const studentTier = studentRows[0] || null;
   const groupTier   = !studentTier ? (groupRows[0] || null) : null;
@@ -421,5 +435,5 @@ async function invalidateNetworkPolicy() {
 module.exports = {
   resolvePolicy, invalidatePolicy, invalidatePoliciesForClass,
   resolveNetworkPolicy, invalidateNetworkPolicy,
-  buildResolvedPolicy, explainPolicyChain,
+  buildResolvedPolicy, explainPolicyChain, getActiveLessonSessionId,
 };
