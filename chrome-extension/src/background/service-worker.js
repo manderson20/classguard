@@ -5,6 +5,7 @@
 import { getGoogleToken, getStoredJWT, getStoredUser, storeAuth, clearAuth } from '../lib/auth.js';
 import { apiFetch, getServerUrl }  from '../lib/api.js';
 import { enforcePolicy }           from '../lib/rules.js';
+import { classifyPublicIpLiteral } from '../lib/directIp.js';
 import { connectSocket, isConnected } from '../lib/socket.js';
 
 const POLICY_CACHE_KEY   = 'cg_policy';
@@ -44,6 +45,7 @@ async function init() {
   chrome.alarms.onAlarm.addListener(onAlarm);
   chrome.tabs.onUpdated.addListener(onTabUpdated);
   chrome.tabs.onRemoved.addListener(onTabRemoved);
+  chrome.webNavigation.onBeforeNavigate.addListener(onBeforeNavigate);
 
   const jwt = await getStoredJWT();
   if (jwt) {
@@ -308,6 +310,33 @@ async function rememberTab(tabId, url, title) {
 }
 async function forgetTab(tabId) {
   await chrome.storage.session.remove(`cg_tab_${tabId}`);
+}
+
+// dns-engine can never see this — a navigation straight to a literal IP
+// never triggers a DNS query. onBeforeNavigate fires with the *original*
+// target URL before any DNR redirect/block takes effect, which onTabUpdated
+// (above/below) can't guarantee once rules.js's own redirect rule rewrites
+// the tab to blocked.html. Reports immediately rather than waiting to see
+// what DNR actually does, since the same cached policy that decides this
+// here is exactly what rules.js built its DNR rules from — both reach the
+// same answer from the same input, deterministically.
+async function onBeforeNavigate(details) {
+  if (details.frameId !== 0) return; // top-level navigations only
+
+  const ipFamily = classifyPublicIpLiteral(details.url);
+  if (!ipFamily) return; // not a public IP literal — nothing to report
+
+  const jwt = await getStoredJWT();
+  if (!jwt) return;
+
+  const policy  = await getCachedPolicy();
+  const blocked = policy?.block_direct_ip === true;
+
+  apiFetch('/extension/tab-event', {
+    method: 'POST',
+    jwt,
+    body: { url: details.url, title: '', is_direct_ip: true, blocked },
+  }).catch(() => {});
 }
 
 async function onTabUpdated(tabId, changeInfo, tab) {

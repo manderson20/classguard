@@ -180,10 +180,18 @@ router.post('/heartbeat', authenticate, async (req, res) => {
 // POST /api/v1/extension/tab-event
 // Reports a student's browser navigation to the backend.
 // Teachers can see this in real-time via the dashboard (Phase 6).
-// Body: { url, title }
+// Body: { url, title, is_direct_ip?, blocked? }
+//
+// is_direct_ip/blocked come from the extension's own webNavigation listener
+// (chrome-extension/src/lib/directIp.js) for navigations straight to a
+// literal IP address — dns-engine structurally never sees these (no DNS
+// query happens), so there's no dns_logs row to look up; the extension
+// already knows whether its own policy.block_direct_ip would block it,
+// since it computed that from the exact same cached policy DNR enforcement
+// uses, so it's passed through directly instead of re-derived here.
 // ---------------------------------------------------------------------------
 router.post('/tab-event', authenticate, async (req, res) => {
-  const { url, title = '', event = 'navigation' } = req.body;
+  const { url, title = '', event = 'navigation', is_direct_ip = false, blocked = false } = req.body;
   if (!url) return res.status(400).json({ error: 'url required' });
 
   const studentId = req.user.userId;
@@ -200,13 +208,16 @@ router.post('/tab-event', authenticate, async (req, res) => {
     if (cached) deviceId = JSON.parse(cached).deviceId || null;
   } catch { /* not fatal — history just won't have a device_id for this row */ }
 
-  // For an actual navigation (not a tab-closed report), look up the most
-  // recent matching dns_logs row so both the teacher's live view AND the
-  // persisted browser_history row can show WHY a domain was blocked,
-  // without a separate polling endpoint — the DNS engine already decided
-  // allow/block before the browser ever got here.
   let action = null, block_reason = null;
-  if (event === 'navigation') {
+  if (is_direct_ip) {
+    action       = blocked ? 'blocked' : 'allowed';
+    block_reason = blocked ? 'direct_ip' : null;
+  } else if (event === 'navigation') {
+    // For an actual navigation (not a tab-closed report), look up the most
+    // recent matching dns_logs row so both the teacher's live view AND the
+    // persisted browser_history row can show WHY a domain was blocked,
+    // without a separate polling endpoint — the DNS engine already decided
+    // allow/block before the browser ever got here.
     try {
       const hostname = new URL(url).hostname;
       const { rows } = await query(
@@ -233,6 +244,7 @@ router.post('/tab-event', authenticate, async (req, res) => {
     'event',        event,
     'action',       action || '',
     'block_reason', block_reason || '',
+    'is_direct_ip', is_direct_ip ? '1' : '0',
     'ts',           ts.toString()
   ).catch(() => {});
 
@@ -244,6 +256,7 @@ router.post('/tab-event', authenticate, async (req, res) => {
     event,
     action,
     block_reason,
+    is_direct_ip,
     ts,
   });
 
@@ -277,11 +290,11 @@ router.post('/internal/tab-events/bulk', authenticate, requireMinRole('superadmi
 // Redis stream that powers the live teacher view). Mirrors routes/dns.js's
 // GET /dns/logs filtering/pagination/teacher-scoping shape.
 //
-// Query params: student_id, url (substring match), action, from, to, page, limit
+// Query params: student_id, url (substring match), action, is_direct_ip, from, to, page, limit
 // ---------------------------------------------------------------------------
 router.get('/browser-history', authenticate, requireMinRole('teacher'), async (req, res) => {
   const {
-    student_id, url, action,
+    student_id, url, action, is_direct_ip,
     from, to,
     page = 1, limit = 50,
   } = req.query;
@@ -309,6 +322,9 @@ router.get('/browser-history', authenticate, requireMinRole('teacher'), async (r
   if (action && ['allowed', 'blocked'].includes(action)) {
     conditions.push(`action = $${values.length + 1}`);
     values.push(action);
+  }
+  if (is_direct_ip === 'true') {
+    conditions.push(`is_direct_ip = true`);
   }
 
   // Teachers can only see their own students — same scoping as dns.js's /logs

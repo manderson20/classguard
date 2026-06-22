@@ -53,6 +53,7 @@ function SettingsTab({ policy, policyId }) {
     safe_search:        policy.safe_search        ?? true,
     youtube_restricted: policy.youtube_restricted || 'moderate',
     block_page_message: policy.block_page_message || '',
+    block_direct_ip:    policy.block_direct_ip    || false,
     is_default:         policy.is_default         || false,
     is_network_policy:  policy.is_network_policy  || false,
   });
@@ -113,6 +114,19 @@ function SettingsTab({ policy, policyId }) {
               <option value="strict">Strict — filter most content</option>
             </select>
             <p className="text-xs text-slate-400 mt-1">Enforced by the browser extension</p>
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-2 uppercase tracking-wide">Direct-IP Browsing</label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input type="checkbox" checked={form.block_direct_ip}
+                onChange={e => f({ block_direct_ip: e.target.checked })}
+                className="w-4 h-4 rounded text-primary-600 accent-primary-600" />
+              <span className="text-sm text-slate-700">Block navigation straight to an IP address</span>
+            </label>
+            <p className="text-xs text-slate-400 mt-1 ml-6">
+              DNS filtering can't see a navigation that never resolves a hostname — this closes that gap
+              via the extension. School/local network IPs are always allowed.
+            </p>
           </div>
         </div>
       </div>

@@ -161,6 +161,53 @@ function buildRules(policy, overrideDomains = []) {
         });
       }
     }
+
+    // Direct-IP browsing — optional, per-policy. A navigation straight to a
+    // literal IP never goes through DNS, so dns-engine can't see or block
+    // it; this is the one case the extension has to enforce entirely on
+    // its own. Reserved IDs 10-13 (see file header) — well clear of every
+    // other range.
+    if (policy?.block_direct_ip === true) {
+      // Private/loopback/link-local ranges are never circumvention attempts
+      // (the school's own printers, internal apps, this box itself) — allow
+      // them outright, at a priority that beats the block rules below. DNR's
+      // regex engine (RE2) has no lookaround, so this can't be one regex
+      // with a negative lookahead; it has to be a separate, higher-priority
+      // allow rule instead.
+      rules.push({
+        id:        10,
+        priority:  19,
+        action:    { type: 'allow' },
+        condition: {
+          regexFilter:   '^https?://(10\\.|127\\.|192\\.168\\.|169\\.254\\.|172\\.(1[6-9]|2[0-9]|3[01])\\.)',
+          resourceTypes: ALL_RESOURCE_TYPES,
+        },
+      });
+      rules.push({
+        id:        11,
+        priority:  19,
+        action:    { type: 'allow' },
+        condition: {
+          regexFilter:   '^https?://\\[(fc[0-9a-f]{2}|fd[0-9a-f]{2}|fe[89ab][0-9a-f]|::1)',
+          resourceTypes: ALL_RESOURCE_TYPES,
+        },
+      });
+
+      const directIpPattern =
+        '^https?://(\\d{1,3}\\.){3}\\d{1,3}([:/]|$)|^https?://\\[[0-9a-fA-F:]+\\]';
+      rules.push({
+        id:        12,
+        priority:  5,
+        action:    { type: 'redirect', redirect: { extensionPath: '/blocked.html?reason=direct-ip' } },
+        condition: { regexFilter: directIpPattern, resourceTypes: PAGE_TYPES },
+      });
+      rules.push({
+        id:        13,
+        priority:  5,
+        action:    { type: 'block' },
+        condition: { regexFilter: directIpPattern, resourceTypes: SUB_TYPES },
+      });
+    }
   }
 
   // Override codes — highest priority allow rules, bypass all blocks except CIPA

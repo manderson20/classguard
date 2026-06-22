@@ -20,7 +20,8 @@
     "declarativeNetRequestWithHostAccess",
     "alarms",
     "activeTab",
-    "scripting"
+    "scripting",
+    "webNavigation"
   ],
 
   "storage": {
