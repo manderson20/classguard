@@ -43,7 +43,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.6.11';
+const VERSION = '0.6.12';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -189,6 +189,18 @@ export default function Layout() {
   const isAdmin          = (ROLES[user?.role] ?? 0) >= ROLES.admin;
   const isStaff          = (ROLES[user?.role] ?? 0) >= ROLES.teacher;
 
+  // Admins/superadmins who also teach a class have no other way to reach
+  // the classroom-only nav (it's otherwise shown only to plain 'teacher'
+  // role users) — lets them flip between the two without changing role or
+  // re-logging in. Non-admins always get the classroom nav, no switcher
+  // shown since they have nothing else to switch to. Per-browser, not
+  // per-user — the realistic case is one admin on their own machine.
+  const [navView, setNavView] = useState(() => localStorage.getItem('cg_nav_view') || 'admin');
+  useEffect(() => {
+    localStorage.setItem('cg_nav_view', navView);
+  }, [navView]);
+  const showTeacherNav = !isAdmin || navView === 'teacher';
+
   const { data: pendingData } = useQuery({
     queryKey: ['unblock-pending-count'],
     queryFn:  () => api.get('/unblock-requests/pending-count'),
@@ -238,11 +250,36 @@ export default function Layout() {
           </div>
         </div>
 
+        {/* Admin/Teacher view switcher — admins+ only, since a plain
+            teacher has nothing else to switch to */}
+        {isAdmin && (
+          <div className="px-3 pt-3 flex-shrink-0">
+            <div className="flex bg-slate-800 rounded-md p-0.5">
+              <button
+                onClick={() => setNavView('admin')}
+                className={`flex-1 text-[12px] font-medium rounded-[5px] py-1 transition-colors ${
+                  navView === 'admin' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Admin
+              </button>
+              <button
+                onClick={() => setNavView('teacher')}
+                className={`flex-1 text-[12px] font-medium rounded-[5px] py-1 transition-colors ${
+                  navView === 'teacher' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                Teacher
+              </button>
+            </div>
+          </div>
+        )}
+
         {/* Nav */}
         <nav className="flex-1 overflow-y-auto px-2 py-3 space-y-5">
 
-          {/* Teachers — classroom only */}
-          {!isAdmin && (
+          {/* Teachers — classroom only (also shown to admins in Teacher view) */}
+          {showTeacherNav && (
             <section>
               <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
                 Classroom
@@ -254,7 +291,7 @@ export default function Layout() {
           )}
 
           {/* Admins — grouped sections */}
-          {isAdmin && ADMIN_SECTIONS.map(section => (
+          {!showTeacherNav && ADMIN_SECTIONS.map(section => (
             <section key={section.label}>
               <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
                 {section.label}
