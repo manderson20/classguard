@@ -20,13 +20,10 @@ google-service-account.json
 *.p12
 
 # ============================================================
-# Real production infrastructure data — repo is public, never commit
+# Reference material (screenshots, specs, vendor exports, real infra data)
+# — repo is public, never commit any of this
 # ============================================================
-imageref/features/phpipam_MySQL_dump_2026-06-19.sql
-imageref/features/yourdistrict.org zone.txt
-imageref/features/Phone System.xlsx
-imageref/features/DHCP/
-imageref/features/2025-2026 Phone Directory.docx
+imageref/
 *.pfx
 
 # ============================================================

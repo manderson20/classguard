@@ -157,17 +157,18 @@ async function insertBrowserHistoryBatch(records) {
   const titles        = records.map(r => r.title        || null);
   const actions       = records.map(r => r.action       || null);
   const blockReasons  = records.map(r => r.block_reason || null);
+  const isDirectIps   = records.map(r => r.is_direct_ip === '1' || r.is_direct_ip === true);
   const visitedAts    = records.map(r =>
     r.ts ? new Date(parseInt(r.ts, 10)) : new Date()
   );
 
   await query(
-    `INSERT INTO browser_history (user_id, device_id, url, title, action, block_reason, visited_at)
+    `INSERT INTO browser_history (user_id, device_id, url, title, action, block_reason, is_direct_ip, visited_at)
      SELECT * FROM unnest(
-       $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[], $6::text[], $7::timestamptz[]
+       $1::uuid[], $2::uuid[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[], $8::timestamptz[]
      )
      ON CONFLICT DO NOTHING`,
-    [userIds, deviceIds, urls, titles, actions, blockReasons, visitedAts]
+    [userIds, deviceIds, urls, titles, actions, blockReasons, isDirectIps, visitedAts]
   );
 }
 
