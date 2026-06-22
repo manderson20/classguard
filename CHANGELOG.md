@@ -18,6 +18,23 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.7] - 2026-06-22
+
+### Added
+
+- **Lockdown Browser for tests** — a teacher-initiated lock pinning a
+  student's browser to a single test URL (Google Forms today, anything
+  else with a direct link tomorrow), with an optional time limit and
+  district-wide admin visibility to force a student out if a lockdown
+  gets stuck. This is a soft lock: a browser extension can pin the tab,
+  close stray tabs/windows, and log escape attempts, but it cannot block
+  switching to another application at the OS level the way a native
+  kiosk app could. New "Lockdown Tests" page (teachers see their own,
+  admins see everyone); start/manage controls added to the Active Lesson
+  per-student panel.
+
+---
+
 ## [0.6.6] - 2026-06-22
 
 ### Added
