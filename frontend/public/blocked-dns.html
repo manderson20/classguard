@@ -264,12 +264,26 @@
       // this just times out silently and the manual fields stay as they are.
       window.addEventListener('message', function (e) {
         if (e.source !== window || !e.data || e.data.source !== 'classguard-extension') return;
-        if (e.data.type !== 'classguard:identity' || !e.data.user) return;
-        knownIdentity = e.data.user;
-        document.getElementById('identity-name').textContent  = knownIdentity.name || knownIdentity.email;
-        document.getElementById('identity-email').textContent = knownIdentity.email;
-        document.getElementById('identity-confirmed').style.display = 'block';
-        document.getElementById('manual-fields').style.display = 'none';
+
+        if (e.data.type === 'classguard:identity' && e.data.user) {
+          knownIdentity = e.data.user;
+          document.getElementById('identity-name').textContent  = knownIdentity.name || knownIdentity.email;
+          document.getElementById('identity-email').textContent = knownIdentity.email;
+          document.getElementById('identity-confirmed').style.display = 'block';
+          document.getElementById('manual-fields').style.display = 'none';
+        }
+
+        if (e.data.type === 'classguard:unblock-request-result') {
+          var btn = document.getElementById('submit-req');
+          if (e.data.ok) {
+            setResult('req-result', 'Request submitted — IT will review it shortly.', true);
+            btn.disabled = true;
+            document.getElementById('unblock-btn').disabled = true;
+          } else {
+            btn.disabled = false; btn.textContent = 'Send Request';
+            setResult('req-result', e.data.error || 'Request failed. Please try again.', false);
+          }
+        }
       });
       window.dispatchEvent(new CustomEvent('classguard:request-identity'));
 
@@ -303,11 +317,28 @@
       }
 
       window.submitRequest = function () {
-        var name   = knownIdentity ? (knownIdentity.name || '') : document.getElementById('req-name').value.trim();
-        var email  = knownIdentity ? knownIdentity.email        : document.getElementById('req-email').value.trim();
         var reason = document.getElementById('req-reason').value.trim();
-        if (!email) { setResult('req-result', 'Email address is required.', false); return; }
         var btn = document.getElementById('submit-req');
+
+        // Verified path: the extension confirmed a signed-in identity above,
+        // so submit it AS that identity via the content script bridge — the
+        // real JWT goes along (never touching this page's own JS), so the
+        // backend ties the request to a cryptographically verified student_id
+        // instead of trusting a typed name/email. This is the only path that
+        // actually proves who submitted it, not just displays a name.
+        if (knownIdentity) {
+          btn.disabled = true; btn.textContent = 'Sending…';
+          window.dispatchEvent(new CustomEvent('classguard:submit-unblock-request', {
+            detail: { domain: blockedDomain, reason: reason },
+          }));
+          return;
+        }
+
+        // Manual/unverified path — unchanged from before. Submitted requests
+        // here show up in the admin queue as self-reported, not verified.
+        var name  = document.getElementById('req-name').value.trim();
+        var email = document.getElementById('req-email').value.trim();
+        if (!email) { setResult('req-result', 'Email address is required.', false); return; }
         btn.disabled = true; btn.textContent = 'Sending…';
         fetch('/api/v1/unblock-requests', {
           method: 'POST',
