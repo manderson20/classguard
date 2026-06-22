@@ -18,6 +18,19 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.3] - 2026-06-22
+
+### Fixed
+
+- **A domain that doesn't actually resolve (NXDOMAIN/SERVFAIL/unreachable
+  upstream) now lands on the block page**, instead of a silent empty
+  response that just showed the browser's own generic DNS error. A domain
+  that exists but simply has no record of the queried type (e.g. an
+  AAAA-only domain queried for A) is correctly left alone — only genuine
+  failures are treated this way.
+
+---
+
 ## [0.6.2] - 2026-06-22
 
 ### Added
