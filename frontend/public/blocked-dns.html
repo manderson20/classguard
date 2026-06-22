@@ -216,10 +216,16 @@
     <div class="unblock-wrap" id="unblock-wrap">
       <button id="unblock-btn" onclick="toggleForm()">Request to unblock this website</button>
       <div class="unblock-form" id="unblock-form">
-        <label for="req-name">Your name</label>
-        <input type="text" id="req-name" placeholder="Full name">
-        <label for="req-email">Email address <span style="color:#ef4444">*</span></label>
-        <input type="email" id="req-email" placeholder="you@school.org">
+        <div id="identity-confirmed" style="display:none;font-size:13px;color:#166534;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;padding:6px 10px;margin-bottom:4px;">
+          Requesting as <strong id="identity-name"></strong> (<span id="identity-email"></span>)
+          — <a href="#" id="identity-clear" style="color:#166534;">not you?</a>
+        </div>
+        <div id="manual-fields">
+          <label for="req-name">Your name</label>
+          <input type="text" id="req-name" placeholder="Full name">
+          <label for="req-email">Email address <span style="color:#ef4444">*</span></label>
+          <input type="email" id="req-email" placeholder="you@school.org">
+        </div>
         <label for="req-reason">Why do you need access? <span style="font-weight:400;color:#94a3b8">(optional)</span></label>
         <textarea id="req-reason" rows="2" placeholder="Briefly describe why you need this site…"></textarea>
         <button id="submit-req" onclick="submitRequest()">Send Request</button>
@@ -244,13 +250,43 @@
 
   <script>
     (function () {
-      var blockedDomain = window.location.hostname;
+      var blockedDomain   = window.location.hostname;
+      var knownIdentity   = null;
       document.getElementById('domain').appendChild(document.createTextNode(blockedDomain));
+
+      // Ask the ClassGuard extension (if installed/active on this device) who's
+      // signed in, so the unblock-request form can be pre-filled instead of
+      // typed by hand. A DNS-sinkholed page can't tell from the URL alone that
+      // it's looking at ClassGuard's own content (the address bar still shows
+      // the original blocked domain), so the content script bridges this via
+      // a custom event + postMessage rather than any hostname check. If
+      // there's no extension (personal device, not yet authenticated, etc.)
+      // this just times out silently and the manual fields stay as they are.
+      window.addEventListener('message', function (e) {
+        if (e.source !== window || !e.data || e.data.source !== 'classguard-extension') return;
+        if (e.data.type !== 'classguard:identity' || !e.data.user) return;
+        knownIdentity = e.data.user;
+        document.getElementById('identity-name').textContent  = knownIdentity.name || knownIdentity.email;
+        document.getElementById('identity-email').textContent = knownIdentity.email;
+        document.getElementById('identity-confirmed').style.display = 'block';
+        document.getElementById('manual-fields').style.display = 'none';
+      });
+      window.dispatchEvent(new CustomEvent('classguard:request-identity'));
+
+      window.clearIdentity = function () {
+        knownIdentity = null;
+        document.getElementById('identity-confirmed').style.display = 'none';
+        document.getElementById('manual-fields').style.display = 'block';
+      };
+      document.getElementById('identity-clear').addEventListener('click', function (e) {
+        e.preventDefault();
+        window.clearIdentity();
+      });
 
       window.toggleForm = function () {
         var f = document.getElementById('unblock-form');
         f.style.display = f.style.display === 'block' ? 'none' : 'block';
-        if (f.style.display === 'block') document.getElementById('req-email').focus();
+        if (f.style.display === 'block' && !knownIdentity) document.getElementById('req-email').focus();
       };
 
       window.toggleOverride = function () {
@@ -267,8 +303,8 @@
       }
 
       window.submitRequest = function () {
-        var name   = document.getElementById('req-name').value.trim();
-        var email  = document.getElementById('req-email').value.trim();
+        var name   = knownIdentity ? (knownIdentity.name || '') : document.getElementById('req-name').value.trim();
+        var email  = knownIdentity ? knownIdentity.email        : document.getElementById('req-email').value.trim();
         var reason = document.getElementById('req-reason').value.trim();
         if (!email) { setResult('req-result', 'Email address is required.', false); return; }
         var btn = document.getElementById('submit-req');

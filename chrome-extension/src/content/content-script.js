@@ -6,6 +6,28 @@
   window.__classguardInjected = true;
 
   // ---------------------------------------------------------------------------
+  // Identity bridge — lets ClassGuard's OWN pages (e.g. the DNS-level block
+  // page, frontend/public/blocked-dns.html) ask "who's signed in?" without a
+  // new auth flow. Needed because a DNS-sinkholed page keeps the ORIGINAL
+  // blocked domain in the address bar (e.g. "pornhub.com") — there is no
+  // reliable hostname check that says "this is ClassGuard's page", so the
+  // page itself announces readiness via a custom event instead, and gets a
+  // postMessage reply. Only name/email/photo are exposed (never the JWT) —
+  // this is purely a form-autofill convenience, not a new auth boundary; the
+  // unblock-request submission itself is unchanged.
+  // ---------------------------------------------------------------------------
+  window.addEventListener('classguard:request-identity', () => {
+    chrome.runtime.sendMessage({ type: 'CG_GET_STATUS' }, (status) => {
+      const user = status?.authenticated ? status.user : null;
+      window.postMessage({
+        source: 'classguard-extension',
+        type:   'classguard:identity',
+        user:   user ? { name: user.name, email: user.email, photoUrl: user.photoUrl } : null,
+      }, window.location.origin);
+    });
+  });
+
+  // ---------------------------------------------------------------------------
   // Keyword scanning
   // ---------------------------------------------------------------------------
 
