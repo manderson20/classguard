@@ -13,7 +13,19 @@ const { requireMinRole }  = require('../middleware/roles');
 const { resolvePolicy }   = require('../services/policyResolver');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
 const { logDeviceView }   = require('../services/deviceViewAudit');
+const { getCategoryForDomain } = require('../services/categoryLookup');
+const { computeRiskScore } = require('../services/riskScoring');
+const { sendSafetyAlert } = require('../services/mailer');
 const events              = require('../events');
+
+// Categories worth a proactive look even with no flagged text on the page
+// (e.g. an image-heavy page, or a slur/keyword the page renders as an image
+// rather than text) — anything domain/category-blocking alone wouldn't
+// catch because the page loaded successfully despite being risky.
+const HIGH_RISK_CATEGORIES = new Set([
+  'self_harm', 'violence', 'weapons', 'hate_speech', 'drugs_alcohol', 'adult', 'phishing', 'malware', 'gambling',
+]);
+const PROACTIVE_SAME_URL_THROTTLE_MS = 15 * 60 * 1000;
 
 // Screenshot storage directory (inside the Docker app-logs volume or local path)
 const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || path.join(__dirname, '../../screenshots');
@@ -208,7 +220,7 @@ router.post('/tab-event', authenticate, async (req, res) => {
     if (cached) deviceId = JSON.parse(cached).deviceId || null;
   } catch { /* not fatal — history just won't have a device_id for this row */ }
 
-  let action = null, block_reason = null;
+  let action = null, block_reason = null, hostname = null;
   if (is_direct_ip) {
     action       = blocked ? 'blocked' : 'allowed';
     block_reason = blocked ? 'direct_ip' : null;
@@ -219,7 +231,7 @@ router.post('/tab-event', authenticate, async (req, res) => {
     // without a separate polling endpoint — the DNS engine already decided
     // allow/block before the browser ever got here.
     try {
-      const hostname = new URL(url).hostname;
+      hostname = new URL(url).hostname;
       const { rows } = await query(
         `SELECT action, block_reason FROM dns_logs
          WHERE user_id = $1 AND domain = $2
@@ -228,6 +240,33 @@ router.post('/tab-event', authenticate, async (req, res) => {
       );
       if (rows[0]) { action = rows[0].action; block_reason = rows[0].block_reason; }
     } catch { /* malformed URL — skip the lookup, not fatal */ }
+  }
+
+  // Proactive ("risky_category") screenshot trigger — catches content that
+  // the in-page text keyword scanner wouldn't (image-only pages, slurs
+  // rendered as images, anything on a domain we've never categorized yet).
+  // Only makes sense for a page that actually loaded — a blocked navigation
+  // never rendered anything worth screenshotting, and dns_logs already has
+  // that evidence. Same exact URL re-fired within 15 min is suppressed
+  // (tab refocus, reload); a *different* URL always gets evaluated fresh,
+  // even on the same domain, even seconds later.
+  let requestScreenshot = false;
+  let riskCategory = null;
+  if (event === 'navigation' && !is_direct_ip && action !== 'blocked' && hostname) {
+    try {
+      const category = await getCategoryForDomain(hostname);
+      if (!category || HIGH_RISK_CATEGORIES.has(category)) {
+        const { rows: recent } = await query(
+          `SELECT 1 FROM screenshots WHERE student_id = $1 AND url = $2
+           AND created_at > NOW() - INTERVAL '${PROACTIVE_SAME_URL_THROTTLE_MS / 1000} seconds' LIMIT 1`,
+          [studentId, url.substring(0, 2000)]
+        );
+        if (!recent[0]) {
+          requestScreenshot = true;
+          riskCategory = category || 'uncategorized';
+        }
+      }
+    } catch { /* category lookup is best-effort — never block the tab-event on it */ }
   }
 
   // Write to Redis stream — drained to browser_history by
@@ -260,7 +299,7 @@ router.post('/tab-event', authenticate, async (req, res) => {
     ts,
   });
 
-  res.json({ ok: true });
+  res.json({ ok: true, requestScreenshot, riskCategory });
 });
 
 // ---------------------------------------------------------------------------
@@ -434,6 +473,57 @@ router.get('/keywords', authenticate, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Keyword management (admin) — the seed list only ever covered 4 adult-content
+// terms; this is the one place admins can actually grow it (no way to do so
+// before this existed except hand-editing SQL). Deliberately admin-only and
+// separate from the per-policy domain/URL rule editor — these are in-page
+// TEXT matches, not domain rules.
+// ---------------------------------------------------------------------------
+router.get('/keywords/manage', authenticate, requireMinRole('admin'), async (req, res) => {
+  const { rows } = await query(
+    `SELECT k.id, k.keyword, k.category, k.is_active, k.created_at, u.full_name AS added_by_name
+     FROM content_keywords k LEFT JOIN users u ON u.id = k.added_by
+     ORDER BY k.category, k.keyword`
+  );
+  res.json(rows);
+});
+
+router.post('/keywords', authenticate, requireMinRole('admin'), async (req, res) => {
+  const { keyword, category = 'profanity' } = req.body;
+  if (!keyword?.trim()) return res.status(400).json({ error: 'keyword required' });
+
+  const { rows } = await query(
+    `INSERT INTO content_keywords (keyword, category, added_by)
+     VALUES ($1, $2, $3)
+     ON CONFLICT (keyword) DO UPDATE SET category = EXCLUDED.category, is_active = true
+     RETURNING id, keyword, category, is_active`,
+    [keyword.trim().toLowerCase(), category, req.user.userId]
+  );
+  res.json(rows[0]);
+});
+
+router.patch('/keywords/:id', authenticate, requireMinRole('admin'), async (req, res) => {
+  const { is_active, category } = req.body;
+  const sets = [], params = [];
+  if (is_active !== undefined) { sets.push(`is_active = $${params.length+1}`); params.push(is_active); }
+  if (category !== undefined)  { sets.push(`category = $${params.length+1}`);  params.push(category); }
+  if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+
+  params.push(req.params.id);
+  const { rows } = await query(
+    `UPDATE content_keywords SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id`,
+    params
+  );
+  if (!rows.length) return res.status(404).json({ error: 'not found' });
+  res.json({ ok: true });
+});
+
+router.delete('/keywords/:id', authenticate, requireMinRole('admin'), async (req, res) => {
+  await query(`DELETE FROM content_keywords WHERE id = $1`, [req.params.id]);
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/v1/extension/screenshot
 // Receives a screenshot (PNG data URL) from the extension.
 // Body: { data_url, url, title, trigger, trigger_detail }
@@ -465,15 +555,42 @@ router.post('/screenshot', authenticate, async (req, res) => {
 
   fs.writeFileSync(filePath, buffer);
 
+  // Rule-based risk score — works with zero AI configured. content_violation's
+  // category is embedded in trigger_detail as "keyword:foo (category)";
+  // risky_category passes the bare category string directly. Both triggers
+  // only ever fire on a page that actually rendered, so action is 'allowed'.
+  let riskScore = null, riskCategory = null;
+  if (trigger === 'content_violation' || trigger === 'risky_category') {
+    riskCategory = trigger === 'risky_category'
+      ? trigger_detail
+      : trigger_detail?.match(/\(([a-z_]+)\)\s*$/i)?.[1] || null;
+    ({ score: riskScore } = await computeRiskScore({
+      studentId: req.user.userId, category: riskCategory, action: 'allowed',
+    }));
+  }
+
   const { rows } = await query(
     `INSERT INTO screenshots
-       (student_id, url, page_title, trigger, trigger_detail, file_path, file_size)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id, created_at`,
+       (student_id, url, page_title, trigger, trigger_detail, file_path, file_size, risk_score, risk_category)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, created_at`,
     [req.user.userId, url.substring(0, 2000), title?.substring(0, 500) || null,
-     trigger, trigger_detail || null, relPath, buffer.length]
+     trigger, trigger_detail || null, relPath, buffer.length, riskScore, riskCategory]
   );
 
   const screenshot = rows[0];
+
+  if (riskScore >= 85) {
+    query(`UPDATE screenshots SET alerted_at = NOW() WHERE id = $1`, [screenshot.id]).catch(() => {});
+    query(`SELECT full_name FROM users WHERE id = $1`, [req.user.userId]).then(({ rows: u }) => {
+      sendSafetyAlert({
+        studentName: u[0]?.full_name, category: riskCategory, riskScore, url, screenshotId: screenshot.id,
+      }).catch(err => console.error('[safety-alert/email]', err.message));
+    }).catch(() => {});
+    events.emit('safety:urgent_alert', {
+      screenshotId: screenshot.id, studentId: req.user.userId, category: riskCategory, riskScore, url,
+      created_at: screenshot.created_at,
+    });
+  }
 
   // Emit to teacher dashboards
   events.emit('student:screenshot', {
@@ -555,7 +672,7 @@ async function analyseScreenshot(screenshotId, filePath, buffer) {
 // GET /api/v1/extension/screenshots  — admin/teacher list
 // ---------------------------------------------------------------------------
 router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, res) => {
-  const { student_id, trigger, flagged, limit = 50, offset = 0 } = req.query;
+  const { student_id, trigger, flagged, status, limit = 50, offset = 0 } = req.query;
 
   // A teacher could previously browse ANY student's screenshots, not just
   // their own roster — requireMinRole('teacher') only checked role, never
@@ -581,6 +698,7 @@ router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, 
     conditions.push(`s.ai_flagged = $${params.length+1}`);
     params.push(flagged === 'true');
   }
+  if (status) { conditions.push(`s.status = $${params.length+1}`); params.push(status); }
   if (req.user.role === 'teacher' && !student_id) {
     conditions.push(`s.student_id IN (
       SELECT cm.student_id FROM class_members cm
@@ -592,11 +710,13 @@ router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, 
 
   const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
   const { rows } = await pool.query(
-    `SELECT s.*, u.full_name AS student_name, u.email AS student_email
+    `SELECT s.*, u.full_name AS student_name, u.email AS student_email,
+            a.full_name AS assignee_name
      FROM screenshots s
      JOIN users u ON u.id = s.student_id
+     LEFT JOIN users a ON a.id = s.assigned_to
      ${where}
-     ORDER BY s.created_at DESC
+     ORDER BY (s.status = 'new') DESC, s.risk_score DESC NULLS LAST, s.created_at DESC
      LIMIT $${params.length+1} OFFSET $${params.length+2}`,
     [...params, limit, offset]
   );
@@ -640,14 +760,43 @@ router.get('/screenshots/:id/image', authenticate, requireMinRole('teacher'), as
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/v1/extension/screenshots/:id/review
-// Teacher/admin marks a screenshot as reviewed
+// PATCH /api/v1/extension/screenshots/:id
+// Ticket-style review workflow: assign a reviewer, move through
+// new → in_review → resolved/dismissed, and leave a note on what was done
+// about it (e.g. "spoke with student", "parent contacted").
+// Body: { status?, assigned_to?, resolution_notes? } — all optional, only
+// supplied fields are updated.
 // ---------------------------------------------------------------------------
-router.post('/screenshots/:id/review', authenticate, requireMinRole('teacher'), async (req, res) => {
-  await pool.query(
-    'UPDATE screenshots SET reviewed_by = $1, reviewed_at = NOW() WHERE id = $2',
-    [req.user.userId, req.params.id]
+const SCREENSHOT_STATUSES = ['new', 'in_review', 'resolved', 'dismissed'];
+
+router.patch('/screenshots/:id', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { status, resolution_notes } = req.body;
+  const assigned_to = req.body.assigned_to === 'self' ? req.user.userId : req.body.assigned_to;
+  if (status && !SCREENSHOT_STATUSES.includes(status)) {
+    return res.status(400).json({ error: `status must be one of ${SCREENSHOT_STATUSES.join(', ')}` });
+  }
+
+  const sets = [];
+  const params = [];
+  if (status !== undefined) {
+    sets.push(`status = $${params.length + 1}`); params.push(status);
+    if (status === 'resolved' || status === 'dismissed') {
+      sets.push(`resolved_by = $${params.length + 1}`); params.push(req.user.userId);
+      sets.push(`resolved_at = NOW()`);
+    }
+  }
+  if (assigned_to !== undefined) { sets.push(`assigned_to = $${params.length + 1}`); params.push(assigned_to || null); }
+  if (resolution_notes !== undefined) { sets.push(`resolution_notes = $${params.length + 1}`); params.push(resolution_notes); }
+
+  if (!sets.length) return res.status(400).json({ error: 'nothing to update' });
+
+  params.push(req.params.id);
+  const { rows } = await pool.query(
+    `UPDATE screenshots SET ${sets.join(', ')} WHERE id = $${params.length} RETURNING id`,
+    params
   );
+  if (!rows.length) return res.status(404).json({ error: 'not found' });
+
   res.json({ ok: true });
 });
 

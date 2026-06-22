@@ -23,6 +23,14 @@ const setupSockets = (io) => {
     // Every student joins their own private room so we can push policy updates
     socket.join(`student:${userId}`);
 
+    // Every staff member auto-joins this room (no explicit join call needed,
+    // unlike class rooms below) so an urgent safety alert reaches whoever's
+    // logged in right now, not just whichever class room they happen to
+    // have open.
+    if (['teacher', 'admin', 'superadmin'].includes(role)) {
+      socket.join('role:staff');
+    }
+
     // Teachers and admins join class rooms on demand (called by the dashboard)
     socket.on('join:class', (classId) => {
       if (['teacher','admin','superadmin'].includes(role)) {
@@ -105,6 +113,14 @@ const setupSockets = (io) => {
         io.to(`class:${classId}`).emit('student:screenshot', payload);
       }
     } catch {}
+  });
+
+  // High-severity safety event (risk_score >= 85) — broadcast to every
+  // logged-in staff member immediately, not just the student's own
+  // teachers, since self-harm/violence-tier content warrants everyone
+  // seeing it, not just whoever happens to have that class room open.
+  events.on('safety:urgent_alert', (payload) => {
+    io.to('role:staff').emit('safety:urgent_alert', payload);
   });
 
   // Teacher-initiated screenshot request: push to student's extension socket

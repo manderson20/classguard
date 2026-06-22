@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import MdiIcon from '@mdi/react';
 import {
@@ -46,6 +47,44 @@ const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
   return <MdiIcon path={path} size="1em" className="flex-shrink-0" />;
+}
+
+// Self-harm/violence-tier safety events (risk_score >= 85) page every
+// logged-in staff member in real time via the 'role:staff' socket room
+// (backend/src/sockets/index.js), not just whoever has the right class
+// room open — too urgent to rely on someone happening to check the queue.
+function UrgentAlertBanner({ socket, navigate }) {
+  const [alerts, setAlerts] = useState([]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onAlert = (payload) => setAlerts(a => [...a, payload]);
+    socket.on('safety:urgent_alert', onAlert);
+    return () => socket.off('safety:urgent_alert', onAlert);
+  }, [socket]);
+
+  if (!alerts.length) return null;
+
+  return (
+    <div className="bg-red-600 text-white px-4 py-2 flex items-center gap-3 flex-wrap">
+      <span className="font-semibold text-sm">⚠ Urgent safety alert{alerts.length > 1 ? `s (${alerts.length})` : ''}:</span>
+      <span className="text-sm">
+        {alerts[alerts.length - 1].category} content flagged (risk {alerts[alerts.length - 1].riskScore}) — review immediately.
+      </span>
+      <button
+        className="ml-auto bg-white text-red-700 text-xs font-semibold px-3 py-1 rounded hover:bg-red-50"
+        onClick={() => { setAlerts([]); navigate('/admin/screenshots'); }}
+      >
+        Review now
+      </button>
+      <button
+        className="text-white/80 hover:text-white text-xs"
+        onClick={() => setAlerts([])}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -140,10 +179,11 @@ function NavItem({ to, icon, label, end = false, badgeCount }) {
 // Layout
 // ---------------------------------------------------------------------------
 export default function Layout() {
-  const { user, logout } = useAuth();
-  const { connected }    = useSocket();
-  const navigate         = useNavigate();
+  const { user, logout }      = useAuth();
+  const { connected, socket } = useSocket();
+  const navigate               = useNavigate();
   const isAdmin          = (ROLES[user?.role] ?? 0) >= ROLES.admin;
+  const isStaff          = (ROLES[user?.role] ?? 0) >= ROLES.teacher;
 
   const { data: pendingData } = useQuery({
     queryKey: ['unblock-pending-count'],
@@ -252,9 +292,12 @@ export default function Layout() {
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto bg-slate-100">
-        <Outlet />
-      </main>
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {isStaff && <UrgentAlertBanner socket={socket} navigate={navigate} />}
+        <main className="flex-1 overflow-auto bg-slate-100">
+          <Outlet />
+        </main>
+      </div>
     </div>
   );
 }

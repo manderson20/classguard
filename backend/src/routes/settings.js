@@ -56,6 +56,9 @@ const ALLOWED_KEYS = new Set([
   // a private repo (indistinguishable from "doesn't exist"), which silently
   // broke the whole check-for-update -> schedule-update flow.
   'github_update_token',
+  // Safety Evidence Capture — urgent alert delivery (Settings > Safety Alerts)
+  'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_password', 'smtp_from',
+  'safety_alert_emails',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object
@@ -97,6 +100,28 @@ router.put('/', ...auth, async (req, res) => {
   } catch (err) {
     console.error('[settings] PUT error:', err);
     res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+// POST /api/v1/settings/safety-alerts/test — sends a real test email to
+// the configured safety_alert_emails list, so an admin can confirm SMTP
+// works before relying on it for a real self-harm/violence alert.
+router.post('/safety-alerts/test', ...auth, async (req, res) => {
+  const { sendMail, getSmtpSettings } = require('../services/mailer');
+  const cfg = await getSmtpSettings();
+  const recipients = (cfg.safety_alert_emails || '').split(',').map(s => s.trim()).filter(Boolean);
+  if (!recipients.length) return res.status(400).json({ error: 'No safety_alert_emails configured' });
+
+  try {
+    const result = await sendMail({
+      to: recipients.join(','),
+      subject: '[ClassGuard] Test safety alert',
+      text: 'This is a test of the ClassGuard safety alert email. If you received this, delivery is working correctly.',
+    });
+    if (!result.sent) return res.status(400).json({ error: result.reason });
+    res.json({ ok: true, sentTo: recipients });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
