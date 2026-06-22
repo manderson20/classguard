@@ -2,9 +2,10 @@ const express  = require('express');
 const router   = express.Router();
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const acmeTls = require('../services/acmeTls');
 
-const auth      = [authenticate, requireMinRole('admin')];
+const auth      = [authenticate, requirePermission('ha_monitoring')];
 const superauth = [authenticate, requireMinRole('superadmin')];
 
 function redact(cfg) {

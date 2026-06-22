@@ -2,14 +2,14 @@
 const express  = require('express');
 const { query }   = require('../db');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const {
   rebuildCache, upsertRecordCache, syncZone, getFqdn,
 } = require('../services/localDnsCache');
 const windowsDnsImport = require('../services/windowsDnsImport');
 
 const router    = express.Router();
-const adminOnly = [authenticate, requireMinRole('admin')];
+const adminOnly = [authenticate, requirePermission('dns_records')];
 
 // priority/weight/port are smallint columns and only apply to MX/SRV records —
 // the form sends '' for them on every other record type, which Postgres

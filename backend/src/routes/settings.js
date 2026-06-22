@@ -2,10 +2,10 @@ const express = require('express');
 const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const config              = require('../config');
 
-const auth = [authenticate, requireMinRole('admin')];
+const auth = [authenticate, requirePermission('settings')];
 
 // Keys that admins are allowed to read/write via this endpoint
 const ALLOWED_KEYS = new Set([

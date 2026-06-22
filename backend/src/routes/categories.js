@@ -2,12 +2,12 @@ const express  = require('express');
 const { query } = require('../db');
 const redis    = require('../redis');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const { classify }       = require('../services/domainClassifier');
 const { syncAll, importSource, rebuildRedisCache, classifyRecentDomains, getStatus } = require('../services/categoryImport');
 
 const router    = express.Router();
-const adminOnly = [authenticate, requireMinRole('admin')];
+const adminOnly = [authenticate, requirePermission('categories')];
 const CATEGORY_KEY = 'classguard:domain:category';
 
 // ---------------------------------------------------------------------------

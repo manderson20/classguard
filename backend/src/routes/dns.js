@@ -3,6 +3,7 @@ const dnsPromises = require('dns').promises;
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission, requirePermissionIfAdmin } = require('../middleware/permissions');
 const { insertDnsLogBatch } = require('../services/scheduler');
 
 const router = Router();
@@ -64,7 +65,7 @@ router.get('/resolve', authenticate, requireMinRole('teacher'), async (req, res)
 //   page        — 1-based (default: 1)
 //   limit       — rows per page (default: 50, max: 500)
 // ---------------------------------------------------------------------------
-router.get('/logs', authenticate, requireMinRole('teacher'), async (req, res) => {
+router.get('/logs', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('dns_logs'), async (req, res) => {
   const {
     student_id, domain, action, lesson_session_id,
     from, to,
@@ -149,7 +150,7 @@ router.get('/logs', authenticate, requireMinRole('teacher'), async (req, res) =>
 //   to          — ISO8601 end   (default: now)
 //   bucket      — 1hour | 1day (default: 1hour)
 // ---------------------------------------------------------------------------
-router.get('/stats', authenticate, requireMinRole('teacher'), async (req, res) => {
+router.get('/stats', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('dns_logs'), async (req, res) => {
   const {
     student_id,
     from, to,
@@ -324,7 +325,7 @@ router.get('/summary', authenticate, requireMinRole('admin'), async (req, res) =
 // GET /api/v1/dns/settings  (admin only — Phase 6 UI)
 // PUT /api/v1/dns/settings
 // ---------------------------------------------------------------------------
-router.get('/settings', authenticate, requireMinRole('admin'), async (req, res) => {
+router.get('/settings', authenticate, requirePermission('settings'), async (req, res) => {
   const { rows } = await query(
     "SELECT key, value FROM settings WHERE key LIKE 'dns.%'"
   );
@@ -332,7 +333,7 @@ router.get('/settings', authenticate, requireMinRole('admin'), async (req, res) 
   res.json(settings);
 });
 
-router.put('/settings', authenticate, requireMinRole('admin'), async (req, res) => {
+router.put('/settings', authenticate, requirePermission('settings'), async (req, res) => {
   const allowed = ['upstream_ipv4','upstream_ipv6','block_page_ip','block_page_ipv6','cache_ttl',
                    'dhcp_auto_register','dhcp_auto_register_zone_id'];
   const entries = Object.entries(req.body).filter(([k]) => allowed.includes(k));

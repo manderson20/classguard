@@ -3,6 +3,7 @@ const multer         = require('multer');
 const { query, withTransaction } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission, requirePermissionIfAdmin } = require('../middleware/permissions');
 const { invalidatePolicy, invalidateNetworkPolicy } = require('../services/policyResolver');
 const { parseCsv, classifyRows, classifyUrl, isValidUrlPattern } = require('../services/goguardianImport');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
@@ -19,7 +20,7 @@ const router = Router();
 // their own roster, and may not probe an arbitrary policy_id directly —
 // that's an admin-only capability for testing a policy still being drafted.
 // ---------------------------------------------------------------------------
-router.post('/simulate', authenticate, requireMinRole('teacher'), async (req, res) => {
+router.post('/simulate', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('policies'), async (req, res) => {
   const { student_id, policy_id, domain: rawDomain } = req.body;
   if (!rawDomain) return res.status(400).json({ error: 'domain required' });
 
@@ -152,7 +153,7 @@ router.post('/simulate', authenticate, requireMinRole('teacher'), async (req, re
   res.json({ blocked: false, reason: 'allowed', category, domain, trace, policy_chain: policyChain });
 });
 
-router.use(authenticate, requireMinRole('admin'));
+router.use(authenticate, requirePermission('policies'));
 
 // ---------------------------------------------------------------------------
 // Helpers

@@ -10,6 +10,7 @@ const { query, pool }     = require('../db');
 const redis               = require('../redis');
 const { authenticate }    = require('../middleware/auth');
 const { requireMinRole }  = require('../middleware/roles');
+const { requirePermission, requirePermissionIfAdmin } = require('../middleware/permissions');
 const { resolvePolicy, getActiveLessonSessionId } = require('../services/policyResolver');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
 const { logDeviceView }   = require('../services/deviceViewAudit');
@@ -435,7 +436,7 @@ router.post('/internal/tab-events/bulk', authenticate, requireMinRole('superadmi
 //
 // Query params: student_id, url (substring match), action, is_direct_ip, from, to, page, limit
 // ---------------------------------------------------------------------------
-router.get('/browser-history', authenticate, requireMinRole('teacher'), async (req, res) => {
+router.get('/browser-history', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('browser_history'), async (req, res) => {
   const {
     student_id, url, action, is_direct_ip, lesson_session_id,
     from, to,
@@ -587,7 +588,7 @@ router.get('/keywords', authenticate, async (req, res) => {
 // separate from the per-policy domain/URL rule editor — these are in-page
 // TEXT matches, not domain rules.
 // ---------------------------------------------------------------------------
-router.get('/keywords/manage', authenticate, requireMinRole('admin'), async (req, res) => {
+router.get('/keywords/manage', authenticate, requirePermission('settings'), async (req, res) => {
   const { rows } = await query(
     `SELECT k.id, k.keyword, k.category, k.is_active, k.created_at, u.full_name AS added_by_name
      FROM content_keywords k LEFT JOIN users u ON u.id = k.added_by
@@ -596,7 +597,7 @@ router.get('/keywords/manage', authenticate, requireMinRole('admin'), async (req
   res.json(rows);
 });
 
-router.post('/keywords', authenticate, requireMinRole('admin'), async (req, res) => {
+router.post('/keywords', authenticate, requirePermission('settings'), async (req, res) => {
   const { keyword, category = 'profanity' } = req.body;
   if (!keyword?.trim()) return res.status(400).json({ error: 'keyword required' });
 
@@ -610,7 +611,7 @@ router.post('/keywords', authenticate, requireMinRole('admin'), async (req, res)
   res.json(rows[0]);
 });
 
-router.patch('/keywords/:id', authenticate, requireMinRole('admin'), async (req, res) => {
+router.patch('/keywords/:id', authenticate, requirePermission('settings'), async (req, res) => {
   const { is_active, category } = req.body;
   const sets = [], params = [];
   if (is_active !== undefined) { sets.push(`is_active = $${params.length+1}`); params.push(is_active); }
@@ -626,7 +627,7 @@ router.patch('/keywords/:id', authenticate, requireMinRole('admin'), async (req,
   res.json({ ok: true });
 });
 
-router.delete('/keywords/:id', authenticate, requireMinRole('admin'), async (req, res) => {
+router.delete('/keywords/:id', authenticate, requirePermission('settings'), async (req, res) => {
   await query(`DELETE FROM content_keywords WHERE id = $1`, [req.params.id]);
   res.json({ ok: true });
 });
@@ -779,7 +780,7 @@ async function analyseScreenshot(screenshotId, filePath, buffer) {
 // ---------------------------------------------------------------------------
 // GET /api/v1/extension/screenshots  — admin/teacher list
 // ---------------------------------------------------------------------------
-router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, res) => {
+router.get('/screenshots', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('screenshots'), async (req, res) => {
   const { student_id, trigger, flagged, status, limit = 50, offset = 0 } = req.query;
 
   // A teacher could previously browse ANY student's screenshots, not just
@@ -846,7 +847,7 @@ router.get('/screenshots', authenticate, requireMinRole('teacher'), async (req, 
 // ---------------------------------------------------------------------------
 // GET /api/v1/extension/screenshots/:id/image  — stream the PNG file
 // ---------------------------------------------------------------------------
-router.get('/screenshots/:id/image', authenticate, requireMinRole('teacher'), async (req, res) => {
+router.get('/screenshots/:id/image', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('screenshots'), async (req, res) => {
   const { rows } = await pool.query('SELECT file_path, student_id FROM screenshots WHERE id = $1', [req.params.id]);
   if (!rows.length) return res.status(404).json({ error: 'not found' });
 
@@ -877,7 +878,7 @@ router.get('/screenshots/:id/image', authenticate, requireMinRole('teacher'), as
 // ---------------------------------------------------------------------------
 const SCREENSHOT_STATUSES = ['new', 'in_review', 'resolved', 'dismissed'];
 
-router.patch('/screenshots/:id', authenticate, requireMinRole('teacher'), async (req, res) => {
+router.patch('/screenshots/:id', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('screenshots'), async (req, res) => {
   const { status, resolution_notes } = req.body;
   const assigned_to = req.body.assigned_to === 'self' ? req.user.userId : req.body.assigned_to;
   if (status && !SCREENSHOT_STATUSES.includes(status)) {

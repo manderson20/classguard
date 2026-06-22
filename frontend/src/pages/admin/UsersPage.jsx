@@ -36,7 +36,18 @@ export default function UsersPage() {
     onSuccess:  () => qc.invalidateQueries({ queryKey: ['users'] }),
   });
 
+  const setCustomRole = useMutation({
+    mutationFn: ({ userId, customRoleId }) => api.put(`/users/${userId}/custom-role`, { custom_role_id: customRoleId }),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['users'] }),
+  });
+
   const isSuperAdmin = (ROLES[me?.role] ?? 0) >= ROLES.superadmin;
+
+  const { data: customRoles = [] } = useQuery({
+    queryKey: ['custom-roles'],
+    queryFn:  () => api.get('/custom-roles'),
+    enabled:  isSuperAdmin,
+  });
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
@@ -70,16 +81,17 @@ export default function UsersPage() {
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">User</th>
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">OU</th>
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Role</th>
+              {isSuperAdmin && <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Custom Role</th>}
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Policy</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {isLoading && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">Loading…</td></tr>
+              <tr><td colSpan={isSuperAdmin ? 6 : 5} className="px-4 py-8 text-center text-slate-400 text-sm">Loading…</td></tr>
             )}
             {!isLoading && data.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">No users found</td></tr>
+              <tr><td colSpan={isSuperAdmin ? 6 : 5} className="px-4 py-8 text-center text-slate-400 text-sm">No users found</td></tr>
             )}
             {data.map(u => (
               <tr key={u.id} className="hover:bg-slate-50">
@@ -109,6 +121,24 @@ export default function UsersPage() {
                     <span className={ROLE_BADGE[u.role] || 'badge-slate'}>{u.role}</span>
                   )}
                 </td>
+                {isSuperAdmin && (
+                  <td className="px-4 py-3">
+                    {u.role === 'admin' ? (
+                      <select
+                        className="text-xs border border-slate-200 rounded-md px-2 py-1 bg-white focus:ring-1 focus:ring-primary-500 focus:outline-none"
+                        value={u.custom_role_id || ''}
+                        onChange={e => setCustomRole.mutate({ userId: u.id, customRoleId: e.target.value || null })}
+                      >
+                        <option value="">Unrestricted</option>
+                        {customRoles.map(r => (
+                          <option key={r.id} value={r.id}>{r.name}</option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="text-xs text-slate-300">—</span>
+                    )}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-xs text-slate-500">{u.effective_policy_name || '—'}</td>
                 <td className="px-4 py-3 text-right">
                   <Link to={`/admin/users/${u.id}`} className="text-xs text-primary-600 hover:underline">

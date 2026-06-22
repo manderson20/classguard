@@ -1,14 +1,14 @@
 const { Router } = require('express');
 const { pool }   = require('../db');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const teacherUtilization = require('../services/teacherUtilization');
 
 const router = Router();
 
 // GET /api/v1/analytics/staff
 // Returns teacher usage stats for the Staff Analytics admin page.
-router.get('/staff', authenticate, requireMinRole('admin'), async (req, res) => {
+router.get('/staff', authenticate, requirePermission('staff_analytics'), async (req, res) => {
   const { rows: teachers } = await pool.query(`
     SELECT
       u.id,
@@ -71,7 +71,7 @@ router.get('/staff', authenticate, requireMinRole('admin'), async (req, res) => 
 // teacherUtilization.js): how much of each scheduled period's time was
 // actually spent active on a device, across all that teacher's classes —
 // independent of whether a lesson_session was ever started.
-router.get('/staff/utilization', authenticate, requireMinRole('admin'), async (req, res) => {
+router.get('/staff/utilization', authenticate, requirePermission('staff_analytics'), async (req, res) => {
   const from = req.query.from || new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
   const to   = req.query.to   || new Date().toISOString().slice(0, 10);
 
@@ -96,7 +96,7 @@ router.get('/staff/utilization', authenticate, requireMinRole('admin'), async (r
 // POST /api/v1/analytics/staff/utilization/recompute
 // Manual trigger for the nightly reconciliation job — useful right after
 // configuring the bell schedule, instead of waiting for 4:30am.
-router.post('/staff/utilization/recompute', authenticate, requireMinRole('admin'), async (req, res) => {
+router.post('/staff/utilization/recompute', authenticate, requirePermission('staff_analytics'), async (req, res) => {
   const from = req.body.from || new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
   const to   = req.body.to   || new Date().toISOString().slice(0, 10);
   await teacherUtilization.computeTeacherUtilization(from, to);

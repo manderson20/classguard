@@ -1,10 +1,10 @@
 const { Router } = require('express');
 const { pool }   = require('../db');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 
 const router = Router();
-const adminAuth = [authenticate, requireMinRole('admin')];
+const adminAuth = [authenticate, requirePermission('bell_schedule')];
 
 // period_label must match whatever string the roster sync (OneRoster /
 // Infinite Campus) puts in classes.period — there's no validation against

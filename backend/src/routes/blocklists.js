@@ -2,12 +2,12 @@ const express = require('express');
 const redis   = require('../redis');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const { syncSource, removeSource } = require('../services/blocklistSync');
 
 const router = express.Router();
 
-const adminOnly = [authenticate, requireMinRole('admin')];
+const adminOnly = [authenticate, requirePermission('blocklists')];
 
 const VALID_FORMATS    = ['hosts', 'domain_list', 'dnsmasq'];
 const MASTER_KEY       = 'classguard:blocklist';

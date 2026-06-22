@@ -2,12 +2,12 @@ const express = require('express');
 const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const classifier         = require('../services/aiClassifier');
 const bookmarks          = require('../services/managedBookmarks');
 const { classifyUrl }    = require('../services/goguardianImport');
 
-const auth = [authenticate, requireMinRole('admin')];
+const auth = [authenticate, requirePermission('ai_classifier')];
 
 // ---------------------------------------------------------------------------
 // Domain classifications

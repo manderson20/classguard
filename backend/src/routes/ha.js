@@ -5,10 +5,11 @@ const crypto   = require('crypto');
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const config     = require('../config');
 const keepalived = require('../services/keepalived');
 
-const auth      = [authenticate, requireMinRole('admin')];
+const auth      = [authenticate, requirePermission('ha_monitoring')];
 const superauth = [authenticate, requireMinRole('superadmin')];
 
 // ---------------------------------------------------------------------------

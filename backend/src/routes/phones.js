@@ -2,14 +2,14 @@ const express = require('express');
 const multer  = require('multer');
 const { query, pool } = require('../db');
 const { authenticate } = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const phoneSpreadsheetImport = require('../services/phoneSpreadsheetImport');
 const phoneTemplateImport    = require('../services/phoneTemplateImport');
 const phoneDirectory = require('../services/phoneDirectory');
 const phoneIpam = require('../services/phoneIpam');
 
 const router = express.Router();
-router.use(authenticate, requireMinRole('admin'));
+router.use(authenticate, requirePermission('phones'));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 

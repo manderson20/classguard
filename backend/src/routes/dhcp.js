@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { pool }            = require('../db');
 const { authenticate }    = require('../middleware/auth');
-const { requireMinRole }  = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const kea = require('../services/kea');
 const windowsDhcpImport = require('../services/windowsDhcpImport');
 const dhcpKeaSync = require('../services/dhcpKeaSync');
@@ -10,7 +10,7 @@ const dhcpIpamSync = require('../services/dhcpIpamSync');
 const dhcpReservations = require('../services/dhcpReservations');
 const dhcpLeaseIpamSync = require('../services/dhcpLeaseIpamSync');
 
-const auth  = [authenticate, requireMinRole('admin')];
+const auth  = [authenticate, requirePermission('dhcp')];
 
 // Validate that an IP string falls within [pool_start, pool_end] using PostgreSQL
 async function ipInPool(ip, poolStart, poolEnd) {

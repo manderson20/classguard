@@ -2,7 +2,9 @@ const { Router } = require('express');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const { resolvePolicy } = require('../services/policyResolver');
+const { getEffectivePermissions, invalidatePermissions, UNRESTRICTED } = require('../services/permissions');
 
 const router = Router();
 
@@ -27,6 +29,22 @@ router.get('/me/effective-policy', authenticate, async (req, res) => {
   }
 
   res.json({ ...policy, youtubeAllowVideos, youtubeBlockVideos });
+});
+
+// GET /api/v1/users/me/permissions
+// Used by the frontend nav (Layout.jsx) to hide admin sections a restricted
+// admin can't actually reach — the backend's requirePermission() gates are
+// the real enforcement, this is just so the sidebar doesn't show dead links.
+router.get('/me/permissions', authenticate, requireMinRole('admin'), async (req, res) => {
+  if (req.user.role === 'superadmin') {
+    return res.json({ unrestricted: true, permissions: [] });
+  }
+  const effective = await getEffectivePermissions(req.user.userId);
+  res.json(
+    effective === UNRESTRICTED
+      ? { unrestricted: true, permissions: [] }
+      : { unrestricted: false, permissions: [...effective] }
+  );
 });
 
 // GET /api/v1/users
@@ -63,8 +81,9 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await query(
     `SELECT u.id, u.full_name, u.given_name, u.email, u.role, u.google_ou, u.google_id,
-            u.photo_url, u.created_at, u.last_synced_at
+            u.photo_url, u.created_at, u.last_synced_at, u.custom_role_id, cr.name AS custom_role_name
      FROM users u
+     LEFT JOIN custom_roles cr ON cr.id = u.custom_role_id
      ${where}
      ORDER BY u.full_name`,
     values
@@ -73,7 +92,7 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
 });
 
 // GET /api/v1/users/:id
-router.get('/:id', authenticate, requireMinRole('admin'), async (req, res) => {
+router.get('/:id', authenticate, requirePermission('users'), async (req, res) => {
   const { rows } = await query(
     `SELECT u.id, u.full_name, u.given_name, u.email, u.role, u.google_ou, u.google_id,
             u.photo_url, u.created_at, u.last_synced_at
@@ -95,6 +114,25 @@ router.put('/:id/role', authenticate, requireMinRole('superadmin'), async (req, 
     [role, req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+  res.json(rows[0]);
+});
+
+// PUT /api/v1/users/:id/custom-role  (superadmin only)
+// body: { custom_role_id } — null unrestricts (full admin access, today's
+// default). Only meaningful for role='admin' users; superadmin is always
+// fully unrestricted regardless of this column.
+router.put('/:id/custom-role', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { custom_role_id = null } = req.body;
+  if (custom_role_id) {
+    const { rows: roleRows } = await query('SELECT id FROM custom_roles WHERE id = $1', [custom_role_id]);
+    if (!roleRows[0]) return res.status(404).json({ error: 'Custom role not found' });
+  }
+  const { rows } = await query(
+    'UPDATE users SET custom_role_id = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
+    [custom_role_id, req.params.id]
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+  await invalidatePermissions(req.params.id);
   res.json(rows[0]);
 });
 

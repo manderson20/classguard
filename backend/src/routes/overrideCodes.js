@@ -4,9 +4,9 @@ const crypto   = require('crypto');
 const { pool } = require('../db');
 const redis    = require('../redis');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 
-const adminAuth = [authenticate, requireMinRole('admin')];
+const adminAuth = [authenticate, requirePermission('unblock_requests')];
 
 // Category slugs where is_blocked_default = TRUE — override codes are forbidden for these.
 // Mirrors the seeded rows in migration 018.

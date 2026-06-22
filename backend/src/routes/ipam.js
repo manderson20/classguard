@@ -7,7 +7,7 @@ const { Router } = require('express');
 const axios      = require('axios');
 const { query, withTransaction, pool } = require('../db');
 const { authenticate }    = require('../middleware/auth');
-const { requireMinRole }  = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const config              = require('../config');
 const dhcpKeaSync          = require('../services/dhcpKeaSync');
 const { syncNetworkClientsToIpam } = require('../services/ipamSync');
@@ -17,7 +17,7 @@ const phpipamDumpImport    = require('../services/phpipamDumpImport');
 const dhcpReservations     = require('../services/dhcpReservations');
 
 const router = Router();
-router.use(authenticate, requireMinRole('admin'));
+router.use(authenticate, requirePermission('ipam'));
 
 // ---------------------------------------------------------------------------
 // Audit helper — fire-and-forget, never blocks the main operation

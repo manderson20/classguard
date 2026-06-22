@@ -2,7 +2,7 @@ const express = require('express');
 const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const zammad  = require('../services/zammad');
 const mosyle  = require('../services/mosyle');
 const snipeit = require('../services/snipeit');
@@ -10,7 +10,7 @@ const google  = require('../services/google');
 const phpipam = require('../services/phpipam');
 const { getUnifiedDevices } = require('../services/deviceConsolidation');
 
-const auth = [authenticate, requireMinRole('admin')];
+const auth = [authenticate, requirePermission('integrations')];
 
 // ---------------------------------------------------------------------------
 // Integration status / config

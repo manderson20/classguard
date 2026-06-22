@@ -5,10 +5,10 @@
 const express = require('express');
 const { query, pool } = require('../db');
 const { authenticate } = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 
 const router = express.Router();
-router.use(authenticate, requireMinRole('admin'));
+router.use(authenticate, requirePermission('phones'));
 
 // ---------------------------------------------------------------------------
 // Change periods

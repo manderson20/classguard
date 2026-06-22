@@ -10,10 +10,10 @@ const { pool } = require('../db');
 const redis = require('../redis');
 const { keaCommand } = require('../services/kea');
 const { authenticate } = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 
 const router = Router();
-const auth = [authenticate, requireMinRole('admin')];
+const auth = [authenticate, requirePermission('system_health')];
 
 async function checkPostgres() {
   const { rows } = await pool.query('SELECT version()');

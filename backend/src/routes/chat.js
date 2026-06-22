@@ -2,6 +2,7 @@ const { Router }          = require('express');
 const { query }           = require('../db');
 const { authenticate }    = require('../middleware/auth');
 const { requireMinRole }  = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
 const events              = require('../events');
 
@@ -281,7 +282,7 @@ router.delete('/messages/:id', async (req, res) => {
 // soft-deleted messages with their original body intact. Admin/superadmin
 // only — this is the accountability backstop, not a moderation UI.
 // ---------------------------------------------------------------------------
-router.get('/admin/messages', requireMinRole('admin'), async (req, res) => {
+router.get('/admin/messages', requirePermission('chat_audit'), async (req, res) => {
   const { student_id, teacher_id, from, to } = req.query;
   const conditions = [];
   const params = [];
