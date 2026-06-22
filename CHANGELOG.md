@@ -18,6 +18,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.5] - 2026-06-22
+
+### Added
+
+- **Unblock requests submitted via a signed-in account are now
+  cryptographically verified**, not just displayed. The admin review queue
+  shows a "Verified" vs "Self-reported" badge so staff can tell a real
+  Google-account-backed request from a typed name/email at a glance.
+
+---
+
 ## [0.6.4] - 2026-06-22
 
 ### Added
