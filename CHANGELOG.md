@@ -18,6 +18,24 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.2] - 2026-06-22
+
+### Added
+
+- **Safety Evidence Capture: rule-based risk scoring, proactive (non-text)
+  screenshot capture, and a real review workflow.** Keyword-matched and
+  newly-proactive (image-only content on a high-risk/uncategorized domain)
+  screenshots are now scored by category/severity even with no AI
+  configured; a risk score of 85+ emails a configurable staff list and
+  banners every logged-in admin/teacher in real time. Screenshots now have
+  a proper new/in_review/resolved/dismissed workflow with notes, instead
+  of a binary reviewed flag. Added a Settings > Safety Alerts panel to
+  configure alert email delivery and manage the flagged-keyword list
+  (previously only editable via direct SQL). Added the missing self_harm
+  category to the content taxonomy.
+
+---
+
 ## [0.6.1] - 2026-06-22
 
 ### Added
