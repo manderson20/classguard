@@ -18,6 +18,20 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.1] - 2026-06-22
+
+### Added
+
+- **"Why?" button on blocked DNS log and browser-history entries.** Shows
+  the exact step-by-step reason a domain was blocked (allowlist, lesson/
+  penalty mode, allow/deny rules, blocklist, category) plus the student's
+  full policy precedence chain, with the tier that actually applied
+  clearly marked. Also fixed the schedule-update UI to plainly state when
+  a schedule is already active instead of just disabling the button with
+  no explanation.
+
+---
+
 ## [0.6.0] - 2026-06-22
 
 ### Added
