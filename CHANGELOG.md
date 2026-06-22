@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.12] - 2026-06-22
+
+### Added
+- **Teacher Live View Phase 5** (final phase): Admin/Teacher nav switcher. Admins and superadmins who also teach a class previously had no way to reach the classroom-only sidebar (My Classes / Penalty Box / Lockdown Tests) — only plain `teacher`-role accounts saw it. Added a segmented Admin/Teacher toggle to the sidebar (admin+ only) that swaps which nav renders, persisted per-browser. Purely a navigation switch — underlying data access is unchanged either way.
+
+---
+
 ## [0.6.11] - 2026-06-22
 
 ### Added
