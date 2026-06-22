@@ -194,23 +194,32 @@ function SoftwareUpdateSection() {
               {check.changelog}
             </pre>
           )}
-          <div className="flex items-end gap-3">
-            <Field label="Schedule for">
-              <input type="datetime-local" className={INPUT} value={scheduledAt}
-                onChange={e => setScheduledAt(e.target.value)} />
-            </Field>
-            <button
-              onClick={() => { setResult(null); scheduleUpdate.mutate(); }}
-              disabled={!scheduledAt || scheduleUpdate.isPending || activeSchedule.length > 0}
-              className="btn-primary text-sm"
-            >
-              {scheduleUpdate.isPending ? 'Scheduling…' : 'Schedule Update'}
-            </button>
-          </div>
-          <p className="text-xs text-blue-700 mt-2">
-            Applies to every active node in the cluster at the time you pick — each node briefly restarts its
-            containers (DNS resolution is interrupted for a few seconds per node).
-          </p>
+          {activeSchedule.length > 0 ? (
+            <p className="text-sm text-blue-900 bg-white border border-blue-100 rounded p-2">
+              Already scheduled for {new Date(activeSchedule[0].scheduled_at).toLocaleString()} —
+              see status per node below. Cancel it there first if you want to pick a different time.
+            </p>
+          ) : (
+            <>
+              <div className="flex items-end gap-3">
+                <Field label="Schedule for">
+                  <input type="datetime-local" className={INPUT} value={scheduledAt}
+                    onChange={e => setScheduledAt(e.target.value)} />
+                </Field>
+                <button
+                  onClick={() => { setResult(null); scheduleUpdate.mutate(); }}
+                  disabled={!scheduledAt || scheduleUpdate.isPending}
+                  className="btn-primary text-sm"
+                >
+                  {scheduleUpdate.isPending ? 'Scheduling…' : 'Schedule Update'}
+                </button>
+              </div>
+              <p className="text-xs text-blue-700 mt-2">
+                Applies to every active node in the cluster at the time you pick — each node briefly restarts its
+                containers (DNS resolution is interrupted for a few seconds per node).
+              </p>
+            </>
+          )}
         </div>
       )}
 
@@ -219,7 +228,9 @@ function SoftwareUpdateSection() {
       )}
 
       {schedule.length > 0 && (
-        <table className="w-full text-sm">
+        <>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Update history</h3>
+          <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-slate-500 border-b border-slate-200">
               <th className="py-1.5">Node</th>
@@ -254,7 +265,8 @@ function SoftwareUpdateSection() {
               </tr>
             ))}
           </tbody>
-        </table>
+          </table>
+        </>
       )}
     </div>
   );
