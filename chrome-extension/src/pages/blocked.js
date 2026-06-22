@@ -24,6 +24,13 @@ const CONFIGS = {
     heading: 'Your Internet Access Is Restricted',
     message: 'A teacher has temporarily limited your browser activity. Please see your teacher for more information.',
   },
+  lockdown: {
+    emoji:   '🔒',
+    cls:     'lesson',
+    badge:   'Locked Test in Progress',
+    heading: 'Browser Locked for a Test',
+    message: 'Your teacher has locked your browser to a test page. Other sites are unavailable until the test ends.',
+  },
   policy: {
     emoji:   '🛡️',
     cls:     'policy',
@@ -41,7 +48,7 @@ document.getElementById('badge').classList.add(cfg.cls);
 document.getElementById('heading').textContent = cfg.heading;
 document.getElementById('message').textContent  = cfg.message;
 
-if (reason === 'lesson' || reason === 'penalty') {
+if (reason === 'lesson' || reason === 'penalty' || reason === 'lockdown') {
   document.getElementById('icon').textContent = cfg.emoji;
   document.getElementById('icon').classList.add(cfg.cls);
   document.getElementById('icon').style.display = 'flex';
@@ -98,7 +105,7 @@ chrome.storage.local.get(['cg_branding', 'cg_policy'], ({ cg_branding: branding,
   }
 
   // School logo (policy blocks only)
-  if (branding?.logo && reason !== 'lesson' && reason !== 'penalty') {
+  if (branding?.logo && reason !== 'lesson' && reason !== 'penalty' && reason !== 'lockdown') {
     const img = document.getElementById('school-logo');
     img.src = branding.logo;
     img.style.display = 'block';

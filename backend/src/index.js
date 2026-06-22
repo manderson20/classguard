@@ -108,6 +108,7 @@ app.use('/api/v1/branding',         require('./routes/branding'));
 app.use('/api/v1/unblock-requests', require('./routes/unblockRequests'));
 app.use('/api/v1/screen-time',      require('./routes/screenTime'));
 app.use('/api/v1/bell-schedule',    require('./routes/bellSchedule'));
+app.use('/api/v1/lockdown',         require('./routes/lockdown'));
 app.use('/api/v1/override-codes',   require('./routes/overrideCodes'));
 app.use('/api/v1/settings',      require('./routes/settings'));
 app.use('/api/v1/integrations',  require('./routes/integrations'));

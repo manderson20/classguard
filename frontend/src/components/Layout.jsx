@@ -13,6 +13,7 @@ import {
   mdiTagOutline,
   mdiCameraOutline,
   mdiLockOutline,
+  mdiLock,
   mdiRobotOutline,
   mdiIpNetworkOutline,
   mdiDnsOutline,
@@ -93,6 +94,7 @@ function UrgentAlertBanner({ socket, navigate }) {
 const TEACHER_NAV = [
   { to: '/classes',     icon: mdiHomeOutline, label: 'My Classes'  },
   { to: '/penalty-box', icon: mdiFlagOutline,  label: 'Penalty Box' },
+  { to: '/lockdown',    icon: mdiLock,         label: 'Lockdown Tests' },
 ];
 
 const ADMIN_SECTIONS = [

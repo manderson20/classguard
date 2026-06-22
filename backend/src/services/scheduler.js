@@ -15,6 +15,8 @@ const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 const radiusSync = require('./radiusSync');
 const ntp = require('./ntp');
 const teacherUtilization = require('./teacherUtilization');
+const { invalidatePolicy } = require('./policyResolver');
+const events = require('../events');
 const { syncController } = require('../routes/network');
 const { pool } = require('../db');
 
@@ -249,6 +251,26 @@ async function expirePenaltyBox() {
   console.log(`[scheduler] released ${rows.length} expired penalty box record(s)`);
 }
 
+async function expireLockdownSessions() {
+  const { rows } = await query(`
+    UPDATE lockdown_sessions
+    SET    status = 'expired', ended_at = NOW()
+    WHERE  status  = 'active'
+      AND  ends_at IS NOT NULL
+      AND  ends_at < NOW()
+    RETURNING student_id
+  `);
+
+  if (rows.length === 0) return;
+
+  for (const { student_id } of rows) {
+    await invalidatePolicy(student_id);
+    events.emit('policy:updated', { studentId: student_id });
+  }
+
+  console.log(`[scheduler] expired ${rows.length} lockdown test session(s)`);
+}
+
 // ---------------------------------------------------------------------------
 // Google Workspace sync stub  — nightly 2am
 // Real implementation added in Phase 8.
@@ -289,6 +311,12 @@ function startScheduler() {
   // Penalty box expiry — every 5 minutes
   cron.schedule('*/5 * * * *', () => {
     expirePenaltyBox().catch(err => console.error('[scheduler] penalty-box expiry error:', err.message));
+  });
+
+  // Lockdown test session expiry — every minute, so a timed test actually
+  // releases close to on time rather than lagging behind by minutes.
+  cron.schedule('*/1 * * * *', () => {
+    expireLockdownSessions().catch(err => console.error('[scheduler] lockdown expiry error:', err.message));
   });
 
   // Blocklist sync — configurable (default: 2am daily)
