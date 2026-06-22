@@ -85,16 +85,12 @@ async function resolveQuery(name, typeNum, sourceIp) {
   // This runs before ANY policy block including lesson/penalty_box mode.
   const globalAllowList = await policyCache.getGlobalAllowlist().catch(() => []);
   if (isInAllowList(domain, globalAllowList)) {
-    const answers = await forwardToUpstream(domain, typeNum);
-    logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
-    return { action: 'allowed', answers };
+    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
   }
 
   // --- 5. Explicit allow-list check (per-policy) --------------------------
   if (isInAllowList(domain, allowList)) {
-    const answers = await forwardToUpstream(domain, typeNum);
-    logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
-    return { action: 'allowed', answers };
+    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
   }
 
   // --- 6. Mode-based restrictions -----------------------------------------
@@ -109,9 +105,7 @@ async function resolveQuery(name, typeNum, sourceIp) {
   }
 
   if (mode === 'open') {
-    const answers = await forwardToUpstream(domain, typeNum);
-    logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
-    return { action: 'allowed', answers };
+    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
   }
 
   // --- 6.5. Override code check -------------------------------------------
@@ -121,9 +115,7 @@ async function resolveQuery(name, typeNum, sourceIp) {
   if (mode === 'standard') {
     const hasOverride = await policyCache.getOverrideForIp(sourceIp, domain).catch(() => false);
     if (hasOverride) {
-      const answers = await forwardToUpstream(domain, typeNum);
-      logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
-      return { action: 'allowed', answers };
+      return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
     }
   }
 
@@ -161,27 +153,61 @@ async function resolveQuery(name, typeNum, sourceIp) {
   }
 
   // --- 8. Allowed — forward to upstream -----------------------------------
+  return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
+}
+
+/**
+ * Forward to upstream and log the outcome — shared by every call site above.
+ * A domain that genuinely doesn't resolve (NXDOMAIN/SERVFAIL/REFUSED, or the
+ * upstream being unreachable) is treated as blocked so the student lands on
+ * the block page instead of a bare, confusing browser DNS error. This is
+ * distinct from a domain that exists but simply has no record of the
+ * queried type (e.g. AAAA-only domain queried for A) — forwardToUpstream()
+ * only returns null for the former; the latter still returns a normal,
+ * empty answers array and is left alone.
+ */
+async function forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId) {
   const answers = await forwardToUpstream(domain, typeNum);
+  if (answers === null) {
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'unresolvable' });
+    return { action: 'blocked', answers: [], blockReason: 'unresolvable' };
+  }
   logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
   return { action: 'allowed', answers };
 }
 
+// rcodes that mean "this name does not actually resolve" — distinct from
+// NOERROR-with-zero-answers, which just means the domain exists but has no
+// record of the queried type (a totally normal, common case: an AAAA-only
+// domain queried for A, a CNAME-only name, etc.) and must NOT be treated as
+// a failure or it would block-page perfectly healthy sites.
+const UNRESOLVABLE_RCODES = new Set([
+  Packet.RCODE.NXDOMAIN, Packet.RCODE.SERVFAIL, Packet.RCODE.REFUSED,
+]);
+
 /**
  * Forward to upstream resolver with Redis response caching.
+ * Returns null (not []) when the domain genuinely doesn't resolve, so
+ * callers can route that case to the block page instead of silently
+ * returning an empty-but-valid-looking response.
  */
 async function forwardToUpstream(domain, typeNum) {
   const cached = await cache.get(domain, typeNum);
   if (cached) return cached;
 
   try {
-    const result  = await upstream.resolve(domain, typeNum);
+    const result = await upstream.resolve(domain, typeNum);
+    if (UNRESOLVABLE_RCODES.has(result?.header?.rcode)) return null;
+
     const answers = result?.answers || [];
     if (answers.length > 0) {
       await cache.set(domain, typeNum, answers);
     }
     return answers;
   } catch {
-    return [];
+    // Transport failure (timeout, every configured upstream unreachable) —
+    // same "doesn't resolve" treatment as an explicit NXDOMAIN/SERVFAIL.
+    return null;
   }
 }
 
