@@ -12,12 +12,12 @@
 const { Router } = require('express');
 const { pool } = require('../db');
 const { authenticate } = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const events = require('../events');
 const { logDeviceView } = require('../services/deviceViewAudit');
 
 const router = Router();
-const auth = [authenticate, requireMinRole('admin')];
+const auth = [authenticate, requirePermission('device_view_audit')];
 
 async function getActiveSession(viewerId, studentId) {
   const { rows: [last] } = await pool.query(

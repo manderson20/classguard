@@ -2,11 +2,11 @@ const express = require('express');
 const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const classroom  = require('../services/googleClassroom');
 const oneRoster  = require('../services/oneRoster');
 
-const auth = [authenticate, requireMinRole('admin')];
+const auth = [authenticate, requirePermission('roster')];
 
 // ---------------------------------------------------------------------------
 // Google Classroom sync

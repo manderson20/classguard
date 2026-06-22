@@ -6,6 +6,7 @@ const multer   = require('multer');
 const { pool } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const radiusLdap = require('../services/radiusLdap');
 const radiusSync = require('../services/radiusSync');
 const keepalived = require('../services/keepalived');
@@ -13,7 +14,7 @@ const keepalived = require('../services/keepalived');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 64 * 1024 } });
 const CERT_DIR = process.env.TLS_CERT_DIR || '/app/certs';
 
-const auth      = [authenticate, requireMinRole('admin')];
+const auth      = [authenticate, requirePermission('radius')];
 const superauth = [authenticate, requireMinRole('superadmin')];
 
 // Internal-secret middleware for FreeRADIUS rlm_rest calls

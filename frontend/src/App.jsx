@@ -25,6 +25,7 @@ import PolicyEditor      from './pages/admin/PolicyEditor';
 import PolicySimulator     from './pages/admin/PolicySimulator';
 import UnblockRequestsPage from './pages/admin/UnblockRequestsPage';
 import GroupsPage          from './pages/admin/GroupsPage';
+import CustomRolesPage     from './pages/admin/CustomRolesPage';
 import DnsLogs         from './pages/admin/DnsLogs';
 import DnsStats        from './pages/admin/DnsStats';
 import DnsRecordsPage  from './pages/admin/DnsRecordsPage';
@@ -133,6 +134,12 @@ export default function App() {
           <Route path="/admin/system-health"           element={<SystemHealthPage />} />
           <Route path="/admin/vpn"                    element={<VpnPage />} />
           <Route path="/admin/ipv6"                   element={<Ipv6Page />} />
+
+          {/* Superadmin-only: managing what a role grants is itself
+              adjacent to privilege escalation, same tier as role assignment */}
+          <Route element={<RequireAuth minRole="superadmin"><Outlet /></RequireAuth>}>
+            <Route path="/admin/custom-roles"         element={<CustomRolesPage />} />
+          </Route>
         </Route>
       </Route>
 

@@ -149,8 +149,8 @@ router.get('/video-info', authenticate, async (req, res) => {
 // DELETE /api/v1/youtube/cache/:id  — admin can bust a single video's cache
 // (used when a video is reclassified by YouTube)
 // ---------------------------------------------------------------------------
-const { requireMinRole } = require('../middleware/roles');
-router.delete('/cache/:id', authenticate, requireMinRole('admin'), async (req, res) => {
+const { requirePermission } = require('../middleware/permissions');
+router.delete('/cache/:id', authenticate, requirePermission('policies'), async (req, res) => {
   await redis.del(CACHE_KEY(req.params.id));
   res.json({ cleared: req.params.id });
 });
@@ -158,7 +158,7 @@ router.delete('/cache/:id', authenticate, requireMinRole('admin'), async (req, r
 // ---------------------------------------------------------------------------
 // GET /api/v1/youtube/cache-stats  — how many videos are cached
 // ---------------------------------------------------------------------------
-router.get('/cache-stats', authenticate, requireMinRole('admin'), async (req, res) => {
+router.get('/cache-stats', authenticate, requirePermission('policies'), async (req, res) => {
   const keys  = await redis.keys('classguard:yt:video:*').catch(() => []);
   res.json({ cachedVideos: keys.length, ttlHours: CACHE_TTL / 3600 });
 });

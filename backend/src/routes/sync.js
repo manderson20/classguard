@@ -1,7 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const { authenticate }    = require('../middleware/auth');
-const { requireMinRole }  = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const { syncAll }         = require('../services/google');
 const { pool }            = require('../db');
 
@@ -9,7 +9,7 @@ const { pool }            = require('../db');
 // POST /api/v1/sync/google
 // Trigger a full Google Workspace sync (admin+). Runs async; returns immediately.
 // ---------------------------------------------------------------------------
-router.post('/google', authenticate, requireMinRole('admin'), async (req, res) => {
+router.post('/google', authenticate, requirePermission('integrations'), async (req, res) => {
   // Respond immediately — sync can take tens of seconds for large directories
   res.json({ status: 'started', message: 'Google Workspace sync initiated' });
 
@@ -22,7 +22,7 @@ router.post('/google', authenticate, requireMinRole('admin'), async (req, res) =
 // GET /api/v1/sync/status
 // Return last sync time and current user/group counts.
 // ---------------------------------------------------------------------------
-router.get('/status', authenticate, requireMinRole('admin'), async (req, res) => {
+router.get('/status', authenticate, requirePermission('integrations'), async (req, res) => {
   try {
     const [syncRow, userRow, groupRow] = await Promise.all([
       pool.query(`SELECT value FROM settings WHERE key = 'last_google_sync'`),

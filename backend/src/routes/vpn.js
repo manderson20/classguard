@@ -9,9 +9,10 @@ const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const ca = require('../services/ca');
 
-const auth      = [authenticate, requireMinRole('admin')];
+const auth      = [authenticate, requirePermission('vpn_config')];
 const superauth = [authenticate, requireMinRole('superadmin')];
 
 async function getVpnConfig() {

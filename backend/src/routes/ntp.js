@@ -3,10 +3,11 @@ const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const ntp     = require('../services/ntp');
 const chrony  = require('../services/chrony');
 
-const auth      = [authenticate, requireMinRole('admin')];
+const auth      = [authenticate, requirePermission('ntp_monitoring')];
 const superauth = [authenticate, requireMinRole('superadmin')];
 
 // GET /api/v1/ntp/servers

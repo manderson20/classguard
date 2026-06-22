@@ -1,11 +1,11 @@
 const { Router } = require('express');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 
 const router = Router();
 
-router.use(authenticate, requireMinRole('admin'));
+router.use(authenticate, requirePermission('groups'));
 
 // GET /api/v1/groups
 router.get('/', async (req, res) => {

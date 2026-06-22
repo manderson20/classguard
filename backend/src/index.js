@@ -91,6 +91,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/v1/auth',        require('./routes/auth'));
 app.use('/api/v1/users',       require('./routes/users'));
 app.use('/api/v1/groups',      require('./routes/groups'));
+app.use('/api/v1/custom-roles', require('./routes/customRoles'));
 app.use('/api/v1/policies',    require('./routes/policies'));
 app.use('/api/v1/assignments', require('./routes/assignments'));
 app.use('/api/v1/blocklists',  require('./routes/blocklists'));

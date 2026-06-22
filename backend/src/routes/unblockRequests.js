@@ -2,10 +2,10 @@ const express  = require('express');
 const router   = express.Router();
 const { pool } = require('../db');
 const { authenticate }   = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 
 // Authenticated admin middleware
-const adminAuth = [authenticate, requireMinRole('admin')];
+const adminAuth = [authenticate, requirePermission('unblock_requests')];
 
 // ---------------------------------------------------------------------------
 // POST /api/v1/unblock-requests

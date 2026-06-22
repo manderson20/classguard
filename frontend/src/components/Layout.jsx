@@ -36,6 +36,7 @@ import {
   mdiEyeOutline,
   mdiVpn,
   mdiTunnelOutline,
+  mdiAccountKeyOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -43,7 +44,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.6.12';
+const VERSION = '0.7.0';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -102,52 +103,53 @@ const ADMIN_SECTIONS = [
     label: 'Overview',
     items: [
       { to: '/admin',                 icon: mdiViewDashboardOutline,   label: 'Dashboard',      end: true },
-      { to: '/admin/staff-analytics', icon: mdiChartLine,              label: 'Staff Analytics' },
+      { to: '/admin/staff-analytics', icon: mdiChartLine,              label: 'Staff Analytics', permissionKey: 'staff_analytics' },
       { to: '/admin/screen-time',     icon: mdiClockOutline,           label: 'Screen Time'     },
-      { to: '/admin/users',           icon: mdiAccountMultipleOutline, label: 'Users'           },
+      { to: '/admin/users',           icon: mdiAccountMultipleOutline, label: 'Users',           permissionKey: 'users' },
     ],
   },
   {
     label: 'Policies & Safety',
     items: [
-      { to: '/admin/policies',          icon: mdiFileDocumentOutline, label: 'Policies'         },
-      { to: '/admin/policy-simulator', icon: mdiFilterOutline,        label: 'Filter Simulator' },
-      { to: '/admin/groups',           icon: mdiAccountGroupOutline,  label: 'Groups'           },
-      { to: '/admin/blocklists',  icon: mdiShieldOutline,       label: 'Blocklists'    },
-      { to: '/admin/categories',  icon: mdiTagOutline,          label: 'Categories'    },
-      { to: '/admin/screenshots',       icon: mdiCameraOutline,  label: 'Screenshots'       },
-      { to: '/admin/browser-history',   icon: mdiHistory,        label: 'Browser History'   },
-      { to: '/admin/chat',              icon: mdiChatOutline,    label: 'Chat Audit'        },
-      { to: '/admin/device-view-audit', icon: mdiEyeOutline,     label: 'Device View Audit' },
-      { to: '/admin/ai',                icon: mdiRobotOutline,   label: 'AI Classifier'     },
-      { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true },
+      { to: '/admin/policies',          icon: mdiFileDocumentOutline, label: 'Policies',         permissionKey: 'policies' },
+      { to: '/admin/policy-simulator', icon: mdiFilterOutline,        label: 'Filter Simulator', permissionKey: 'policies' },
+      { to: '/admin/groups',           icon: mdiAccountGroupOutline,  label: 'Groups',           permissionKey: 'groups' },
+      { to: '/admin/blocklists',  icon: mdiShieldOutline,       label: 'Blocklists',    permissionKey: 'blocklists' },
+      { to: '/admin/categories',  icon: mdiTagOutline,          label: 'Categories',    permissionKey: 'categories' },
+      { to: '/admin/screenshots',       icon: mdiCameraOutline,  label: 'Screenshots',       permissionKey: 'screenshots' },
+      { to: '/admin/browser-history',   icon: mdiHistory,        label: 'Browser History',   permissionKey: 'browser_history' },
+      { to: '/admin/chat',              icon: mdiChatOutline,    label: 'Chat Audit',        permissionKey: 'chat_audit' },
+      { to: '/admin/device-view-audit', icon: mdiEyeOutline,     label: 'Device View Audit', permissionKey: 'device_view_audit' },
+      { to: '/admin/ai',                icon: mdiRobotOutline,   label: 'AI Classifier',     permissionKey: 'ai_classifier' },
+      { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true, permissionKey: 'unblock_requests' },
     ],
   },
   {
     label: 'DNS & Network',
     items: [
-      { to: '/admin/dns/logs',     icon: mdiFormatListBulletedSquare, label: 'DNS Logs'     },
-      { to: '/admin/dns/stats',    icon: mdiChartBar,                 label: 'DNS Stats'    },
-      { to: '/admin/dns/records',  icon: mdiDnsOutline,               label: 'DNS Records'  },
-      { to: '/admin/radius',    icon: mdiLockOutline,              label: 'RADIUS / NAC'  },
-      { to: '/admin/ipam',      icon: mdiIpNetworkOutline,         label: 'IPAM'          },
-      { to: '/admin/dhcp',      icon: mdiServerOutline,            label: 'DHCP'          },
-      { to: '/admin/network',   icon: mdiSitemap,                  label: 'Network Infra' },
-      { to: '/admin/phones',    icon: mdiPhoneOutline,             label: 'Phone System'  },
+      { to: '/admin/dns/logs',     icon: mdiFormatListBulletedSquare, label: 'DNS Logs',     permissionKey: 'dns_logs' },
+      { to: '/admin/dns/stats',    icon: mdiChartBar,                 label: 'DNS Stats',    permissionKey: 'dns_logs' },
+      { to: '/admin/dns/records',  icon: mdiDnsOutline,               label: 'DNS Records',  permissionKey: 'dns_records' },
+      { to: '/admin/radius',    icon: mdiLockOutline,              label: 'RADIUS / NAC',  permissionKey: 'radius' },
+      { to: '/admin/ipam',      icon: mdiIpNetworkOutline,         label: 'IPAM',          permissionKey: 'ipam' },
+      { to: '/admin/dhcp',      icon: mdiServerOutline,            label: 'DHCP',          permissionKey: 'dhcp' },
+      { to: '/admin/network',   icon: mdiSitemap,                  label: 'Network Infra', permissionKey: 'network' },
+      { to: '/admin/phones',    icon: mdiPhoneOutline,             label: 'Phone System',  permissionKey: 'phones' },
     ],
   },
   {
     label: 'System',
     items: [
-      { to: '/admin/roster',       icon: mdiAccountSyncOutline, label: 'Roster Sync'  },
-      { to: '/admin/bell-schedule', icon: mdiClockOutline,      label: 'Bell Schedule' },
-      { to: '/admin/integrations', icon: mdiPuzzleOutline,      label: 'Integrations' },
-      { to: '/admin/ha',           icon: mdiSwapHorizontal,     label: 'HA Cluster'   },
-      { to: '/admin/vpn',          icon: mdiVpn,                label: 'VPN'          },
-      { to: '/admin/ipv6',         icon: mdiTunnelOutline,      label: 'IPv6'         },
-      { to: '/admin/ntp',          icon: mdiClockOutline,       label: 'NTP'          },
-      { to: '/admin/system-health', icon: mdiPulse,             label: 'System Health' },
-      { to: '/admin/settings',     icon: mdiCogOutline,         label: 'Settings'     },
+      { to: '/admin/roster',       icon: mdiAccountSyncOutline, label: 'Roster Sync',  permissionKey: 'roster' },
+      { to: '/admin/bell-schedule', icon: mdiClockOutline,      label: 'Bell Schedule', permissionKey: 'bell_schedule' },
+      { to: '/admin/integrations', icon: mdiPuzzleOutline,      label: 'Integrations', permissionKey: 'integrations' },
+      { to: '/admin/ha',           icon: mdiSwapHorizontal,     label: 'HA Cluster',   permissionKey: 'ha_monitoring' },
+      { to: '/admin/vpn',          icon: mdiVpn,                label: 'VPN',          permissionKey: 'vpn_config' },
+      { to: '/admin/ipv6',         icon: mdiTunnelOutline,      label: 'IPv6',         permissionKey: 'ipv6_config' },
+      { to: '/admin/ntp',          icon: mdiClockOutline,       label: 'NTP',          permissionKey: 'ntp_monitoring' },
+      { to: '/admin/system-health', icon: mdiPulse,             label: 'System Health', permissionKey: 'system_health' },
+      { to: '/admin/settings',     icon: mdiCogOutline,         label: 'Settings',     permissionKey: 'settings' },
+      { to: '/admin/custom-roles', icon: mdiAccountKeyOutline,  label: 'Roles & Permissions', superadminOnly: true },
     ],
   },
 ];
@@ -188,6 +190,24 @@ export default function Layout() {
   const navigate               = useNavigate();
   const isAdmin          = (ROLES[user?.role] ?? 0) >= ROLES.admin;
   const isStaff          = (ROLES[user?.role] ?? 0) >= ROLES.teacher;
+  const isSuperAdmin     = user?.role === 'superadmin';
+
+  // Hides admin nav items a custom-role-restricted admin can't actually
+  // reach — pure UX (no dead links in the sidebar). The real enforcement is
+  // server-side (requirePermission middleware); this never grants access on
+  // its own.
+  const { data: myPermissions } = useQuery({
+    queryKey: ['my-permissions'],
+    queryFn:  () => api.get('/users/me/permissions'),
+    enabled:  isAdmin,
+    staleTime: 60_000,
+  });
+  const canSee = (item) => {
+    if (item.superadminOnly) return isSuperAdmin;
+    if (!item.permissionKey) return true;
+    if (isSuperAdmin || !myPermissions || myPermissions.unrestricted) return true;
+    return myPermissions.permissions?.includes(item.permissionKey);
+  };
 
   // Admins/superadmins who also teach a class have no other way to reach
   // the classroom-only nav (it's otherwise shown only to plain 'teacher'
@@ -291,20 +311,24 @@ export default function Layout() {
           )}
 
           {/* Admins — grouped sections */}
-          {!showTeacherNav && ADMIN_SECTIONS.map(section => (
-            <section key={section.label}>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
-                {section.label}
-              </p>
-              <div className="space-y-0.5">
-                {section.items.map(item => (
-                  <NavItem key={item.to} {...item}
-                    badgeCount={item.badge ? pendingCount : 0}
-                  />
-                ))}
-              </div>
-            </section>
-          ))}
+          {!showTeacherNav && ADMIN_SECTIONS.map(section => {
+            const visibleItems = section.items.filter(canSee);
+            if (visibleItems.length === 0) return null;
+            return (
+              <section key={section.label}>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
+                  {section.label}
+                </p>
+                <div className="space-y-0.5">
+                  {visibleItems.map(item => (
+                    <NavItem key={item.to} {...item}
+                      badgeCount={item.badge ? pendingCount : 0}
+                    />
+                  ))}
+                </div>
+              </section>
+            );
+          })}
         </nav>
 
         {/* Footer */}

@@ -1,12 +1,12 @@
 const { Router } = require('express');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
-const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const { resolvePolicy, invalidatePolicy } = require('../services/policyResolver');
 
 const router = Router();
 
-router.use(authenticate, requireMinRole('admin'));
+router.use(authenticate, requirePermission('policies'));
 
 // GET /api/v1/assignments
 // Optional filters: ?policy_id=&target_type=student|group|ou

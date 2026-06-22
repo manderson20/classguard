@@ -6,9 +6,10 @@ const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermission } = require('../middleware/permissions');
 const ipv6Tunnel = require('../services/ipv6Tunnel');
 
-const auth      = [authenticate, requireMinRole('admin')];
+const auth      = [authenticate, requirePermission('ipv6_config')];
 const superauth = [authenticate, requireMinRole('superadmin')];
 
 // GET /api/v1/ipv6/config
