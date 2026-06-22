@@ -18,6 +18,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.11] - 2026-06-22
+
+### Added
+- **Teacher Live View Phase 4**: a teacher's own lesson history.
+  - Each class page gained a **Past Lessons** tab listing every lesson session ever run for that class — name, start time, duration, allowed domains, participant count, and blocked-attempt count.
+  - Clicking a past lesson expands its full browsing activity (every student, every page visited during just that session), with the same inline "why was this blocked" trace used elsewhere.
+  - New `GET /classes/:id/lessons` endpoint, teacher-roster-scoped — stats come from `browser_history.lesson_session_id` (Phase 3).
+
+---
+
 ## [0.6.10] - 2026-06-22
 
 ### Added
