@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { pool }   = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const teacherUtilization = require('../services/teacherUtilization');
 
 const router = Router();
 
@@ -63,6 +64,43 @@ router.get('/staff', authenticate, requireMinRole('admin'), async (req, res) => 
     },
     teachers,
   });
+});
+
+// GET /api/v1/analytics/staff/utilization?from=&to=
+// Per-teacher rollup of teacher_period_utilization (built nightly by
+// teacherUtilization.js): how much of each scheduled period's time was
+// actually spent active on a device, across all that teacher's classes —
+// independent of whether a lesson_session was ever started.
+router.get('/staff/utilization', authenticate, requireMinRole('admin'), async (req, res) => {
+  const from = req.query.from || new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+  const to   = req.query.to   || new Date().toISOString().slice(0, 10);
+
+  const { rows } = await pool.query(
+    `SELECT
+       u.id, u.full_name, u.email,
+       SUM(tpu.enrolled_count)::int          AS scheduled_student_periods,
+       SUM(tpu.active_student_count)::int    AS active_student_periods,
+       SUM(tpu.active_student_seconds)::bigint AS active_student_seconds,
+       SUM(tpu.enrolled_count * tpu.period_seconds)::bigint AS possible_student_seconds
+     FROM teacher_period_utilization tpu
+     JOIN users u ON u.id = tpu.teacher_id
+     WHERE tpu.school_date >= $1 AND tpu.school_date <= $2
+     GROUP BY u.id
+     ORDER BY active_student_seconds DESC`,
+    [from, to]
+  );
+
+  res.json({ from, to, teachers: rows });
+});
+
+// POST /api/v1/analytics/staff/utilization/recompute
+// Manual trigger for the nightly reconciliation job — useful right after
+// configuring the bell schedule, instead of waiting for 4:30am.
+router.post('/staff/utilization/recompute', authenticate, requireMinRole('admin'), async (req, res) => {
+  const from = req.body.from || new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10);
+  const to   = req.body.to   || new Date().toISOString().slice(0, 10);
+  await teacherUtilization.computeTeacherUtilization(from, to);
+  res.json({ ok: true, from, to });
 });
 
 module.exports = router;

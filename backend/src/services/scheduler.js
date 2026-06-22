@@ -14,6 +14,7 @@ const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
 const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 const radiusSync = require('./radiusSync');
 const ntp = require('./ntp');
+const teacherUtilization = require('./teacherUtilization');
 const { syncController } = require('../routes/network');
 const { pool } = require('../db');
 
@@ -322,6 +323,13 @@ function startScheduler() {
   // Keyword classifier — daily 4am, processes uncategorized domains from DNS logs
   cron.schedule('0 4 * * *', () => {
     classifyRecentDomains(1000).catch(err => console.error('[scheduler] keyword classifier error:', err.message));
+  });
+
+  // Teacher period-utilization reconciliation — daily 4:30am, rolling 7-day
+  // lookback so a late-closing screen_time_intervals row (device asleep,
+  // reports back hours later) still lands in the right day's numbers.
+  cron.schedule('30 4 * * *', () => {
+    teacherUtilization.runNightly().catch(err => console.error('[scheduler] teacher-utilization error:', err.message));
   });
 
   // TLS certificate renewal check — daily 5am, renews within 30 days of expiry
