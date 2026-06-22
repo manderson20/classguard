@@ -495,7 +495,7 @@ function DevicesTab() {
             className="border border-slate-300 rounded-lg px-3 py-1.5 text-xs w-48 focus:outline-none focus:ring-1 focus:ring-primary-500"/>
           <select className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white" value={sourceFilter} onChange={e=>setSourceFilter(e.target.value)}>
             <option value="">All sources</option>
-            {['mosyle','snipeit','google_admin','network_controller','radius_seen','manual'].map(s=><option key={s} value={s}>{s.replace('_',' ')}</option>)}
+            {['mosyle','snipeit','google_admin','radius_seen','manual'].map(s=><option key={s} value={s}>{s.replace('_',' ')}</option>)}
           </select>
           <select className="border border-slate-300 rounded-lg px-2 py-1.5 text-xs bg-white" value={typeFilter} onChange={e=>setTypeFilter(e.target.value)}>
             <option value="">All categories</option>

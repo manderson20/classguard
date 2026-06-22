@@ -22,8 +22,6 @@
  */
 
 const { pool }   = require('../db');
-const axios      = require('axios');
-const { google } = require('googleapis');
 
 // ---------------------------------------------------------------------------
 // Normalise MAC to XX:XX:XX:XX:XX:XX uppercase
@@ -145,6 +143,78 @@ async function deprovisionRemovedDevices(sourceName, seenDeviceIds) {
 }
 
 // ---------------------------------------------------------------------------
+// Device source → device_type derivation. integration_devices.os_type holds
+// different semantics per source (the actual OS for Mosyle, the Snipe-IT
+// asset category name for Snipe-IT) — both are matched against here so one
+// function covers all three MDM sources.
+// ---------------------------------------------------------------------------
+function deriveDeviceType(source, osType) {
+  const v = (osType || '').toLowerCase();
+  if (source === 'google_admin') return 'chromebook';
+  if (source === 'mosyle') {
+    if (/tvos|appletv/.test(v)) return 'tv';
+    if (/ipad|iphone/.test(v))  return 'tablet';
+    return 'laptop';
+  }
+  if (source === 'snipeit') {
+    if (/laptop|macbook|notebook/.test(v))  return 'laptop';
+    if (/desktop|imac|mac mini/.test(v))    return 'desktop';
+    if (/ipad|tablet/.test(v))              return 'tablet';
+    if (/phone/.test(v))                    return 'phone';
+    if (/printer/.test(v))                  return 'printer';
+    if (/switch/.test(v))                   return 'switch';
+    if (/ap|access point/.test(v))          return 'ap';
+    if (/tv|display/.test(v))               return 'tv';
+    if (/server/.test(v))                   return 'server';
+    if (/chromebook/.test(v))               return 'chromebook';
+  }
+  return 'other';
+}
+
+// ---------------------------------------------------------------------------
+// Shared device-list source: reads integration_devices (already populated
+// by mosyle.syncDevices() / snipeit.syncAssets() / google.syncDevices() —
+// the same canonical sync the Integrations page uses) instead of calling
+// each vendor's API a second time with its own copy of the field-mapping
+// logic. Keeps RADIUS's device list guaranteed consistent with what
+// Integrations shows, and means there's only one place per vendor that
+// needs to know how to read its API response at all.
+// ---------------------------------------------------------------------------
+async function syncFromIntegrationDevices(source) {
+  const { rows } = await pool.query(
+    `SELECT external_id, serial_number, mac_addresses, device_name, device_model,
+            os_type, assigned_email
+     FROM integration_devices WHERE source = $1`,
+    [source]
+  );
+
+  if (rows.length === 0) {
+    return { synced: 0, removed: 0, source, skipped: true };
+  }
+
+  let seenIds = [], skippedNoMac = 0;
+
+  for (const d of rows) {
+    const mac = (d.mac_addresses || []).map(normaliseMac).find(Boolean);
+    if (!mac) { skippedNoMac++; continue; }
+
+    const id = await upsertDeviceWithSource({
+      mac,
+      name:           d.device_name || d.serial_number,
+      type:           deriveDeviceType(source, d.os_type),
+      source,
+      sourceDeviceId: d.serial_number || d.external_id,
+      sourceExtra:    { serial: d.serial_number, model: d.device_model,
+                        os: d.os_type, assigned_email: d.assigned_email },
+    });
+    if (id) seenIds.push(id);
+  }
+
+  const removed = await deprovisionRemovedDevices(source, seenIds);
+  return { synced: seenIds.length, removed, skippedNoMac, source };
+}
+
+// ---------------------------------------------------------------------------
 // Mosyle — all managed iOS + macOS devices
 // ---------------------------------------------------------------------------
 async function syncMosyle() {
@@ -152,29 +222,8 @@ async function syncMosyle() {
   const cfg    = await mosyle.getConfig();
   if (!cfg.token) return { synced: 0, removed: 0, source: 'mosyle', skipped: true };
 
-  const devices = await mosyle.listAllDevices();
-  const seenIds = [];
-
-  for (const d of devices) {
-    const mac = d.wifi_mac_address || d.mac_address || d.bluetooth_mac;
-    const os  = (d.os_type || '').toLowerCase();
-    const type = /tvos|appletv/.test(os) ? 'tv'
-               : /ipad|iphone/.test(os)  ? 'tablet'
-               : 'laptop';
-    const id = await upsertDeviceWithSource({
-      mac,
-      name:           d.device_name || d.serial_number,
-      type,
-      source:         'mosyle',
-      sourceDeviceId: d.serial_number || d.udid,
-      sourceExtra:    { serial: d.serial_number, os: d.os_type, model: d.model,
-                        assigned_user: d.assigned_user_email || null },
-    });
-    if (id) seenIds.push(id);
-  }
-
-  const removed = await deprovisionRemovedDevices('mosyle', seenIds);
-  return { synced: seenIds.length, removed, source: 'mosyle' };
+  await mosyle.syncDevices(); // refresh integration_devices first
+  return syncFromIntegrationDevices('mosyle');
 }
 
 // ---------------------------------------------------------------------------
@@ -184,146 +233,25 @@ async function syncSnipeIt() {
   const cfg = await getSettings(['snipeit_url','snipeit_token']);
   if (!cfg.snipeit_url || !cfg.snipeit_token) return { synced: 0, removed: 0, source: 'snipeit', skipped: true };
 
-  let offset = 0, seenIds = [];
-  const limit = 500;
-
-  while (true) {
-    const res = await axios.get(`${cfg.snipeit_url.replace(/\/$/, '')}/api/v1/hardware`, {
-      headers: { Authorization: `Bearer ${cfg.snipeit_token}`, Accept: 'application/json' },
-      params:  { limit, offset },
-    });
-
-    const rows = res.data?.rows || [];
-    if (!rows.length) break;
-
-    for (const asset of rows) {
-      const customMac = Object.values(asset.custom_fields || {})
-        .find(f => /mac/i.test(f.field || '') && f.value)?.value;
-      const mac = asset.mac_address || customMac;
-      if (!normaliseMac(mac)) continue;
-
-      const cat   = (asset.category?.name || '').toLowerCase();
-      let   type  = 'other';
-      if (/laptop|macbook|notebook/i.test(cat))  type = 'laptop';
-      else if (/desktop|imac|mac mini/i.test(cat)) type = 'desktop';
-      else if (/ipad|tablet/i.test(cat))          type = 'tablet';
-      else if (/phone/i.test(cat))                type = 'phone';
-      else if (/printer/i.test(cat))              type = 'printer';
-      else if (/switch/i.test(cat))               type = 'switch';
-      else if (/ap|access point/i.test(cat))      type = 'ap';
-      else if (/tv|display/i.test(cat))           type = 'tv';
-      else if (/server/i.test(cat))               type = 'server';
-      else if (/chromebook/i.test(cat))           type = 'chromebook';
-
-      const id = await upsertDeviceWithSource({
-        mac,
-        name:           asset.name || asset.asset_tag,
-        type,
-        source:         'snipeit',
-        sourceDeviceId: String(asset.id),
-        sourceExtra:    { asset_tag: asset.asset_tag, category: asset.category?.name,
-                          serial: asset.serial, model: asset.model?.name,
-                          assigned_to: asset.assigned_to?.name || null,
-                          status_label: asset.status_label?.name || null },
-      });
-      if (id) seenIds.push(id);
-    }
-
-    if (rows.length < limit) break;
-    offset += limit;
-  }
-
-  const removed = await deprovisionRemovedDevices('snipeit', seenIds);
-  return { synced: seenIds.length, removed, source: 'snipeit' };
+  const snipeit = require('./snipeit');
+  await snipeit.syncAssets();
+  return syncFromIntegrationDevices('snipeit');
 }
 
 // ---------------------------------------------------------------------------
-// Google Admin — ChromeOS + Android Enterprise devices
+// Google Admin — ChromeOS devices, the district's own school-owned
+// Chromebooks. These are the devices that should actually be allowed onto
+// the 802.1X SSID via MAB; AP/switch infrastructure is handled entirely
+// separately by syncNasFromControllers() below.
 // ---------------------------------------------------------------------------
 async function syncGoogleAdmin() {
-  const keyPath = process.env.GOOGLE_SERVICE_ACCOUNT_KEY_PATH;
-  if (!keyPath) return { synced: 0, removed: 0, source: 'google_admin', skipped: true };
-
-  const keyFile = require(keyPath);
-  const auth = new google.auth.JWT({
-    email:   keyFile.client_email,
-    key:     keyFile.private_key,
-    scopes:  ['https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly',
-              'https://www.googleapis.com/auth/admin.directory.device.mobile.readonly'],
-    subject: process.env.SUPERADMIN_EMAIL,
-  });
-
-  const admin = google.admin({ version: 'directory_v1', auth });
-  let seenIds = [], pageToken;
-
-  do {
-    const res = await admin.chromeosdevices.list({
-      customerId: 'my_customer',
-      maxResults: 200,
-      pageToken,
-      projection: 'BASIC',
-    });
-    pageToken = res.data.nextPageToken;
-    for (const d of res.data.chromeosdevices || []) {
-      const id = await upsertDeviceWithSource({
-        mac:            d.macAddress || d.ethernetMacAddress,
-        name:           d.annotatedAssetId || d.annotatedUser || d.deviceId,
-        type:           'chromebook',
-        source:         'google_admin',
-        sourceDeviceId: d.deviceId,
-        sourceExtra:    { serial: d.serialNumber, model: d.model,
-                          annotated_user: d.annotatedUser, ou: d.orgUnitPath,
-                          os_version: d.osVersion, status: d.status },
-      });
-      if (id) seenIds.push(id);
-    }
-  } while (pageToken);
-
-  const removed = await deprovisionRemovedDevices('google_admin', seenIds);
-  return { synced: seenIds.length, removed, source: 'google_admin' };
-}
-
-// ---------------------------------------------------------------------------
-// Network controllers — MACs already in network_clients arrive as 'pending'
-// (not auto-approved; admin reviews). No deprovisioning run for this source
-// since network_clients reflects real-time presence, not ownership.
-// ---------------------------------------------------------------------------
-async function syncNetworkControllers() {
-  const { rows } = await pool.query(
-    `SELECT DISTINCT ON (mac) mac::text, hostname, connection_type
-     FROM network_clients WHERE mac IS NOT NULL
-     ORDER BY mac, last_seen DESC`
-  );
-
-  let synced = 0;
-  for (const r of rows) {
-    const mac = normaliseMac(r.mac);
-    if (!mac) continue;
-
-    // Insert as pending — don't call upsertDeviceWithSource because we
-    // don't want to promote pending→approved for network-seen devices
-    const { rows: devRows } = await pool.query(
-      `INSERT INTO radius_devices (mac_address, source, status, device_name)
-       VALUES ($1,'network_controller','pending',$2)
-       ON CONFLICT (mac_address) DO UPDATE SET
-         last_seen = NOW(), updated_at = NOW()
-       RETURNING id`,
-      [mac, r.hostname || null]
-    );
-
-    const deviceId = devRows[0]?.id;
-    if (deviceId) {
-      await pool.query(
-        `INSERT INTO radius_device_sources (device_id, source, source_name, is_active, last_synced_at)
-         VALUES ($1,'network_controller',$2,true,NOW())
-         ON CONFLICT (device_id, source) DO UPDATE SET
-           is_active = true, last_synced_at = NOW()`,
-        [deviceId, r.hostname || null]
-      );
-      synced++;
-    }
+  const google = require('./google');
+  try {
+    await google.syncDevices(); // refresh integration_devices first
+  } catch (err) {
+    return { synced: 0, removed: 0, source: 'google_admin', skipped: true, error: err.message };
   }
-  return { synced, removed: 0, source: 'network_controller' };
+  return syncFromIntegrationDevices('google_admin');
 }
 
 // ---------------------------------------------------------------------------
@@ -415,9 +343,10 @@ async function syncAllSources(onProgress = () => {}) {
   onProgress('Syncing Google Admin…');
   results.push(await syncGoogleAdmin().catch(e => ({ source: 'google_admin', error: e.message })));
 
-  onProgress('Syncing network controllers…');
-  results.push(await syncNetworkControllers().catch(e => ({ source: 'network_controller', error: e.message })));
-
+  // Network controllers (APs/switches) are NOT a client-device source —
+  // intentionally not synced into radius_devices at all. They're only used
+  // below to auto-provision the APs/switches themselves as RADIUS NAS
+  // clients, never as MAB-approved end-user devices.
   onProgress('Syncing NAS infrastructure (APs/switches)…');
   results.push(await syncNasFromControllers().catch(e => ({ source: 'network_infrastructure', error: e.message })));
 
@@ -426,6 +355,6 @@ async function syncAllSources(onProgress = () => {}) {
 }
 
 module.exports = {
-  syncAllSources, syncMosyle, syncSnipeIt, syncGoogleAdmin, syncNetworkControllers,
+  syncAllSources, syncMosyle, syncSnipeIt, syncGoogleAdmin,
   syncNasFromControllers, normaliseMac,
 };
