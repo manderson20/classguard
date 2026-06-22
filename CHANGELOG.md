@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.0] - 2026-06-22
+
+### Added
+- **Custom permissions/roles for admin-tier users.** Previously every `admin`-role account had access to the entire admin surface — no way to give a front-office/help-desk staffer just Users + Unblock Requests without handing them Network, DHCP, VPN, and Settings too. Superadmins can now create named roles (Roles & Permissions, superadmin-only) bundling any combination of ~27 feature-area permissions, and assign one to any admin-tier user from the Users page. A user with no custom role assigned keeps full, unrestricted access — today's default behavior, unchanged. Role assignment, HA promote/VRRP, VPN CA/key material, TLS issuance, and other infrastructure-control endpoints remain hardcoded superadmin-only and are never delegatable through this system. `superadmin` itself is always fully unrestricted.
+
+---
+
 ## [0.6.12] - 2026-06-22
 
 ### Added
