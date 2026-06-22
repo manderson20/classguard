@@ -18,6 +18,34 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.6] - 2026-06-22
+
+### Added
+
+- **Screen Time tracking** for students — parents have been raising
+  concerns about how much screen time their kids get, and there was
+  previously no way to even see this. The extension's existing 30-second
+  heartbeat now reports `chrome.idle` active/idle/locked state, stitched
+  server-side into continuous active-time intervals. New **Screen Time**
+  admin page shows active minutes per student over a date range, sorted
+  heaviest-first. Recording/reporting only — no limits or enforcement.
+  Covers Chromebooks and Macs (same extension, same deployment mechanism);
+  iPads are out of scope since Apple's Screen Time APIs deliberately wall
+  usage data off from any remote/MDM-level access.
+- **Bell Schedule** admin page and **per-teacher device-activity
+  reconciliation** — measures how much of each teacher's *scheduled*
+  periods their students actually spent active on a device, independent
+  of whether a lesson was ever manually started. A nightly job reconciles
+  the bell schedule against rosters and screen-time data; results show up
+  as a new "Device activity" column on Staff Analytics.
+
+### Fixed
+
+- Staff Analytics' backend query referenced a nonexistent `lessons` table
+  and column, meaning the page was erroring on every load.
+
+---
+
 ## [0.6.5] - 2026-06-22
 
 ### Added
