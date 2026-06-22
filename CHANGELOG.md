@@ -18,6 +18,35 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.8] - 2026-06-22
+
+### Fixed
+
+- **RADIUS/NAC's Google Admin (Chromebook) device sync was silently
+  no-opping on every run** — it depended on `GOOGLE_SERVICE_ACCOUNT_KEY_PATH`/
+  `SUPERADMIN_EMAIL` environment variables that were never set on this
+  install, while the DB-backed Google credential (already configured and
+  working for Integrations) sat unused. Confirmed live: 0 Chromebooks in
+  the RADIUS device list before this fix, 1,319 after.
+- RADIUS's three MDM device sources (Mosyle, Snipe-IT, Google Admin) now
+  read from the same `integration_devices` table the Integrations page
+  uses, instead of independently re-implementing each vendor's API
+  field-mapping a second time — eliminates a class of "RADIUS and
+  Integrations silently disagree" bugs.
+- Snipe-IT assets now capture MAC addresses into `integration_devices`
+  (previously never stored there at all).
+
+### Changed
+
+- Network-controller (AP/switch) presence data is no longer treated as a
+  RADIUS client-device source at all — it never should have allowed onto
+  the network as a user device, only ever provisioned APs/switches
+  themselves as RADIUS NAS clients, which is unaffected. Cleaned up 1,017
+  unreviewed pending rows this had already created; the 38 devices an
+  admin had explicitly approved were preserved.
+
+---
+
 ## [0.6.7] - 2026-06-22
 
 ### Added
