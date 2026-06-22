@@ -18,6 +18,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.6.4] - 2026-06-22
+
+### Added
+
+- **The unblock-request form on the DNS block page now auto-fills from the
+  signed-in Google account** when the ClassGuard extension is present,
+  instead of requiring a typed name/email every time. Falls back to the
+  manual fields unchanged on a personal/unmanaged device.
+
+---
+
 ## [0.6.3] - 2026-06-22
 
 ### Fixed
