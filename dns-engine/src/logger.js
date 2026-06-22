@@ -57,14 +57,15 @@ async function flushToRedis() {
           STREAM_KEY,
           'MAXLEN', '~', STREAM_MAX,
           '*',
-          'domain',      e.domain,
-          'action',      e.action,
-          'sourceIp',    e.sourceIp,
-          'studentId',   e.studentId,
-          'deviceId',    e.deviceId,
-          'policyId',    e.policyId,
-          'blockReason', e.blockReason,
-          'timestamp',   e.timestamp,
+          'domain',          e.domain,
+          'action',          e.action,
+          'sourceIp',        e.sourceIp,
+          'studentId',       e.studentId,
+          'deviceId',        e.deviceId,
+          'policyId',        e.policyId,
+          'lessonSessionId', e.lessonSessionId,
+          'blockReason',     e.blockReason,
+          'timestamp',       e.timestamp,
         );
       }
       await pipeline.exec();
@@ -84,16 +85,17 @@ setInterval(() => {
  * logQuery — synchronous ring buffer enqueue. Zero I/O on the hot DNS path.
  * Called without `await` from resolver.js so resolution never waits for logging.
  */
-function logQuery({ domain, action, sourceIp, studentId, deviceId, policyId, blockReason }) {
+function logQuery({ domain, action, sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason }) {
   enqueue({
-    domain:      domain      || '',
-    action:      action      || 'allowed',
-    sourceIp:    sourceIp    || '',
-    studentId:   studentId   || '',
-    deviceId:    deviceId    || '',
-    policyId:    policyId    || '',
-    blockReason: blockReason || '',
-    timestamp:   Date.now().toString(),
+    domain:          domain          || '',
+    action:          action          || 'allowed',
+    sourceIp:        sourceIp        || '',
+    studentId:       studentId       || '',
+    deviceId:        deviceId        || '',
+    policyId:        policyId        || '',
+    lessonSessionId: lessonSessionId || '',
+    blockReason:     blockReason     || '',
+    timestamp:       Date.now().toString(),
   });
 }
 

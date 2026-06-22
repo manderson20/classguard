@@ -10,7 +10,7 @@ const { query, pool }     = require('../db');
 const redis               = require('../redis');
 const { authenticate }    = require('../middleware/auth');
 const { requireMinRole }  = require('../middleware/roles');
-const { resolvePolicy }   = require('../services/policyResolver');
+const { resolvePolicy, getActiveLessonSessionId } = require('../services/policyResolver');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
 const { logDeviceView }   = require('../services/deviceViewAudit');
 const { getCategoryForDomain } = require('../services/categoryLookup');
@@ -318,6 +318,11 @@ router.post('/tab-event', authenticate, async (req, res) => {
     if (cached) deviceId = JSON.parse(cached).deviceId || null;
   } catch { /* not fatal — history just won't have a device_id for this row */ }
 
+  // Tags this row with the active lesson session (if any) so a teacher can
+  // later scope a student's history to just this lesson — same join
+  // policyResolver.js's resolvePolicy() uses to decide lesson mode.
+  const lessonSessionId = await getActiveLessonSessionId(studentId).catch(() => null);
+
   let action = null, block_reason = null, hostname = null;
   if (is_direct_ip) {
     action       = blocked ? 'blocked' : 'allowed';
@@ -374,15 +379,16 @@ router.post('/tab-event', authenticate, async (req, res) => {
     'classguard:tab-events',
     'MAXLEN', '~', 50000,
     '*',
-    'student_id',   studentId,
-    'device_id',    deviceId || '',
-    'url',          url.substring(0, 1000),
-    'title',        title.substring(0, 200),
-    'event',        event,
-    'action',       action || '',
-    'block_reason', block_reason || '',
-    'is_direct_ip', is_direct_ip ? '1' : '0',
-    'ts',           ts.toString()
+    'student_id',        studentId,
+    'device_id',         deviceId || '',
+    'lesson_session_id', lessonSessionId || '',
+    'url',               url.substring(0, 1000),
+    'title',             title.substring(0, 200),
+    'event',             event,
+    'action',            action || '',
+    'block_reason',      block_reason || '',
+    'is_direct_ip',      is_direct_ip ? '1' : '0',
+    'ts',                ts.toString()
   ).catch(() => {});
 
   // Emit to teacher dashboards via the Socket.io bridge
@@ -431,7 +437,7 @@ router.post('/internal/tab-events/bulk', authenticate, requireMinRole('superadmi
 // ---------------------------------------------------------------------------
 router.get('/browser-history', authenticate, requireMinRole('teacher'), async (req, res) => {
   const {
-    student_id, url, action, is_direct_ip,
+    student_id, url, action, is_direct_ip, lesson_session_id,
     from, to,
     page = 1, limit = 50,
   } = req.query;
@@ -462,6 +468,10 @@ router.get('/browser-history', authenticate, requireMinRole('teacher'), async (r
   }
   if (is_direct_ip === 'true') {
     conditions.push(`is_direct_ip = true`);
+  }
+  if (lesson_session_id) {
+    conditions.push(`lesson_session_id = $${values.length + 1}`);
+    values.push(lesson_session_id);
   }
 
   // Teachers can only see their own students — same scoping as dns.js's /logs

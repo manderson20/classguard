@@ -5,10 +5,153 @@ const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { invalidatePolicy, invalidateNetworkPolicy } = require('../services/policyResolver');
 const { parseCsv, classifyRows, classifyUrl, isValidUrlPattern } = require('../services/goguardianImport');
+const { teacherOwnsStudent } = require('../services/teacherRoster');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const router = Router();
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/policies/simulate  — filter simulator
+// Registered before the blanket admin-only router.use() below so teachers
+// can reach it too (Teacher Live View Phase 3 — "test a URL" from the
+// active-lesson view). A teacher may only simulate against a student on
+// their own roster, and may not probe an arbitrary policy_id directly —
+// that's an admin-only capability for testing a policy still being drafted.
+// ---------------------------------------------------------------------------
+router.post('/simulate', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { student_id, policy_id, domain: rawDomain } = req.body;
+  if (!rawDomain) return res.status(400).json({ error: 'domain required' });
+
+  if (req.user.role === 'teacher') {
+    if (policy_id) return res.status(400).json({ error: 'policy_id simulation is admin-only' });
+    if (student_id && !(await teacherOwnsStudent(req.user.userId, student_id))) {
+      return res.status(403).json({ error: 'Not your student' });
+    }
+  }
+
+  const domain = rawDomain.trim().toLowerCase().replace(/\.$/, '').replace(/^https?:\/\//, '').split('/')[0];
+  const trace  = [];
+
+  const { resolvePolicy, resolveNetworkPolicy, buildResolvedPolicy, explainPolicyChain } = require('../services/policyResolver');
+  // Display-only context for "why was this blocked" UIs — the precedence
+  // chain (student/group/OU/default) this student resolves to, independent
+  // of which policy actually decided the block below (see explainPolicyChain's
+  // own `note` field for why those usually differ).
+  const policyChain = student_id ? await explainPolicyChain(student_id) : null;
+
+  let policy;
+  if (policy_id) {
+    // Explicit policy override — test a domain against one specific policy
+    // directly, skipping student/network resolution entirely. Useful for
+    // checking a policy's own rules in isolation before assigning it to
+    // anyone (e.g. while still drafting it).
+    const { rows: policyRows } = await query('SELECT * FROM policies WHERE id = $1', [policy_id]);
+    if (!policyRows[0]) return res.status(404).json({ error: 'Policy not found' });
+    policy = await buildResolvedPolicy(policyRows[0]);
+    trace.push({ step: 'policy_resolved', policy_name: policy.name, mode: policy.mode || 'standard', detail: 'Manually selected — student/network resolution skipped' });
+  } else if (student_id) {
+    // Resolve the effective policy — must mirror dns-engine/src/resolver.js's
+    // own fallback exactly (lines ~67-78): a student's OU policy only applies
+    // while it's in lesson/penalty_box mode; otherwise (and always, for an
+    // unidentified device — no student_id) the network-wide DNS floor policy
+    // is what actually gets enforced. resolvePolicy(null) on its own returns
+    // a much narrower "default passthrough" with no domain rules at all, which
+    // made every "no student selected" simulation diverge from real traffic.
+    const ouPolicy = await resolvePolicy(student_id);
+    policy = (ouPolicy?.mode === 'lesson' || ouPolicy?.mode === 'penalty_box')
+      ? ouPolicy
+      : await resolveNetworkPolicy();
+    trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(network floor)', mode: policy?.mode || 'standard' });
+  } else {
+    policy = await resolveNetworkPolicy();
+    trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(network floor)', mode: policy?.mode || 'standard' });
+  }
+
+  // Global allowlist (admin "AI/Allowlist" overrides) — checked first, before
+  // even lesson_mode/penalty_box, same precedence as resolver.js step 4.
+  const { rows: globalAllowRows } = await query(`SELECT domain FROM allowlist_overrides`);
+  const globalOverrideMatch = globalAllowRows.find(r => domain === r.domain || domain.endsWith(`.${r.domain}`));
+  if (globalOverrideMatch) {
+    trace.push({ step: 'global_allowlist', result: 'allowed', matched: globalOverrideMatch.domain });
+    return res.json({ blocked: false, reason: 'global_allowlist', domain, trace, policy_chain: policyChain });
+  }
+  trace.push({ step: 'global_allowlist', result: 'no_match' });
+
+  // Lesson mode
+  if (policy?.mode === 'lesson') {
+    const allowed = (policy.resolvedAllowDomains || []).some(e => domain === e || domain.endsWith(`.${e}`));
+    if (!allowed) {
+      trace.push({ step: 'lesson_mode', result: 'blocked', reason: 'Not in lesson allow-list' });
+      return res.json({ blocked: true, reason: 'lesson_mode', domain, trace, policy_chain: policyChain });
+    }
+    trace.push({ step: 'lesson_mode', result: 'allowed', reason: 'Domain in lesson allow-list' });
+    return res.json({ blocked: false, reason: 'lesson_allow', domain, trace, policy_chain: policyChain });
+  }
+
+  // Penalty box
+  if (policy?.mode === 'penalty_box') {
+    trace.push({ step: 'penalty_box', result: 'blocked' });
+    return res.json({ blocked: true, reason: 'penalty_box', domain, trace, policy_chain: policyChain });
+  }
+
+  // Per-policy allow-list
+  const globalAllow = (policy?.resolvedAllowDomains || []).some(e => domain === e || domain.endsWith(`.${e}`));
+  if (globalAllow) {
+    trace.push({ step: 'allow_list', result: 'allowed', matched: domain });
+    return res.json({ blocked: false, reason: 'allow_list', domain, trace, policy_chain: policyChain });
+  }
+  trace.push({ step: 'allow_list', result: 'no_match' });
+
+  // Explicit deny list
+  const denyMatch = (policy?.resolvedDenyDomains || []).find(e => domain === e || domain.endsWith(`.${e}`));
+  if (denyMatch) {
+    trace.push({ step: 'deny_list', result: 'blocked', matched: denyMatch });
+    return res.json({ blocked: true, reason: 'deny_list', matched: denyMatch, domain, trace, policy_chain: policyChain });
+  }
+  trace.push({ step: 'deny_list', result: 'no_match' });
+
+  // Blocklist check
+  const redis = require('../redis');
+  const parts  = domain.split('.');
+  const checks = [];
+  for (let i = 0; i < parts.length - 1; i++) checks.push(parts.slice(i).join('.'));
+  let blocklisted = false;
+  for (const check of checks) {
+    const inList = await redis.sismember('classguard:blocklist:domains', check).catch(() => 0);
+    if (inList) { blocklisted = true; trace.push({ step: 'blocklist', result: 'blocked', matched: check }); break; }
+  }
+  if (!blocklisted) trace.push({ step: 'blocklist', result: 'no_match' });
+  if (blocklisted) return res.json({ blocked: true, reason: 'blocklist', domain, trace, policy_chain: policyChain });
+
+  // Category check
+  const CATEGORY_KEY = 'classguard:domain:category';
+  const catPipeline  = redis.pipeline();
+  for (const c of checks) catPipeline.hget(CATEGORY_KEY, c);
+  const catResults = await catPipeline.exec().catch(() => []);
+  const catHit     = catResults.find(([e, v]) => !e && v);
+  const category   = catHit?.[1] || null;
+
+  if (category) {
+    const blockedCats = policy?.blockedCategories || [];
+    const allowedCats = policy?.allowedCategories || [];
+    if (blockedCats.includes(category)) {
+      trace.push({ step: 'category', result: 'blocked', category });
+      return res.json({ blocked: true, reason: `category:${category}`, category, domain, trace, policy_chain: policyChain });
+    }
+    if (allowedCats.includes(category)) {
+      trace.push({ step: 'category', result: 'allowed', category });
+    } else {
+      trace.push({ step: 'category', result: 'not_blocked', category });
+    }
+  } else {
+    trace.push({ step: 'category', result: 'uncategorized' });
+  }
+
+  trace.push({ step: 'upstream', result: 'allowed' });
+  res.json({ blocked: false, reason: 'allowed', category, domain, trace, policy_chain: policyChain });
+});
+
 router.use(authenticate, requireMinRole('admin'));
 
 // ---------------------------------------------------------------------------
@@ -683,134 +826,5 @@ router.delete('/:id/assignments/:assignmentId', async (req, res) => {
   res.json({ deleted: assignment });
 });
 
-// ---------------------------------------------------------------------------
-// POST /api/v1/policies/simulate  — filter simulator
-// (must come before /:id to avoid route collision)
-// ---------------------------------------------------------------------------
-router.post('/simulate', async (req, res) => {
-  const { student_id, policy_id, domain: rawDomain } = req.body;
-  if (!rawDomain) return res.status(400).json({ error: 'domain required' });
-
-  const domain = rawDomain.trim().toLowerCase().replace(/\.$/, '').replace(/^https?:\/\//, '').split('/')[0];
-  const trace  = [];
-
-  const { resolvePolicy, resolveNetworkPolicy, buildResolvedPolicy, explainPolicyChain } = require('../services/policyResolver');
-  // Display-only context for "why was this blocked" UIs — the precedence
-  // chain (student/group/OU/default) this student resolves to, independent
-  // of which policy actually decided the block below (see explainPolicyChain's
-  // own `note` field for why those usually differ).
-  const policyChain = student_id ? await explainPolicyChain(student_id) : null;
-
-  let policy;
-  if (policy_id) {
-    // Explicit policy override — test a domain against one specific policy
-    // directly, skipping student/network resolution entirely. Useful for
-    // checking a policy's own rules in isolation before assigning it to
-    // anyone (e.g. while still drafting it).
-    const { rows: policyRows } = await query('SELECT * FROM policies WHERE id = $1', [policy_id]);
-    if (!policyRows[0]) return res.status(404).json({ error: 'Policy not found' });
-    policy = await buildResolvedPolicy(policyRows[0]);
-    trace.push({ step: 'policy_resolved', policy_name: policy.name, mode: policy.mode || 'standard', detail: 'Manually selected — student/network resolution skipped' });
-  } else if (student_id) {
-    // Resolve the effective policy — must mirror dns-engine/src/resolver.js's
-    // own fallback exactly (lines ~67-78): a student's OU policy only applies
-    // while it's in lesson/penalty_box mode; otherwise (and always, for an
-    // unidentified device — no student_id) the network-wide DNS floor policy
-    // is what actually gets enforced. resolvePolicy(null) on its own returns
-    // a much narrower "default passthrough" with no domain rules at all, which
-    // made every "no student selected" simulation diverge from real traffic.
-    const ouPolicy = await resolvePolicy(student_id);
-    policy = (ouPolicy?.mode === 'lesson' || ouPolicy?.mode === 'penalty_box')
-      ? ouPolicy
-      : await resolveNetworkPolicy();
-    trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(network floor)', mode: policy?.mode || 'standard' });
-  } else {
-    policy = await resolveNetworkPolicy();
-    trace.push({ step: 'policy_resolved', policy_name: policy?.name || '(network floor)', mode: policy?.mode || 'standard' });
-  }
-
-  // Global allowlist (admin "AI/Allowlist" overrides) — checked first, before
-  // even lesson_mode/penalty_box, same precedence as resolver.js step 4.
-  const { rows: globalAllowRows } = await query(`SELECT domain FROM allowlist_overrides`);
-  const globalOverrideMatch = globalAllowRows.find(r => domain === r.domain || domain.endsWith(`.${r.domain}`));
-  if (globalOverrideMatch) {
-    trace.push({ step: 'global_allowlist', result: 'allowed', matched: globalOverrideMatch.domain });
-    return res.json({ blocked: false, reason: 'global_allowlist', domain, trace, policy_chain: policyChain });
-  }
-  trace.push({ step: 'global_allowlist', result: 'no_match' });
-
-  // Lesson mode
-  if (policy?.mode === 'lesson') {
-    const allowed = (policy.resolvedAllowDomains || []).some(e => domain === e || domain.endsWith(`.${e}`));
-    if (!allowed) {
-      trace.push({ step: 'lesson_mode', result: 'blocked', reason: 'Not in lesson allow-list' });
-      return res.json({ blocked: true, reason: 'lesson_mode', domain, trace, policy_chain: policyChain });
-    }
-    trace.push({ step: 'lesson_mode', result: 'allowed', reason: 'Domain in lesson allow-list' });
-    return res.json({ blocked: false, reason: 'lesson_allow', domain, trace, policy_chain: policyChain });
-  }
-
-  // Penalty box
-  if (policy?.mode === 'penalty_box') {
-    trace.push({ step: 'penalty_box', result: 'blocked' });
-    return res.json({ blocked: true, reason: 'penalty_box', domain, trace, policy_chain: policyChain });
-  }
-
-  // Per-policy allow-list
-  const globalAllow = (policy?.resolvedAllowDomains || []).some(e => domain === e || domain.endsWith(`.${e}`));
-  if (globalAllow) {
-    trace.push({ step: 'allow_list', result: 'allowed', matched: domain });
-    return res.json({ blocked: false, reason: 'allow_list', domain, trace, policy_chain: policyChain });
-  }
-  trace.push({ step: 'allow_list', result: 'no_match' });
-
-  // Explicit deny list
-  const denyMatch = (policy?.resolvedDenyDomains || []).find(e => domain === e || domain.endsWith(`.${e}`));
-  if (denyMatch) {
-    trace.push({ step: 'deny_list', result: 'blocked', matched: denyMatch });
-    return res.json({ blocked: true, reason: 'deny_list', matched: denyMatch, domain, trace, policy_chain: policyChain });
-  }
-  trace.push({ step: 'deny_list', result: 'no_match' });
-
-  // Blocklist check
-  const redis = require('../redis');
-  const parts  = domain.split('.');
-  const checks = [];
-  for (let i = 0; i < parts.length - 1; i++) checks.push(parts.slice(i).join('.'));
-  let blocklisted = false;
-  for (const check of checks) {
-    const inList = await redis.sismember('classguard:blocklist:domains', check).catch(() => 0);
-    if (inList) { blocklisted = true; trace.push({ step: 'blocklist', result: 'blocked', matched: check }); break; }
-  }
-  if (!blocklisted) trace.push({ step: 'blocklist', result: 'no_match' });
-  if (blocklisted) return res.json({ blocked: true, reason: 'blocklist', domain, trace, policy_chain: policyChain });
-
-  // Category check
-  const CATEGORY_KEY = 'classguard:domain:category';
-  const catPipeline  = redis.pipeline();
-  for (const c of checks) catPipeline.hget(CATEGORY_KEY, c);
-  const catResults = await catPipeline.exec().catch(() => []);
-  const catHit     = catResults.find(([e, v]) => !e && v);
-  const category   = catHit?.[1] || null;
-
-  if (category) {
-    const blockedCats = policy?.blockedCategories || [];
-    const allowedCats = policy?.allowedCategories || [];
-    if (blockedCats.includes(category)) {
-      trace.push({ step: 'category', result: 'blocked', category });
-      return res.json({ blocked: true, reason: `category:${category}`, category, domain, trace, policy_chain: policyChain });
-    }
-    if (allowedCats.includes(category)) {
-      trace.push({ step: 'category', result: 'allowed', category });
-    } else {
-      trace.push({ step: 'category', result: 'not_blocked', category });
-    }
-  } else {
-    trace.push({ step: 'category', result: 'uncategorized' });
-  }
-
-  trace.push({ step: 'upstream', result: 'allowed' });
-  res.json({ blocked: false, reason: 'allowed', category, domain, trace, policy_chain: policyChain });
-});
 
 module.exports = router;

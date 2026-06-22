@@ -33,7 +33,7 @@ async function resolveQuery(name, typeNum, sourceIp) {
   const localAnswers = await localRecords.lookupLocal(domain, typeNum).catch(() => null);
   if (localAnswers !== null) {
     // null = not our zone; empty array = our zone but no record (NXDOMAIN)
-    logQuery({ domain, action: 'local', sourceIp, studentId: null, deviceId: null, policyId: null, blockReason: null });
+    logQuery({ domain, action: 'local', sourceIp, studentId: null, deviceId: null, policyId: null, lessonSessionId: null, blockReason: null });
     return { action: 'allowed', answers: localAnswers };
   }
 
@@ -76,6 +76,10 @@ async function resolveQuery(name, typeNum, sourceIp) {
     policy = subnetPolicy || await policyCache.getNetworkPolicy().catch(() => null);
   }
   const mode   = policy?.mode || 'standard';
+  // Only meaningful while an active lesson is the thing actually deciding
+  // this query (mode === 'lesson') — used to tag dns_logs so a teacher can
+  // later scope a student's history to just this lesson session.
+  const lessonSessionId = mode === 'lesson' ? (policy.lessonSessionId || null) : null;
 
   const allowList = [
     ...(policy?.resolvedAllowDomains || []),
@@ -85,27 +89,27 @@ async function resolveQuery(name, typeNum, sourceIp) {
   // This runs before ANY policy block including lesson/penalty_box mode.
   const globalAllowList = await policyCache.getGlobalAllowlist().catch(() => []);
   if (isInAllowList(domain, globalAllowList)) {
-    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
+    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId, lessonSessionId);
   }
 
   // --- 5. Explicit allow-list check (per-policy) --------------------------
   if (isInAllowList(domain, allowList)) {
-    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
+    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId, lessonSessionId);
   }
 
   // --- 6. Mode-based restrictions -----------------------------------------
   if (mode === 'penalty_box') {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'penalty_box' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'penalty_box' });
     return { action: 'blocked', answers: [], blockReason: 'penalty_box' };
   }
 
   if (mode === 'lesson') {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'lesson_mode' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'lesson_mode' });
     return { action: 'blocked', answers: [], blockReason: 'lesson_mode' };
   }
 
   if (mode === 'open') {
-    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
+    return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId, lessonSessionId);
   }
 
   // --- 6.5. Override code check -------------------------------------------
@@ -115,7 +119,7 @@ async function resolveQuery(name, typeNum, sourceIp) {
   if (mode === 'standard') {
     const hasOverride = await policyCache.getOverrideForIp(sourceIp, domain).catch(() => false);
     if (hasOverride) {
-      return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
+      return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId, lessonSessionId);
     }
   }
 
@@ -126,11 +130,11 @@ async function resolveQuery(name, typeNum, sourceIp) {
   try {
     blocked = await blocklist.isBlocked(domain);
   } catch {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'safety_check_unavailable' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'safety_check_unavailable' });
     return { action: 'blocked', answers: [], blockReason: 'safety_check_unavailable' };
   }
   if (blocked) {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'blocklist' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'blocklist' });
     return { action: 'blocked', answers: [], blockReason: 'blocklist' };
   }
 
@@ -141,19 +145,19 @@ async function resolveQuery(name, typeNum, sourceIp) {
   try {
     category = await categoryLookup.getCategoryForDomain(domain);
   } catch {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'safety_check_unavailable' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'safety_check_unavailable' });
     return { action: 'blocked', answers: [], blockReason: 'safety_check_unavailable' };
   }
   const blockedCats    = policy?.blockedCategories || [];
   const allowedCatSet  = new Set(policy?.allowedCategories || []);
 
   if (category && blockedCats.includes(category)) {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: `category:${category}` });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: `category:${category}` });
     return { action: 'blocked', answers: [], blockReason: `category:${category}` };
   }
 
   // --- 8. Allowed — forward to upstream -----------------------------------
-  return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId);
+  return forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId, lessonSessionId);
 }
 
 /**
@@ -166,13 +170,13 @@ async function resolveQuery(name, typeNum, sourceIp) {
  * only returns null for the former; the latter still returns a normal,
  * empty answers array and is left alone.
  */
-async function forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId) {
+async function forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId, lessonSessionId = null) {
   const answers = await forwardToUpstream(domain, typeNum);
   if (answers === null) {
-    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, blockReason: 'unresolvable' });
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'unresolvable' });
     return { action: 'blocked', answers: [], blockReason: 'unresolvable' };
   }
-  logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, blockReason: null });
+  logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: null });
   return { action: 'allowed', answers };
 }
 

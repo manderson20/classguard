@@ -5,6 +5,100 @@ import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
 import Avatar from '../components/Avatar';
+import { TraceContent } from '../components/WhyBlockedTrace';
+
+function hostnameOf(url) {
+  try { return new URL(url).hostname; } catch { return url; }
+}
+
+// Session-scoped history panel — strictly the active lesson session's own
+// rows (lesson_session_id filter), not all-time history, per explicit user
+// requirement: a teacher reviewing "what did this student do during class"
+// should never see activity from outside the lesson.
+function SessionHistoryPanel({ studentId, lesson }) {
+  const [whyDomain, setWhyDomain] = useState(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['session-history', studentId, lesson.id],
+    queryFn:  () => {
+      const p = new URLSearchParams({
+        student_id:        studentId,
+        lesson_session_id: lesson.id,
+        from:              lesson.started_at,
+        limit:             25,
+      });
+      return api.get(`/extension/browser-history?${p}`);
+    },
+  });
+
+  const rows = data?.results || [];
+
+  return (
+    <div className="mt-2 pt-2 border-t border-slate-100 max-h-40 overflow-y-auto">
+      {isLoading ? (
+        <div className="text-xs text-slate-400">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-xs text-slate-400">No activity yet this session</div>
+      ) : (
+        <ul className="space-y-1">
+          {rows.map(r => (
+            <li key={r.id} className="text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-mono text-slate-600 truncate">{r.title || hostnameOf(r.url)}</span>
+                <span className={r.action === 'blocked' ? 'text-red-600 flex-shrink-0' : 'text-slate-400 flex-shrink-0'}>
+                  {new Date(r.visited_at).toLocaleTimeString()}
+                </span>
+              </div>
+              {r.action === 'blocked' && (
+                <button
+                  onClick={() => setWhyDomain(whyDomain === hostnameOf(r.url) ? null : hostnameOf(r.url))}
+                  className="text-red-500 hover:underline"
+                >
+                  Blocked: {r.block_reason || 'why?'}
+                </button>
+              )}
+              {whyDomain === hostnameOf(r.url) && (
+                <div className="mt-1 bg-slate-50 rounded p-2">
+                  <TraceContent studentId={studentId} domain={whyDomain} />
+                </div>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Per-student quick filter-test — runs the same simulator the admin Policy
+// Simulator page uses, now teacher-accessible (scoped to students on their
+// own roster, enforced server-side).
+function TestUrlPanel({ studentId }) {
+  const [input, setInput]   = useState('');
+  const [domain, setDomain] = useState(null);
+
+  const submit = () => {
+    const v = input.trim();
+    if (!v) return;
+    setDomain(v.replace(/^https?:\/\//, '').split('/')[0]);
+  };
+
+  return (
+    <div className="mt-2 pt-2 border-t border-slate-100">
+      <div className="flex gap-1.5">
+        <input autoFocus value={input} onChange={e => setInput(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && submit()}
+          placeholder="domain or URL to test…" className="flex-1 text-xs border border-slate-300 rounded-md px-2 py-1" />
+        <button onClick={submit} className="text-xs px-2 py-1 rounded-md bg-blue-600 text-white">Test</button>
+      </div>
+      {domain && (
+        <div className="mt-2 bg-slate-50 rounded p-2 max-h-48 overflow-y-auto">
+          <TraceContent studentId={studentId} domain={domain} />
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ChatPanel({ threadId, onClose, socket, selfId }) {
   const qc = useQueryClient();
@@ -132,11 +226,13 @@ function LockdownForm({ count, onClose, onStart }) {
   );
 }
 
-function StudentTile({ student, activity, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, lockdownSession, lockdownEventCount, onEndLockdown }) {
+function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, lockdownSession, lockdownEventCount, onEndLockdown }) {
   const [highlight, setHighlight]   = useState(false);
   const [locked, setLocked]         = useState(false);
   const [urlInputOpen, setUrlInputOpen] = useState(false);
   const [urlInput, setUrlInput]     = useState('');
+  const [historyOpen, setHistoryOpen]   = useState(false);
+  const [testUrlOpen, setTestUrlOpen]   = useState(false);
   const prevUrl = useRef(null);
 
   useEffect(() => {
@@ -237,6 +333,16 @@ function StudentTile({ student, activity, selected, onToggleSelect, onRestrict, 
           className="text-xs px-2 py-1 rounded-md border text-slate-600 border-slate-300 hover:bg-slate-50">
           Close Tab
         </button>
+        {lesson?.id && (
+          <button onClick={() => setHistoryOpen(v => !v)}
+            className={`text-xs px-2 py-1 rounded-md border ${historyOpen ? 'bg-slate-700 text-white border-slate-700' : 'text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
+            History
+          </button>
+        )}
+        <button onClick={() => setTestUrlOpen(v => !v)}
+          className={`text-xs px-2 py-1 rounded-md border ${testUrlOpen ? 'bg-slate-700 text-white border-slate-700' : 'text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
+          Test URL
+        </button>
       </div>
 
       {urlInputOpen && (
@@ -247,6 +353,9 @@ function StudentTile({ student, activity, selected, onToggleSelect, onRestrict, 
           <button onClick={submitUrl} className="text-xs px-2 py-1 rounded-md bg-blue-600 text-white">Go</button>
         </div>
       )}
+
+      {historyOpen && lesson?.id && <SessionHistoryPanel studentId={student.id} lesson={lesson} />}
+      {testUrlOpen && <TestUrlPanel studentId={student.id} />}
     </div>
   );
 }
@@ -465,6 +574,7 @@ export default function ActiveLesson() {
                 key={student.id}
                 student={student}
                 activity={activity[student.id]}
+                lesson={lesson}
                 selected={selected.has(student.id)}
                 onToggleSelect={toggleSelect}
                 onRestrict={(id) => restrict.mutate(id)}
