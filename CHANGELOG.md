@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.5] - 2026-06-23
+
+### Fixed
+- **EXTENSION_SIGNING_KEY never synced when a node joins the HA cluster.** Same class of bug as v0.7.3's `JWT_SECRET` fix. This key is optional (only set if an admin has ever run the one-time `generate-key.js` keygen) but when it is set, every node needs the identical value or `extension-builder` mints a different Chrome extension ID on that node, silently forking the auto-update story between nodes the moment anyone builds the extension there. `/join` now hands it back alongside `JWT_SECRET` when present, and `/join-cluster`'s generated setup script patches it into the joining node's `.env` (using a `#`-delimited `sed`, since unlike `JWT_SECRET`/`DB_PASSWORD` this is full unfiltered base64 and can contain `/`) and restarts `extension-builder`. Fixes future joins only.
+
+---
+
 ## [0.7.4] - 2026-06-23
 
 ### Fixed
