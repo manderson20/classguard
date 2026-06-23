@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.2] - 2026-06-23
+
+### Fixed
+- **VRRP auth password leaked in plaintext via the HA/RADIUS config API.** `GET/PUT /api/v1/ha/vrrp` and `GET/PUT /api/v1/radius/ha` both returned `vrrp_auth_password` in the raw JSON response, and the HA Cluster and RADIUS pages pre-filled it directly into a password input. Found while wiring Settings ▸ Monitoring to the same endpoint for the v0.7.1 Zabbix fix. Now redacted (`vrrp_auth_password_set` boolean instead) using the same pattern already used for TLS provider credentials; "leave blank to keep" continues to work since omitted fields were already handled correctly on write. Config-bundle download endpoints (which generate the actual `keepalived.conf`) are unaffected — they still need and return the real value.
+
+---
+
 ## [0.7.1] - 2026-06-23
 
 ### Fixed
