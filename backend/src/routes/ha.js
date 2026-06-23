@@ -472,9 +472,17 @@ router.post('/join', async (req, res) => {
     // Handed back unconditionally (not gated behind request_replica) so any
     // join — DB-replicating or not — ends up able to validate this primary's
     // tokens.
+    //
+    // EXTENSION_SIGNING_KEY (chrome-extension/scripts/generate-key.js) is
+    // optional — undefined on any install that's never run the one-time
+    // keygen — but when it IS set, every node needs the identical value or
+    // extension-builder would mint a different extension ID on that node,
+    // silently forking the auto-update story between nodes the moment
+    // anyone built the extension there.
     res.status(201).json({
       joined: true, node: nodeRows[0], replication,
       jwtSecret: process.env.JWT_SECRET,
+      extensionSigningKey: process.env.EXTENSION_SIGNING_KEY || null,
     });
   } catch (err) {
     await client.query('ROLLBACK');
@@ -535,11 +543,26 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
     let setupScript = null;
     const lines = ['cd /opt/classguard'];
 
+    // Tracks which containers need restarting purely because a secret was
+    // patched into .env — separate from whatever the replication branch
+    // below already brings up, so we don't double-issue `docker compose up`
+    // for the same service.
+    const restartServices = new Set();
+
     // Patched in regardless of whether DB replication was requested — a
     // mismatched JWT_SECRET breaks session continuity on failover even for
     // a node that isn't a DB replica.
     if (data?.jwtSecret) {
       lines.push(`sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${data.jwtSecret}/" .env`);
+      restartServices.add('api');
+    }
+    // Full base64 (unfiltered RSA key, unlike the alphanumeric-only
+    // JWT_SECRET/DB_PASSWORD) — can contain '/', so this needs a delimiter
+    // sed won't confuse with the substitution syntax. '#' never appears in
+    // base64 output.
+    if (data?.extensionSigningKey) {
+      lines.push(`sed -i "s#^EXTENSION_SIGNING_KEY=.*#EXTENSION_SIGNING_KEY=${data.extensionSigningKey}#" .env`);
+      restartServices.add('extension-builder');
     }
 
     if (data?.replication) {
@@ -568,13 +591,17 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
           'docker compose build api dns frontend migrate',
           'docker compose up -d redis api dns frontend',
         );
+        restartServices.delete('api'); // already covered by the line above
       } else {
         lines.push('docker compose up -d postgres');
       }
-    } else if (data?.jwtSecret) {
-      // No DB replication requested — still need to restart the api
-      // container so the patched JWT_SECRET actually takes effect.
-      lines.push('docker compose up -d api');
+      if (restartServices.size) {
+        lines.push(`docker compose up -d ${[...restartServices].join(' ')}`);
+      }
+    } else if (restartServices.size) {
+      // No DB replication requested — still need to (re)start whichever
+      // containers consume a secret that was just patched into .env.
+      lines.push(`docker compose up -d ${[...restartServices].join(' ')}`);
     }
 
     if (lines.length > 1) setupScript = lines.join('\n');
