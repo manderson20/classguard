@@ -1,14 +1,25 @@
 /**
  * /metrics endpoint — Zabbix HTTP agent item format.
  *
- * Zabbix configuration:
+ * This endpoint is per-node: nginx on every cluster member answers it
+ * locally (default_server, all interfaces — not just the VIP), and each
+ * node's own API container reports its own process/DNS/HA stats, including
+ * its current VRRP role (vrrp_state / is_vrrp_master). Polling only the VIP
+ * tells you "the service is up", but since the VIP always resolves to
+ * whichever node currently holds MASTER, it can never show you a failover —
+ * for that you need each node's real IP monitored as its own Zabbix host.
+ * /metrics/zabbix-template generates exactly that: one host per cluster
+ * member (pulled from the `nodes` table) plus one for the VIP, with a
+ * trigger per node on vrrp_state changing and a cluster-wide split-brain
+ * trigger if more than one node reports MASTER at once.
+ *
+ * Manual Zabbix configuration (if not using the generated template):
  *   Item type:  HTTP agent
- *   URL:        http://<classguard-ip>:3001/metrics
- *   Headers:    X-Metrics-Token: <token from settings>
+ *   URL:        https://<node-ip-or-vip>/metrics
+ *   Headers:    X-Metrics-Token: <token from Settings ▸ Monitoring>
  *   Output format: JSON
  *
  * Each metric key matches a Zabbix item key you create on the host.
- * Import the template at /metrics/zabbix-template to get started.
  */
 
 const express = require('express');
@@ -16,6 +27,7 @@ const router  = express.Router();
 const { pool }  = require('../db');
 const redis     = require('../redis');
 const os        = require('os');
+const { getHaConfig, getNodes } = require('../services/keepalived');
 
 const DNS_STREAM = 'classguard:dns-log';
 
@@ -118,9 +130,23 @@ async function collectMetrics() {
   `).catch(() => ({ rows: [{}] }));
   const nodes = nodeRows[0] || {};
 
+  // This node's own VRRP role — distinct from the cluster-wide totals above.
+  // Lets Zabbix poll each node's real IP (not just the VIP) and alert on a
+  // role flip (failover happened) or two nodes both reporting MASTER
+  // (split-brain), instead of only seeing "service is up" via the VIP.
+  const nodeId = process.env.NODE_ID || os.hostname();
+  const { rows: selfRows } = await pool.query(
+    `SELECT ha_role, vrrp_state, failover_priority FROM nodes WHERE node_id = $1`,
+    [nodeId]
+  ).catch(() => ({ rows: [] }));
+  const self = selfRows[0] || null;
+  // No row at all means this is a standalone, non-HA install — trivially
+  // "master" since there's no failover peer to lose that status to.
+  const vrrpState = self ? (self.vrrp_state || null) : null;
+
   return {
     // Identity
-    node_id:   process.env.NODE_ID || os.hostname(),
+    node_id:   nodeId,
     timestamp: new Date().toISOString(),
     uptime_seconds: Math.round(uptimeSec),
 
@@ -159,11 +185,21 @@ async function collectMetrics() {
     ntp_min_stratum:         ntp.min_stratum ? parseInt(ntp.min_stratum, 10) : null,
     ntp_reachable_servers:   parseInt(ntp.reachable_count, 10) || 0,
     ntp_total_servers:       parseInt(ntp.total_count, 10)     || 0,
-    ntp_synced:              (parseInt(ntp.reachable_count, 10) || 0) > 0,
+    ntp_synced:              (parseInt(ntp.reachable_count, 10) || 0) > 0 ? 1 : 0,
 
-    // HA cluster
+    // HA cluster — totals across the whole cluster
     ha_nodes_total:          parseInt(nodes.total, 10)  || 1,
     ha_nodes_online:         parseInt(nodes.online, 10) || 1,
+
+    // HA cluster — THIS node's own VRRP role. Poll this per-node (not just
+    // via the VIP) to detect a failover or split-brain, not just "is the
+    // service up". Standalone (non-HA) installs report ha_configured=false
+    // and is_vrrp_master=1 (trivially the only node).
+    ha_configured:           self ? 1 : 0,
+    ha_role:                 self?.ha_role || null,
+    failover_priority:       self?.failover_priority ?? null,
+    vrrp_state:              vrrpState,
+    is_vrrp_master:          self ? (vrrpState === 'MASTER' ? 1 : 0) : 1,
   };
 }
 
@@ -181,22 +217,37 @@ router.get('/', metricsAuth, async (req, res) => {
   }
 });
 
-// GET /metrics/zabbix-template  — download a basic Zabbix host template XML
-// (users import this into Zabbix to create all items automatically)
-router.get('/zabbix-template', metricsAuth, async (req, res) => {
-  const metrics = await collectMetrics().catch(() => ({}));
-  const keys    = Object.keys(metrics).filter(k => !['node_id','timestamp'].includes(k));
-  const host    = process.env.APP_URL || 'http://localhost:3001';
-  const token   = req.headers['x-metrics-token'] || req.query.token || '';
+// Fields whose Zabbix value_type is fixed by what they semantically are,
+// rather than sniffed from whatever value happens to come back right now —
+// several of these (vrrp_state, ha_role, failover_priority) are legitimately
+// null on a healthy install (e.g. standalone, or a fresh node before
+// keepalived's first notify), and sniffing off a momentary null would emit
+// the wrong value_type for what is normally a number or always a string.
+// 0=float, 1=character, 3=unsigned, 4=text.
+const KNOWN_VALUE_TYPES = {
+  vrrp_state:        '4',
+  ha_role:           '4',
+  failover_priority: '3',
+  is_vrrp_master:    '3',
+  ha_configured:     '3',
+  ntp_min_stratum:   '3',
+  ntp_synced:        '3',
+};
 
-  const items = keys.map(k => {
-    const isFloat = typeof metrics[k] === 'number' && !Number.isInteger(metrics[k]);
-    return `
+function zabbixValueType(key, value) {
+  if (KNOWN_VALUE_TYPES[key]) return KNOWN_VALUE_TYPES[key];
+  if (typeof value === 'string' || value === null) return '4';
+  if (typeof value === 'number' && !Number.isInteger(value)) return '0';
+  return '3';
+}
+
+function buildItemsXml(keys, metrics, url, token) {
+  return keys.map(k => `
     <item>
       <name>ClassGuard: ${k.replace(/_/g, ' ')}</name>
       <type>19</type><!-- HTTP agent -->
       <key>classguard.${k}</key>
-      <url>${host}/metrics</url>
+      <url>${url}</url>
       <headers>
         <header><name>X-Metrics-Token</name><value>${token}</value></header>
       </headers>
@@ -210,22 +261,99 @@ router.get('/zabbix-template', metricsAuth, async (req, res) => {
           <params>$.${k}</params>
         </step>
       </preprocessing>
-      <value_type>${isFloat ? '0' : '3'}</value_type><!-- 0=float, 3=unsigned -->
+      <value_type>${zabbixValueType(k, metrics[k])}</value_type>
       <delay>60</delay>
-    </item>`;
-  }).join('\n');
+    </item>`).join('\n');
+}
+
+function hostXml(techName, displayName, itemsXml) {
+  return `
+    <host>
+      <host>${techName}</host>
+      <name>${displayName}</name>
+      <items>${itemsXml}
+      </items>
+    </host>`;
+}
+
+// GET /metrics/zabbix-template  — download a Zabbix import XML covering
+// every cluster member's own IP (so a failover/role-flip is visible per
+// node, not just "the VIP answers") plus the VIP itself (the "is the
+// service reachable at all" check). Falls back to a single host pointed at
+// this box's own URL for a standalone, non-HA install.
+router.get('/zabbix-template', metricsAuth, async (req, res) => {
+  const metrics = await collectMetrics().catch(() => ({}));
+  const keys    = Object.keys(metrics).filter(k => !['node_id','timestamp'].includes(k));
+  const token   = req.headers['x-metrics-token'] || req.query.token || '';
+
+  const [nodes, haCfg] = await Promise.all([
+    getNodes().catch(() => []),
+    getHaConfig().catch(() => ({})),
+  ]);
+
+  const targets = [];
+  for (const n of nodes) {
+    if (!n.api_url) continue;
+    let hostname;
+    try { hostname = new URL(n.api_url).hostname; } catch { continue; }
+    const shortName = n.hostname || n.node_id;
+    targets.push({
+      techName:    `ClassGuard - ${shortName}`,
+      displayName: `ClassGuard — ${shortName} (node)`,
+      shortName,
+      url:         `https://${hostname}/metrics`,
+      isNode:      true,
+    });
+  }
+  if (haCfg.vip_address) {
+    targets.push({
+      techName:    'ClassGuard - VIP',
+      displayName: 'ClassGuard — VIP (active service)',
+      url:         `https://${haCfg.vip_address}/metrics`,
+      isNode:      false,
+    });
+  }
+  if (targets.length === 0) {
+    targets.push({
+      techName:    'ClassGuard',
+      displayName: 'ClassGuard Network Safety',
+      url:         `${process.env.APP_URL || 'http://localhost:3001'}/metrics`,
+      isNode:      false,
+    });
+  }
+
+  const hostsXml = targets
+    .map(t => hostXml(t.techName, t.displayName, buildItemsXml(keys, metrics, t.url, token)))
+    .join('\n');
+
+  // Triggers: per-node role-flip (failover happened) + a cluster-wide
+  // split-brain check (more than one node reporting MASTER at once).
+  // Exported at the top level since the split-brain expression spans
+  // multiple hosts — Zabbix resolves host association from the
+  // /Host/key references in each expression, not from nesting.
+  const nodeTargets = targets.filter(t => t.isNode);
+  const triggers = nodeTargets.map(t => `
+    <trigger>
+      <expression>change(/${t.techName}/classguard.is_vrrp_master)&lt;&gt;0</expression>
+      <name>ClassGuard: ${t.shortName} VRRP role changed (failover event)</name>
+      <priority>3</priority><!-- average -->
+    </trigger>`);
+  if (nodeTargets.length >= 2) {
+    const sumExpr = nodeTargets.map(t => `last(/${t.techName}/classguard.is_vrrp_master)`).join('+');
+    triggers.push(`
+    <trigger>
+      <expression>(${sumExpr})&gt;1</expression>
+      <name>ClassGuard: split-brain — more than one node reports MASTER</name>
+      <priority>4</priority><!-- high -->
+    </trigger>`);
+  }
+  const triggersXml = triggers.length ? `\n  <triggers>${triggers.join('\n')}\n  </triggers>` : '';
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <zabbix_export>
   <version>6.0</version>
-  <hosts>
-    <host>
-      <host>ClassGuard</host>
-      <name>ClassGuard Network Safety</name>
-      <items>${items}
-      </items>
-    </host>
-  </hosts>
+  <hosts>${hostsXml}
+  </hosts>${triggersXml}
 </zabbix_export>`;
 
   res.set('Content-Type', 'application/xml');
