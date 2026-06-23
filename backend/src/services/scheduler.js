@@ -45,6 +45,8 @@ function parseStreamEntry(fields) {
 // local drain below and routes/dns.js's /internal/dns-logs/bulk, which a
 // standby node forwards into when its own Postgres is a read-only replica.
 async function insertDnsLogBatch(records) {
+  if (records.length === 0) return;
+
   const userIds          = records.map(r => r.studentId        || null);
   const deviceIds        = records.map(r => r.deviceId         || null);
   const lessonSessionIds = records.map(r => r.lessonSessionId  || null);
@@ -56,14 +58,32 @@ async function insertDnsLogBatch(records) {
     r.timestamp ? new Date(parseInt(r.timestamp, 10)) : new Date()
   );
 
-  await query(
-    `INSERT INTO dns_logs (user_id, device_id, lesson_session_id, domain, action, block_reason, source_ip, queried_at)
-     SELECT * FROM unnest(
-       $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::inet[], $8::timestamptz[]
-     )
-     ON CONFLICT DO NOTHING`,
-    [userIds, deviceIds, lessonSessionIds, domains, actions, blockReasons, sourceIps, queriedAts]
-  );
+  try {
+    await query(
+      `INSERT INTO dns_logs (user_id, device_id, lesson_session_id, domain, action, block_reason, source_ip, queried_at)
+       SELECT * FROM unnest(
+         $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::inet[], $8::timestamptz[]
+       )
+       ON CONFLICT DO NOTHING`,
+      [userIds, deviceIds, lessonSessionIds, domains, actions, blockReasons, sourceIps, queriedAts]
+    );
+  } catch (err) {
+    // unnest() inserts the whole batch as one statement — one malformed
+    // record (bad UUID, invalid inet, etc.) fails ALL of them, and since
+    // drainDnsLog only advances its cursor after this resolves, the exact
+    // same batch would otherwise retry forever and block every record
+    // behind it indefinitely. Bisect to single-record inserts so every
+    // good record still lands; only the actually-malformed one(s) get
+    // dropped (logged, not retried again — see the base case below).
+    if (records.length === 1) {
+      console.error('[scheduler] dropping malformed dns_logs record:', JSON.stringify(records[0]), '—', err.message);
+      return;
+    }
+    console.error(`[scheduler] bulk dns_logs insert failed (${records.length} records), falling back to one-at-a-time:`, err.message);
+    for (const r of records) {
+      await insertDnsLogBatch([r]);
+    }
+  }
 }
 
 // Lazily mirrors this node's own INTERNAL_SECRET into the (replicated)
@@ -155,6 +175,8 @@ const TAB_CURSOR_KEY     = 'classguard:tab-events:cursor';
 const TAB_DRAIN_BATCH    = 10_000;
 
 async function insertBrowserHistoryBatch(records) {
+  if (records.length === 0) return;
+
   const userIds          = records.map(r => r.student_id        || null);
   const deviceIds        = records.map(r => r.device_id         || null);
   const lessonSessionIds = records.map(r => r.lesson_session_id || null);
@@ -167,14 +189,29 @@ async function insertBrowserHistoryBatch(records) {
     r.ts ? new Date(parseInt(r.ts, 10)) : new Date()
   );
 
-  await query(
-    `INSERT INTO browser_history (user_id, device_id, lesson_session_id, url, title, action, block_reason, is_direct_ip, visited_at)
-     SELECT * FROM unnest(
-       $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::text[], $8::boolean[], $9::timestamptz[]
-     )
-     ON CONFLICT DO NOTHING`,
-    [userIds, deviceIds, lessonSessionIds, urls, titles, actions, blockReasons, isDirectIps, visitedAts]
-  );
+  try {
+    await query(
+      `INSERT INTO browser_history (user_id, device_id, lesson_session_id, url, title, action, block_reason, is_direct_ip, visited_at)
+       SELECT * FROM unnest(
+         $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::text[], $8::boolean[], $9::timestamptz[]
+       )
+       ON CONFLICT DO NOTHING`,
+      [userIds, deviceIds, lessonSessionIds, urls, titles, actions, blockReasons, isDirectIps, visitedAts]
+    );
+  } catch (err) {
+    // Same reasoning as insertDnsLogBatch above: one malformed record fails
+    // the whole unnest() batch, and drainTabEvents only advances its cursor
+    // after this resolves — without this fallback, that one record blocks
+    // every browser_history event behind it forever.
+    if (records.length === 1) {
+      console.error('[scheduler] dropping malformed browser_history record:', JSON.stringify(records[0]), '—', err.message);
+      return;
+    }
+    console.error(`[scheduler] bulk browser_history insert failed (${records.length} records), falling back to one-at-a-time:`, err.message);
+    for (const r of records) {
+      await insertBrowserHistoryBatch([r]);
+    }
+  }
 }
 
 async function insertOrForwardBrowserHistory(records) {
