@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.3] - 2026-06-23
+
+### Fixed
+- **JWT_SECRET was never synced when a node joined the HA cluster.** Every node independently generates its own `JWT_SECRET` at install time (`install.sh`), and the join flow (`/ha/join`, `/ha/join-cluster`) already syncs `DB_PASSWORD` the same way for Postgres replication — but never extended that to `JWT_SECRET`. Net effect: a session minted on the primary was never actually valid on a standby, so every logged-in user got silently bounced to the login screen the moment VRRP failed over. `/join` now hands back the primary's `JWT_SECRET` unconditionally (not gated behind requesting DB replication), and `/join-cluster`'s generated setup script patches it into the joining node's `.env` and restarts its `api` container. This fixes future joins only — nodes that already joined before this fix need a one-time manual `.env` sync.
+
+---
+
 ## [0.7.2] - 2026-06-23
 
 ### Fixed
