@@ -2,6 +2,7 @@ const { Router } = require('express');
 const { query, withTransaction } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
+const { requirePermissionIfAdmin } = require('../middleware/permissions');
 const { invalidatePoliciesForClass } = require('../services/policyResolver');
 const events = require('../events');
 
@@ -61,20 +62,20 @@ router.get('/:id', async (req, res) => {
 });
 
 // POST /api/v1/classes
-router.post('/', requireMinRole('admin'), async (req, res) => {
-  const { name, teacher_id, google_course_id = null } = req.body;
+router.post('/', requireMinRole('admin'), requirePermissionIfAdmin('classes'), async (req, res) => {
+  const { name, teacher_id, google_classroom_id = null } = req.body;
   if (!name || !teacher_id) return res.status(400).json({ error: 'name and teacher_id required' });
 
   const { rows } = await query(
-    `INSERT INTO classes (name, teacher_id, google_course_id)
+    `INSERT INTO classes (name, teacher_id, google_classroom_id)
      VALUES ($1,$2,$3) RETURNING *`,
-    [name, teacher_id, google_course_id]
+    [name, teacher_id, google_classroom_id]
   );
   res.status(201).json(rows[0]);
 });
 
 // PATCH /api/v1/classes/:id
-router.patch('/:id', requireMinRole('admin'), async (req, res) => {
+router.patch('/:id', requireMinRole('admin'), requirePermissionIfAdmin('classes'), async (req, res) => {
   const allowed = ['name','teacher_id'];
   const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
   if (fields.length === 0) return res.status(400).json({ error: 'No updatable fields' });
@@ -90,7 +91,7 @@ router.patch('/:id', requireMinRole('admin'), async (req, res) => {
 });
 
 // DELETE /api/v1/classes/:id
-router.delete('/:id', requireMinRole('admin'), async (req, res) => {
+router.delete('/:id', requireMinRole('admin'), requirePermissionIfAdmin('classes'), async (req, res) => {
   const { rows } = await query('DELETE FROM classes WHERE id = $1 RETURNING id', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Class not found' });
   res.json({ deleted: rows[0].id });
