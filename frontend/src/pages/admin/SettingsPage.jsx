@@ -474,6 +474,18 @@ export default function SettingsPage() {
     queryFn:  () => api.get('/dns/zones'),
   });
 
+  // For the Zabbix Monitoring tab — each node + the VIP get their own
+  // metrics URL, since polling only the VIP can never reveal a failover
+  // (it always resolves to whichever node currently holds MASTER).
+  const { data: haNodes = [] } = useQuery({
+    queryKey: ['settings-ha-nodes'],
+    queryFn:  () => api.get('/ha/nodes').catch(() => []),
+  });
+  const { data: haVrrp = {} } = useQuery({
+    queryKey: ['settings-ha-vrrp'],
+    queryFn:  () => api.get('/ha/vrrp').catch(() => ({})),
+  });
+
   const [dns, setDns]     = useState({});
   const [zabbixToken,  setZabbixToken]  = useState('');
   const [saved, setSaved] = useState('');
@@ -666,7 +678,9 @@ export default function SettingsPage() {
         <p className="text-sm text-slate-600 mb-4">
           ClassGuard exposes a <code className="bg-slate-100 px-1 rounded font-mono text-xs">/metrics</code> endpoint
           that Zabbix polls via HTTP agent items. Add a metrics token to secure the endpoint,
-          then download the host template to auto-create all Zabbix items.
+          then download the host template — it creates one Zabbix host per cluster node
+          <em> plus</em> one for the VIP, since polling only the VIP can never show you a
+          failover (it always answers as whichever node currently holds it).
         </p>
         <Field label="Metrics Token (X-Metrics-Token header)" hint="Leave blank to allow unauthenticated requests from localhost only">
           <input
@@ -678,8 +692,23 @@ export default function SettingsPage() {
           />
         </Field>
         <div className="mt-3 bg-slate-50 rounded-lg p-3 text-xs font-mono text-slate-600 space-y-1">
-          <div><span className="text-slate-400">Endpoint URL:</span> {window.location.origin.replace(':5173','').replace(':5174','') || window.location.origin}:3001/metrics</div>
-          <div><span className="text-slate-400">Zabbix item type:</span> HTTP agent</div>
+          {haNodes.length > 0 ? (
+            <>
+              {haNodes.map(n => (
+                <div key={n.id || n.node_id}>
+                  <span className="text-slate-400">{n.hostname || n.node_id} ({n.ha_role || 'node'}):</span>{' '}
+                  https://{(n.api_url || '').replace(/^https?:\/\//, '')}/metrics
+                  {n.vrrp_state && <span className="ml-2 text-slate-400">[{n.vrrp_state}]</span>}
+                </div>
+              ))}
+              {haVrrp.vip_address && (
+                <div><span className="text-slate-400">VIP (active service):</span> https://{haVrrp.vip_address}/metrics</div>
+              )}
+            </>
+          ) : (
+            <div><span className="text-slate-400">Endpoint URL:</span> {window.location.origin.replace(':5173','').replace(':5174','') || window.location.origin}:3001/metrics</div>
+          )}
+          <div className="pt-1"><span className="text-slate-400">Zabbix item type:</span> HTTP agent</div>
           <div><span className="text-slate-400">Header:</span> X-Metrics-Token: &lt;your token&gt;</div>
           <div><span className="text-slate-400">Output format:</span> JSON</div>
         </div>
