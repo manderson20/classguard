@@ -600,7 +600,7 @@ router.get('/stats', ...auth, async (req, res) => {
 
 router.get('/ha', ...auth, async (req, res) => {
   const cfg = await keepalived.getHaConfig();
-  res.json(cfg);
+  res.json(keepalived.redactHaConfig(cfg));
 });
 
 router.put('/ha', ...superauth, async (req, res) => {
@@ -625,7 +625,7 @@ router.put('/ha', ...superauth, async (req, res) => {
      vrrp_virtual_router_id, vrrp_auth_password, vrrp_advert_int,
      priority_primary, priority_secondary, track_freeradius ?? null]
   );
-  res.json(rows[0]);
+  res.json(keepalived.redactHaConfig(rows[0]));
 });
 
 // GET /radius/config-bundle — returns all FreeRADIUS + Keepalived config files

@@ -1018,7 +1018,7 @@ router.get('/db-replication', ...auth, async (req, res) => {
 router.get('/vrrp', ...auth, async (req, res) => {
   try {
     const cfg = await keepalived.getHaConfig();
-    res.json(cfg);
+    res.json(keepalived.redactHaConfig(cfg));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1051,7 +1051,7 @@ router.put('/vrrp', ...superauth, async (req, res) => {
        priority_primary, priority_secondary, track_freeradius ?? null,
        track_classguard_api ?? null]
     );
-    res.json(rows[0]);
+    res.json(keepalived.redactHaConfig(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

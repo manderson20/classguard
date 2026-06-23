@@ -727,8 +727,8 @@ function VrrpSection() {
           <Field label="Virtual Router ID" hint="1–255, unique per VIP on this LAN">
             <input type="number" className={INPUT} value={cfg.vrrp_virtual_router_id || 51} onChange={e => set('vrrp_virtual_router_id', parseInt(e.target.value))} min={1} max={255} />
           </Field>
-          <Field label="VRRP auth password">
-            <input type="password" className={INPUT} value={cfg.vrrp_auth_password || ''} onChange={e => set('vrrp_auth_password', e.target.value)} />
+          <Field label="VRRP auth password" hint={vrrp.vrrp_auth_password_set ? 'set — leave blank to keep' : undefined}>
+            <input type="password" className={INPUT} value={cfg.vrrp_auth_password || ''} onChange={e => set('vrrp_auth_password', e.target.value)} placeholder={vrrp.vrrp_auth_password_set ? '••••••••' : ''} />
           </Field>
         </div>
         <div className="mt-4 pt-4 border-t border-slate-100">
