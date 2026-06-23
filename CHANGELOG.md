@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.6] - 2026-06-23
+
+### Fixed
+- **One malformed DNS log or browser-history record could silently halt that entire stream forever.** `insertDnsLogBatch`/`insertBrowserHistoryBatch` insert a whole drain cycle's records in one `unnest()`-based statement — a single bad value (e.g. an invalid UUID) fails the *entire* batch, and since the drain only advances its Redis stream cursor after a successful insert, the same bad batch would retry identically every cycle, blocking every record behind it indefinitely with no skip path. Both functions now fall back to inserting one record at a time on a bulk-insert failure — every good record still lands, and only the genuinely malformed one gets logged (full record content + error) and dropped, not retried again. Verified live against the real `classguard:dns-log` and `classguard:tab-events` streams with one good + one deliberately malformed record each: good record landed, bad one logged and skipped, real production traffic continued draining normally throughout.
+
+---
+
 ## [0.7.5] - 2026-06-23
 
 ### Fixed
