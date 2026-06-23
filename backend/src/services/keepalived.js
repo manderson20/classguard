@@ -29,6 +29,19 @@ async function getHaConfig() {
   return rows[0] || {};
 }
 
+// Strips the plaintext VRRP auth password before a config row goes back to
+// the browser in an API response — ha.js's GET/PUT /vrrp and radius.js's
+// GET/PUT /ha both edit this same radius_ha_config row and both round-tripped
+// the raw secret to the client. Callers that actually need the real value
+// to generate deployable config text (buildConfigBundle/buildVrrpOnlyBundle,
+// downloaded directly as keepalived.conf) must NOT use this — only the
+// editing-UI JSON endpoints should.
+function redactHaConfig(cfg) {
+  if (!cfg) return cfg;
+  const { vrrp_auth_password, ...safe } = cfg;
+  return { ...safe, vrrp_auth_password_set: !!vrrp_auth_password };
+}
+
 async function getNodes() {
   const { rows } = await pool.query(
     `SELECT id, node_id, hostname, api_url, ha_role, failover_priority
@@ -472,4 +485,4 @@ async function buildVrrpOnlyBundle() {
   };
 }
 
-module.exports = { buildConfigBundle, buildVrrpOnlyBundle, getHaConfig, getNodes };
+module.exports = { buildConfigBundle, buildVrrpOnlyBundle, getHaConfig, getNodes, redactHaConfig };
