@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.4] - 2026-06-23
+
+### Fixed
+- **A custom-role-restricted admin could still create/edit/delete any class district-wide.** `classes.js`'s admin-tier `POST/PATCH/DELETE /` sit on top of a `requireMinRole('teacher')` blanket gate (reachable only via the Teacher-nav view, which any admin/superadmin can switch into) and had no permission key in the custom RBAC system shipped in v0.7.0 — there's no dedicated Admin nav item for class management, so it was missed. Added a `classes` permission key and gated all three routes with `requirePermissionIfAdmin`. Also fixed an unrelated pre-existing bug found while verifying this: `POST /classes` referenced a column (`google_course_id`) that's never existed — the real column is `google_classroom_id` — so creating a class via this API has been silently 500ing regardless of permissions.
+
+---
+
 ## [0.7.3] - 2026-06-23
 
 ### Fixed
