@@ -14,6 +14,11 @@ const UNRESTRICTED     = '*';
 const PERMISSION_CATALOG = [
   { key: 'staff_analytics',  label: 'Staff Analytics',    section: 'Overview' },
   { key: 'users',            label: 'Users',              section: 'Overview' },
+  // No dedicated admin nav item — reached only via the Teacher-nav "My
+  // Classes" page (Layout.jsx's nav switcher), which admins/superadmins can
+  // always flip into. Still a real admin-tier capability (create/edit/
+  // delete any class district-wide) that should be independently grantable.
+  { key: 'classes',          label: 'Classes (admin create/edit/delete)', section: 'Overview' },
   { key: 'policies',         label: 'Policies',            section: 'Policies & Safety' },
   { key: 'groups',           label: 'Groups',              section: 'Policies & Safety' },
   { key: 'blocklists',       label: 'Blocklists',          section: 'Policies & Safety' },
