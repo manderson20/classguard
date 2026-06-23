@@ -465,7 +465,17 @@ router.post('/join', async (req, res) => {
     }
 
     await client.query('COMMIT');
-    res.status(201).json({ joined: true, node: nodeRows[0], replication });
+    // Every node independently generates its own JWT_SECRET at install time
+    // (see install.sh) — with no sync step, a session minted on this primary
+    // was never actually valid on the joining node, so the moment VRRP fails
+    // over every logged-in user gets silently bounced to the login screen.
+    // Handed back unconditionally (not gated behind request_replica) so any
+    // join — DB-replicating or not — ends up able to validate this primary's
+    // tokens.
+    res.status(201).json({
+      joined: true, node: nodeRows[0], replication,
+      jwtSecret: process.env.JWT_SECRET,
+    });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -523,10 +533,18 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
     // previously-generated DB_PASSWORD stops working the moment it becomes
     // a standby), found by hand the first time this was done for real.
     let setupScript = null;
+    const lines = ['cd /opt/classguard'];
+
+    // Patched in regardless of whether DB replication was requested — a
+    // mismatched JWT_SECRET breaks session continuity on failover even for
+    // a node that isn't a DB replica.
+    if (data?.jwtSecret) {
+      lines.push(`sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${data.jwtSecret}/" .env`);
+    }
+
     if (data?.replication) {
       const { host, port, user, password, slot, appDbPassword } = data.replication;
-      const lines = [
-        'cd /opt/classguard',
+      lines.push(
         'docker compose down',
         'docker volume rm classguard_postgres-data',
         'docker volume create classguard_postgres-data',
@@ -535,7 +553,7 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
         `  -e PGPASSWORD='${password}' \\`,
         '  timescale/timescaledb:latest-pg15 \\',
         `  pg_basebackup -h ${host} -p ${port} -U ${user} -D /var/lib/postgresql/data -Fp -Xs -P -R${slot ? ` -S ${slot}` : ''}`,
-      ];
+      );
       if (appDbPassword) {
         lines.push(
           `sed -i "s/^DB_PASSWORD=.*/DB_PASSWORD=${appDbPassword}/" .env`,
@@ -553,8 +571,13 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
       } else {
         lines.push('docker compose up -d postgres');
       }
-      setupScript = lines.join('\n');
+    } else if (data?.jwtSecret) {
+      // No DB replication requested — still need to restart the api
+      // container so the patched JWT_SECRET actually takes effect.
+      lines.push('docker compose up -d api');
     }
+
+    if (lines.length > 1) setupScript = lines.join('\n');
 
     res.json({ joined: true, primary_url: cleanUrl, node: data.node, setup_script: setupScript });
   } catch (err) {
