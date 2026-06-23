@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.1] - 2026-06-23
+
+### Fixed
+- **Zabbix monitoring didn't account for the HA/VRRP cluster.** The `/metrics` endpoint and its generated Zabbix template predated the N-node HA work and treated ClassGuard as a single box — polling only the VIP can never reveal a failover, since the VIP always answers as whichever node currently holds MASTER. `/metrics` now reports each node's own VRRP role (`vrrp_state`, `is_vrrp_master`, `failover_priority`), and the generated Zabbix template creates one host per cluster node *plus* one for the VIP (pulled live from the `nodes` table, so it generalizes to however many nodes are in the cluster), with a trigger per node on VRRP-role-changed and a cluster-wide split-brain trigger if more than one node ever reports MASTER at once. Settings ▸ Monitoring now lists every node's metrics URL instead of a single guessed endpoint.
+
+---
+
 ## [0.7.0] - 2026-06-22
 
 ### Added
