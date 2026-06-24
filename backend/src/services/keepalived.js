@@ -202,7 +202,6 @@ rest {
         uri    = "\${..connect_uri}/api/v1/radius/authorize"
         method = 'post'
         body   = 'json'
-        tls    = \${..tls}
         # Pass the internal secret header
         header {
             X-Internal-Secret = "${internalSecret || ''}"
@@ -214,7 +213,6 @@ rest {
         uri    = "\${..connect_uri}/api/v1/radius/authenticate"
         method = 'post'
         body   = 'json'
-        tls    = \${..tls}
         header {
             X-Internal-Secret = "${internalSecret || ''}"
         }
@@ -225,15 +223,9 @@ rest {
         uri    = "\${..connect_uri}/api/v1/radius/accounting"
         method = 'post'
         body   = 'json'
-        tls    = \${..tls}
         header {
             X-Internal-Secret = "${internalSecret || ''}"
         }
-    }
-
-    tls {
-        # Uncomment if ClassGuard uses HTTPS and has a self-signed cert:
-        # check_cert = no
     }
 
     pool {
@@ -304,7 +296,7 @@ server classguard {
 
     session { }
     post-auth {
-        if (reply:Tunnel-Type == 'VLAN') {
+        if (&reply:Tunnel-Type == VLAN) {
             update reply {
                 Tunnel-Medium-Type = IEEE-802
             }
@@ -356,14 +348,18 @@ eap {
     tls-config tls-common {
         # Generate with: openssl req -x509 -newkey rsa:4096 -keyout /etc/freeradius/3.0/certs/server.key
         #                        -out /etc/freeradius/3.0/certs/server.crt -days 3650 -nodes
-        private_key_file   = \${cadir}/certs/server.key
-        certificate_file   = \${cadir}/certs/server.crt
-        ca_file            = \${cadir}/certs/ca.crt
-        dh_file            = \${cadir}/certs/dh
+        private_key_file   = \${cadir}/server.key
+        certificate_file   = \${cadir}/server.crt
+        ca_file            = \${cadir}/ca.crt
+        dh_file            = \${cadir}/dh
         cipher_list        = "HIGH"
         tls_min_version    = "1.2"
         ecdh_curve         = "prime256v1"
-        cache { enable = yes  lifetime = 24 max_entries = 255 }
+        cache {
+            enable      = yes
+            lifetime    = 24
+            max_entries = 255
+        }
     }
 
     ttls {
@@ -488,4 +484,6 @@ async function buildVrrpOnlyBundle() {
 module.exports = {
   buildConfigBundle, buildVrrpOnlyBundle, getHaConfig, getNodes, redactHaConfig,
   generateKeepalived, generateNotifyScript,
+  generateFreeRadiusClients, generateFreeRadiusRestMod,
+  generateFreeRadiusVirtualServer, generateEapMod,
 };

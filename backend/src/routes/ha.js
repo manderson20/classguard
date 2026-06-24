@@ -375,6 +375,20 @@ router.get('/firewall-rules', async (req, res) => {
       staticRules.push({ port: '123', proto: 'udp', comment: 'NTP server' });
     }
 
+    // FreeRADIUS runs on every node too (same reasoning as DNS/NTP -- the
+    // VIP can float to whichever node is currently MASTER, so every node
+    // needs to actually be reachable on these ports, not just the primary).
+    // Gated on track_freeradius -- see infrastructure/freeradius/sync-freeradius.sh,
+    // which uses the same flag to decide whether FreeRADIUS itself should be
+    // installed/running on this node at all.
+    const { rows: [radiusCfg] } = await pool.query(
+      `SELECT track_freeradius FROM radius_ha_config LIMIT 1`
+    ).catch(() => ({ rows: [{ track_freeradius: false }] }));
+    if (radiusCfg?.track_freeradius) {
+      staticRules.push({ port: '1812', proto: 'udp', comment: 'RADIUS auth' });
+      staticRules.push({ port: '1813', proto: 'udp', comment: 'RADIUS accounting' });
+    }
+
     let postgresPeerIps = [];
 
     if (isPrimary) {

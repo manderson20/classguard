@@ -636,6 +636,43 @@ router.get('/config-bundle', ...superauth, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// ---------------------------------------------------------------------------
+// GET /radius/freeradius-sync — localhost-only, no auth (same trust boundary
+// as /ha/firewall-rules and /ha/vrrp-sync), polled every minute by
+// infrastructure/freeradius/sync-freeradius.sh AND run once during
+// install.sh. Self-scoped: unlike /config-bundle (which returns every node's
+// keepalived files at once for manual download), this only returns the
+// FreeRADIUS files themselves -- they're identical on every node (no
+// per-node templating the way keepalived.conf has), so there's nothing to
+// select by node_id here. Gated on track_freeradius -- the same flag
+// /ha/firewall-rules and keepalived's own check_freeradius script use, so
+// "FreeRADIUS should be running here" means the same thing everywhere.
+// connect_uri is hardcoded to localhost rather than using APP_URL -- each
+// node's FreeRADIUS should always talk to its OWN node-local API container,
+// never hop through nginx/the VIP for this.
+// ---------------------------------------------------------------------------
+router.get('/freeradius-sync', async (req, res) => {
+  try {
+    const cfg = await keepalived.getHaConfig();
+    if (!cfg.track_freeradius) return res.json({ enabled: false });
+
+    const { rows: nasRows } = await pool.query(
+      'SELECT * FROM radius_nas WHERE is_active = true ORDER BY shortname'
+    );
+    const internalSecret = process.env.INTERNAL_SECRET || '';
+
+    res.json({
+      enabled:      true,
+      clients_conf: keepalived.generateFreeRadiusClients(nasRows),
+      rest_conf:    keepalived.generateFreeRadiusRestMod('http://localhost:3001', internalSecret),
+      classguard_conf: keepalived.generateFreeRadiusVirtualServer(),
+      eap_conf:     keepalived.generateEapMod(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /radius/ldap/test — test Google Secure LDAP connection
 router.post('/ldap/test', ...superauth, async (req, res) => {
   try {

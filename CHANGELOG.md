@@ -18,12 +18,23 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.17] - 2026-06-24
+
+### Added
+- **FreeRADIUS deployment automation**, completing the `track_freeradius` flag that VRRP health-checking already relied on (see 0.7.16) by actually deploying the service it was supposed to be tracking. New `GET /radius/freeradius-sync` (self-scoped, same trust boundary as `/ha/vrrp-sync`) returns this node's clients.conf/rest/eap/virtual-server config, generated from the real NAS list and the node's own `INTERNAL_SECRET`. New `infrastructure/freeradius/sync-freeradius.sh` installs FreeRADIUS if missing, deploys config, generates the EAP TLS certificate once (never rotated automatically — a rotating cert would invalidate already-trusted device profiles for no reason), and restarts only on a real change. Runs on every node, not just the primary, since the VIP can land on any of them. `/ha/firewall-rules` now opens 1812/1813 udp whenever `track_freeradius` is on. Wired into `install.sh` as Step 8d.
+- Fixed four FreeRADIUS config-generation bugs in `services/keepalived.js` that had never actually been tested against a real `freeradiusd` until this deployment: an `rlm_rest` module referencing an empty/unreachable `${..tls}` block (removed — these calls are plain HTTP to localhost, TLS settings were never applicable), a single-line `cache { ... }` block FreeRADIUS's parser rejects without commas (reformatted to one setting per line), an unlang condition comparing `Tunnel-Type` as a quoted string instead of FreeRADIUS's required bare enum value (`== VLAN`, not `== 'VLAN'`, and needs the `&` attribute-reference prefix), and a doubled `${cadir}/certs/...` path (`${cadir}` already points at the certs directory).
+
+### Fixed
+- Corrected the 0.7.16 changelog entry below — the keepalived comment-stripping safety fix did *not* fully prevent a live incident as originally written here. It correctly avoided false-positive restarts, but a **genuine** config change (a `failover_priority` edit) still triggered a real restart on the live VRRP MASTER, which combined with a separately pre-existing, stale `track_freeradius` health-check penalty to cause an actual ~15 minute VIP role flip (classguard-1 lost MASTER to classguard2). Fully diagnosed and resolved same day — see `project_state_vrrp_nopreempt_incident` in project memory for the full writeup; the short version is `nopreempt` means a priority fix alone never reclaims MASTER, only a genuinely uncontested election does.
+
+---
+
 ## [0.7.16] - 2026-06-24
 
 ### Added
 - **Automated VRRP/keepalived and NTP server (chrony) sync**, extending the same pattern as v0.7.15's firewall automation to the other two host-level config bundles that were previously manual download-and-deploy-yourself steps. New `GET /ha/vrrp-sync` (this node's own rendered keepalived.conf + notify.sh, self-scoped rather than the admin-facing all-nodes bundle) and `GET /ntp/server-sync` (chrony.conf, identical on every node — no leader-election concept there). New `infrastructure/keepalived/sync-keepalived.sh` and `infrastructure/chrony/sync-chrony.sh`, both no-op entirely unless actually configured (a real VIP / the NTP server feature switched on), run once during install.sh and every minute by the update-watcher. `/ha/firewall-rules` now also opens 123/udp when the NTP server feature is enabled.
 
-  Both sync scripts deliberately normalize away comments and whitespace before deciding whether to restart anything — the config generators embed a live timestamp plus other comment text that can drift between versions without anything *functional* changing, and restarting keepalived on a false-positive diff risks an actual VRRP role flip on the live MASTER (a brief advertisement gap during restart can let a BACKUP node grab MASTER, and `nopreempt` means the original node won't automatically reclaim it afterward). Caught and fixed before this ever ran against the live cluster, where classguard-1 is the current MASTER.
+  Both sync scripts deliberately normalize away comments and whitespace before deciding whether to restart anything — the config generators embed a live timestamp plus other comment text that can drift between versions without anything *functional* changing, and restarting keepalived on a false-positive diff risks an actual VRRP role flip on the live MASTER (a brief advertisement gap during restart can let a BACKUP node grab MASTER, and `nopreempt` means the original node won't automatically reclaim it afterward). **Correction (see 0.7.17 above): this normalization worked exactly as intended, but didn't prevent every restart — only cosmetic-only ones. A real config change still restarts the service, and on this node's first real one, that exposed a separate pre-existing issue that caused an actual ~15 minute live VRRP role flip.**
 
 ---
 
