@@ -14,6 +14,7 @@ const UNRESTRICTED     = '*';
 const PERMISSION_CATALOG = [
   { key: 'staff_analytics',  label: 'Staff Analytics',    section: 'Overview' },
   { key: 'users',            label: 'Users',              section: 'Overview' },
+  { key: 'impersonate_users', label: 'Impersonate Teachers', section: 'Overview', sensitive: true },
   // No dedicated admin nav item — reached only via the Teacher-nav "My
   // Classes" page (Layout.jsx's nav switcher), which admins/superadmins can
   // always flip into. Still a real admin-tier capability (create/edit/

@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.28] - 2026-06-24
+
+### Added
+- **Teacher impersonation ("View as this teacher").** Admins can now temporarily view ClassGuard exactly as a specific teacher sees it — their classes, penalty box, lockdown tests — to troubleshoot on their behalf without needing the teacher's password. New "View as this teacher" button on a teacher's profile (Users > teacher > View) opens a 30-minute session; a persistent purple banner shows who's impersonating and lets them exit at any time, returning to the original admin session. Every session start/end and every change made while impersonating is recorded in a new append-only `impersonation_audit` table (migration 069), visible on a new Impersonation Audit page. Restricted to teacher accounts only (not other admins/superadmins) and gated by a new delegable `impersonate_users` permission — superadmins always have it, admins need it explicitly granted via Custom Roles. Impersonation tokens can't be refreshed/extended past their 30 minutes; ending and re-starting is required, so there's always a bounded, re-confirmed window rather than an indefinite one.
+
+---
+
 ## [0.7.27] - 2026-06-24
 
 ### Added

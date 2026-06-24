@@ -47,11 +47,41 @@ export function AuthProvider({ children }) {
   const logout = useCallback(async () => {
     await api.delete('/auth/logout').catch(() => {});
     localStorage.removeItem('cg_token');
+    localStorage.removeItem('cg_admin_token');
     setUser(null);
   }, []);
 
+  // Stashes the admin's own token under a separate key before swapping
+  // cg_token for the short-lived impersonation token, so "exit" can restore
+  // it without a re-login. Survives a page reload -- cg_admin_token is
+  // still there, and re-hydrating cg_token (the impersonation token) on
+  // mount naturally re-shows the banner via /auth/me's impersonatedBy field.
+  const startImpersonation = useCallback(async (teacherId) => {
+    const { token } = await api.post(`/impersonation/${teacherId}/start`, {});
+    localStorage.setItem('cg_admin_token', localStorage.getItem('cg_token'));
+    localStorage.setItem('cg_token', token);
+    const profile = await api.get('/auth/me');
+    setUser(profile);
+    return profile;
+  }, []);
+
+  const endImpersonation = useCallback(async () => {
+    await api.post('/impersonation/end', {}).catch(() => {});
+    const adminToken = localStorage.getItem('cg_admin_token');
+    localStorage.removeItem('cg_admin_token');
+    if (adminToken) {
+      localStorage.setItem('cg_token', adminToken);
+      const profile = await api.get('/auth/me');
+      setUser(profile);
+      return profile;
+    }
+    localStorage.removeItem('cg_token');
+    setUser(null);
+    return null;
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, startImpersonation, endImpersonation }}>
       {children}
     </AuthContext.Provider>
   );

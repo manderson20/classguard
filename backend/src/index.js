@@ -86,10 +86,19 @@ app.use(express.json({ limit: '20mb' }));
 app.use(express.urlencoded({ extended: true }));
 
 // ---------------------------------------------------------------------------
+// Impersonation audit — logs every mutating request made while an admin is
+// "viewing as" a teacher (see routes/impersonation.js). Needs req.body, so
+// it has to run after the body-parsing block above; needs to see every
+// router, so it's global rather than per-route.
+// ---------------------------------------------------------------------------
+app.use(require('./middleware/impersonationAudit').impersonationAuditLogger);
+
+// ---------------------------------------------------------------------------
 // Routes
 // ---------------------------------------------------------------------------
 app.use('/api/v1/auth',        require('./routes/auth'));
 app.use('/api/v1/users',       require('./routes/users'));
+app.use('/api/v1/impersonation', require('./routes/impersonation'));
 app.use('/api/v1/groups',      require('./routes/groups'));
 app.use('/api/v1/custom-roles', require('./routes/customRoles'));
 app.use('/api/v1/policies',    require('./routes/policies'));
