@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.24] - 2026-06-24
+
+### Fixed
+- **Bell Schedule: no explanation when a schedule can't be deleted.** The default schedule's "Set as default"/"Delete" buttons were simply hidden with no explanation when viewing it — if it was also the *only* schedule (e.g. after promoting a new schedule to default and deleting the original default), there was no way to tell why, or what to do about it. Now shows an explicit notice: the default schedule can't be deleted while it's the default (there must always be a fallback), and explains the fix — set a different schedule as default first, creating one if needed. Also surfaces a real error message if a set-default/delete request ever fails for any other reason, instead of failing silently.
+
+---
+
 ## [0.7.23] - 2026-06-24
 
 ### Added
