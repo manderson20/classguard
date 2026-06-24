@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.34] - 2026-06-24
+
+### Fixed
+- Resolved the last remaining vulnerability from v0.7.33 (`uuid` < 11.1.1 bundled inside `exceljs`/`gaxios`/`googleapis-common`/`node-cron`'s own nested dependency trees) without the major-version downgrade `npm audit fix` suggested. The real upstream fix is a small bounds-check guard already shipped in `uuid@11.1.1` (which we already use directly) — the nested copies were just stuck on older versions because npm couldn't dedupe them against each package's own declared range. Added scoped `overrides` in `backend/package.json` forcing those four packages' nested `uuid` to `11.1.1` specifically, leaving `exceljs`/`googleapis`/`gaxios`/`node-cron` themselves untouched at their current versions. Verified: all four now dedupe to the single fixed copy, `npm audit` reports 0 vulnerabilities, and exceljs's actual write+read round-trip (used by the Phone System's spreadsheet import/template features) and a real `.xlsx` template download through the live API both still work correctly.
+
+---
+
 ## [0.7.33] - 2026-06-24
 
 ### Fixed

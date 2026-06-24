@@ -1,6 +1,6 @@
 {
   "name": "classguard-backend",
-  "version": "0.7.33",
+  "version": "0.7.34",
   "description": "ClassGuard API server, WebSocket hub, and background services",
   "main": "src/index.js",
   "scripts": {
@@ -36,6 +36,12 @@
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.39.0"
+  },
+  "overrides": {
+    "exceljs": { "uuid": "11.1.1" },
+    "gaxios": { "uuid": "11.1.1" },
+    "googleapis-common": { "uuid": "11.1.1" },
+    "node-cron": { "uuid": "11.1.1" }
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
