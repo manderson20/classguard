@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.21] - 2026-06-24
+
+### Added
+- **Domain-based Wi-Fi policies.** Wi-Fi Policies (RADIUS / NAC) can now target an email domain in addition to a specific user or group — e.g. allow `@school.org` staff but deny `@students.school.org` on a given SSID. Domain rules are checked in `/radius/authorize` *before* the existing per-user lookup, independent of whether that account is even synced into ClassGuard's own Users table — a district that hasn't (or never will) sync students into Users still gets a real, explicit deny decision rather than an accidental pass-through that could start working the moment sync coverage changes. Per-SSID by design (a domain rule requires an SSID, same safety rule the existing default/catch-all policy already followed) and exact-domain matching — `students.school.org` and `school.org` are treated as distinct domains, not a subdomain wildcard. New `email_domain` column on `radius_user_policies` (migration 065); rejections at this stage now log to the Auth Log the same way the existing per-user/group rejections do (previously didn't log at all before reaching `/authenticate`).
+
+---
+
 ## [0.7.20] - 2026-06-24
 
 ### Fixed

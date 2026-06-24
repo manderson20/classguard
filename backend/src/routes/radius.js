@@ -136,26 +136,58 @@ router.post('/authorize', radiusSecret, async (req, res) => {
 
     // -- EAP user auth: look up user, set Auth-Type so FreeRADIUS calls /authenticate --
     if (username && !isMab) {
+      const logReject = (reason) => pool.query(
+        `INSERT INTO radius_auth_log
+           (username, mac_address, nas_ip, ssid, result, reject_reason, auth_type)
+         VALUES ($1,$2,$3,$4,'rejected',$5,'eap-ttls')`,
+        [username, parseMac(callingId), nasIp, ssid, reason]
+      ).catch(() => {}); // logging failure shouldn't block the reject response
+
+      // Domain-level policy check first, independent of whether this email
+      // exists in ClassGuard's own `users` table at all -- a district that
+      // hasn't (or never will) sync students into `users` still needs a
+      // real "deny students.<domain>" decision, not an accidental pass
+      // because the deny-by-domain rule could never run for an unsynced
+      // user. Runs before the `users` lookup below so a denied domain never
+      // even reaches it.
+      const domain = username.includes('@') ? username.split('@').pop().toLowerCase() : null;
+      if (domain) {
+        const { rows: domainRows } = await pool.query(
+          `SELECT can_access FROM radius_user_policies
+           WHERE email_domain = $1 AND (ssid IS NULL OR ssid = $2)
+           ORDER BY priority DESC NULLS LAST LIMIT 1`,
+          [domain, ssid || '']
+        );
+        if (domainRows.length && domainRows[0].can_access === false) {
+          await logReject('domain policy denied');
+          return res.json(radiusReject('domain policy denied'));
+        }
+      }
+
       const { rows } = await pool.query(
         `SELECT u.*, rp.vlan, rp.can_access
          FROM users u
          LEFT JOIN radius_user_policies rp ON (
            rp.user_id = u.id
            OR rp.group_id IN (SELECT group_id FROM group_members WHERE user_id = u.id)
-           OR (rp.user_id IS NULL AND rp.group_id IS NULL) -- default/catch-all policy
+           OR (rp.email_domain IS NOT NULL AND rp.email_domain = lower(split_part(u.email, '@', 2)))
+           OR (rp.user_id IS NULL AND rp.group_id IS NULL AND rp.email_domain IS NULL) -- default/catch-all policy
          ) AND (rp.ssid IS NULL OR rp.ssid = $2)
          WHERE lower(u.email) = lower($1) AND u.is_active = true
-         ORDER BY (rp.user_id IS NOT NULL) DESC, (rp.group_id IS NOT NULL) DESC, rp.priority DESC NULLS LAST
+         ORDER BY (rp.user_id IS NOT NULL) DESC, (rp.group_id IS NOT NULL) DESC,
+                  (rp.email_domain IS NOT NULL) DESC, rp.priority DESC NULLS LAST
          LIMIT 1`,
         [username, ssid || '']
       );
 
       if (!rows.length) {
+        await logReject('user not found or inactive');
         return res.json(radiusReject('user not found or inactive'));
       }
 
       const user = rows[0];
       if (user.can_access === false) {
+        await logReject('user policy denied');
         return res.json(radiusReject('user policy denied'));
       }
 
@@ -504,17 +536,22 @@ router.get('/policies', ...auth, async (req, res) => {
 });
 
 router.post('/policies', ...auth, async (req, res) => {
-  const { user_id, group_id, ssid, vlan, can_access, priority, notes } = req.body;
-  // A policy with neither user_id nor group_id is a default/catch-all that
-  // applies to anyone authenticating — require an SSID so it can't
-  // accidentally apply org-wide across every network by omission.
-  if (!user_id && !group_id && !ssid) {
-    return res.status(400).json({ error: 'user_id, group_id, or (for a default policy) ssid is required' });
+  const { user_id, group_id, email_domain, ssid, vlan, can_access, priority, notes } = req.body;
+  // A policy with none of user_id/group_id/email_domain is a default/catch-all
+  // that applies to anyone authenticating — require an SSID so it can't
+  // accidentally apply org-wide across every network by omission. A
+  // domain rule needs an SSID for the same reason: it can otherwise match
+  // every account in that domain across every network on the cluster.
+  if (!user_id && !group_id && !email_domain && !ssid) {
+    return res.status(400).json({ error: 'user_id, group_id, email_domain, or (for a default policy) ssid is required' });
+  }
+  if (email_domain && !ssid) {
+    return res.status(400).json({ error: 'ssid is required for a domain-based policy' });
   }
   const { rows } = await pool.query(
-    `INSERT INTO radius_user_policies (user_id, group_id, ssid, vlan, can_access, priority, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-    [user_id || null, group_id || null, ssid || null,
+    `INSERT INTO radius_user_policies (user_id, group_id, email_domain, ssid, vlan, can_access, priority, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+    [user_id || null, group_id || null, email_domain ? email_domain.toLowerCase() : null, ssid || null,
      vlan || null, can_access ?? true, priority || 0, notes || null]
   );
   res.status(201).json(rows[0]);

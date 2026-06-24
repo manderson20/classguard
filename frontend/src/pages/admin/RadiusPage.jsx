@@ -589,7 +589,7 @@ function DevicesTab() {
 // shape for a BYOD/personal-device SSID where any Google Workspace user
 // should be able to connect without being added to a group first.
 // ---------------------------------------------------------------------------
-const EMPTY_POLICY = { target: 'default', user_id: '', group_id: '', ssid: '', vlan: '', can_access: true, priority: 0, notes: '' };
+const EMPTY_POLICY = { target: 'default', user_id: '', group_id: '', email_domain: '', ssid: '', vlan: '', can_access: true, priority: 0, notes: '' };
 
 function PolicyModal({ initial, onSave, onCancel, isPending }) {
   const [form, setForm] = useState(initial || EMPTY_POLICY);
@@ -607,7 +607,7 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
     enabled:  form.target === 'group',
   });
 
-  const canSave = (form.target !== 'default') ? true : !!form.ssid;
+  const canSave = (form.target === 'default' || form.target === 'domain') ? !!form.ssid : true;
 
   return (
     <div className="flex flex-col gap-3">
@@ -616,6 +616,7 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
           <option value="default">Anyone (default for this SSID)</option>
           <option value="user">A specific user</option>
           <option value="group">A specific group</option>
+          <option value="domain">An email domain</option>
         </select>
       </Field>
 
@@ -641,13 +642,25 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
         </Field>
       )}
 
+      {form.target === 'domain' && (
+        <Field label="Email domain" hint="exact match on the part after @ — e.g. students.school.org and school.org are treated as different domains">
+          <input className={INPUT} value={form.email_domain} onChange={e=>f('email_domain', e.target.value.toLowerCase())} placeholder="students.school.org"/>
+        </Field>
+      )}
+
       {form.target === 'default' && (
         <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
           This applies to <strong>any</strong> authenticated user on the SSID below — an SSID is required so it can't accidentally apply everywhere.
         </p>
       )}
 
-      <Field label="SSID" hint={form.target === 'default' ? 'required' : 'leave blank to apply to all SSIDs'}>
+      {form.target === 'domain' && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Applies to <strong>every</strong> account whose email ends in this domain, on the SSID below — checked before ClassGuard even needs to know who the specific user is, so it works whether or not that account is synced into Users yet. An SSID is required so it can't accidentally apply across every network.
+        </p>
+      )}
+
+      <Field label="SSID" hint={(form.target === 'default' || form.target === 'domain') ? 'required' : 'leave blank to apply to all SSIDs'}>
         <input className={INPUT} value={form.ssid} onChange={e=>f('ssid', e.target.value)} placeholder="e.g. SchoolName-BYOD"/>
       </Field>
       <Field label="VLAN" hint="leave blank to use the NAS default VLAN">
@@ -687,8 +700,9 @@ function PoliciesTab() {
 
   const add = useMutation({
     mutationFn: form => api.post('/radius/policies', {
-      user_id:  form.target === 'user'  ? form.user_id  || null : null,
-      group_id: form.target === 'group' ? form.group_id || null : null,
+      user_id:      form.target === 'user'   ? form.user_id     || null : null,
+      group_id:     form.target === 'group'  ? form.group_id    || null : null,
+      email_domain: form.target === 'domain' ? form.email_domain || null : null,
       ssid: form.ssid || null, vlan: form.vlan || null,
       can_access: form.can_access, priority: form.priority || 0, notes: form.notes || null,
     }),
@@ -700,12 +714,14 @@ function PoliciesTab() {
     onSuccess: () => qc.invalidateQueries({queryKey:['radius-policies']}),
   });
 
-  const targetLabel = p => p.full_name ? `${p.full_name} (${p.email})` : p.group_name ? `Group: ${p.group_name}` : 'Anyone (default)';
+  const targetLabel = p => p.full_name ? `${p.full_name} (${p.email})` : p.group_name ? `Group: ${p.group_name}` : p.email_domain ? `Domain: @${p.email_domain}` : 'Anyone (default)';
 
   return (
     <div className="flex flex-col gap-4">
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-        Controls which SSID a user/group can authenticate on (via username + Google credentials, EAP) and which VLAN they land in.
+        Controls which SSID a user/group/email domain can authenticate on (via username + Google credentials, EAP) and which VLAN they land in.
+        A domain rule (e.g. deny @students.school.org on the staff SSID) is checked before ClassGuard even needs to know who the
+        specific user is, so it works regardless of whether that account is synced into Users.
         Doesn't apply to MAC-based device auth (Devices / NAC tab) — that's governed by device approval status instead.
       </div>
       <div className="flex justify-end">
