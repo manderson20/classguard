@@ -427,26 +427,32 @@ export default function BellSchedulePage() {
                   <h2 className="font-semibold text-slate-900">{schedule.name}</h2>
                   {schedule.description && <div className="text-xs text-slate-400 mt-0.5">{schedule.description}</div>}
                 </div>
-                <div className="flex items-center gap-3">
-                  {!schedule.is_default && (
+                {!schedule.is_default && (
+                  <div className="flex items-center gap-3">
                     <button className="text-xs text-primary-600 hover:underline" onClick={() => setDefault.mutate(schedule.id)}>
                       Set as default
                     </button>
-                  )}
-                  {!schedule.is_default && (
                     <button
                       className="text-xs text-red-500 hover:underline"
                       onClick={() => { if (confirm('Delete this schedule and its periods/assignments? Affected students fall back to the default schedule.')) deleteSchedule.mutate(schedule.id); }}
                     >
                       Delete
                     </button>
-                  )}
-                </div>
+                  </div>
+                )}
               </div>
+              {(setDefault.isError || deleteSchedule.isError) && (
+                <p className="text-xs text-red-600 px-1">
+                  {(setDefault.error || deleteSchedule.error)?.message}
+                </p>
+              )}
 
               {schedule.is_default ? (
-                <div className="text-xs text-slate-400 px-1">
-                  This is the default schedule — it applies to any student with no matching assignment below.
+                <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                  This is the default schedule — it applies to any student with no matching assignment, and
+                  can't be deleted while it's the default (there must always be a fallback). To delete or
+                  replace it, first set a <em>different</em> schedule as default — create one if this is the
+                  only schedule that exists — then come back here.
                 </div>
               ) : (
                 <AssignmentsSection scheduleId={schedule.id} matchMode={matchMode} />
