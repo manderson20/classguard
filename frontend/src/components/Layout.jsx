@@ -45,7 +45,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.9';
+const VERSION = '0.7.10';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -135,6 +135,18 @@ function InternetHealthBanner({ socket, navigate }) {
 // ---------------------------------------------------------------------------
 // Nav definitions
 // ---------------------------------------------------------------------------
+
+// Sidebar nav-view switcher options — a dropdown instead of a fixed
+// admin/teacher toggle specifically so adding a future view (e.g. a
+// counselor- or IT-focused nav) is just one more entry here, not a UI
+// rewrite. Adding an entry alone doesn't render anything new on its own —
+// it still needs its own nav section + the showTeacherNav-style condition
+// below — but the switcher control itself scales to any number of views.
+const NAV_VIEWS = [
+  { value: 'admin',   label: 'Admin' },
+  { value: 'teacher', label: 'Teacher' },
+];
+
 const TEACHER_NAV = [
   { to: '/classes',     icon: mdiHomeOutline, label: 'My Classes'  },
   { to: '/penalty-box', icon: mdiFlagOutline,  label: 'Penalty Box' },
@@ -259,7 +271,7 @@ export default function Layout() {
   // re-logging in. Non-admins always get the classroom nav, no switcher
   // shown since they have nothing else to switch to. Per-browser, not
   // per-user — the realistic case is one admin on their own machine.
-  const [navView, setNavView] = useState(() => localStorage.getItem('cg_nav_view') || 'admin');
+  const [navView, setNavView] = useState(() => localStorage.getItem('cg_nav_view') || NAV_VIEWS[0].value);
   useEffect(() => {
     localStorage.setItem('cg_nav_view', navView);
   }, [navView]);
@@ -314,28 +326,23 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Admin/Teacher view switcher — admins+ only, since a plain
-            teacher has nothing else to switch to */}
+        {/* Nav-view switcher — admins+ only, since a plain teacher has
+            nothing else to switch to. A dropdown rather than a fixed
+            two-way toggle so a future view is a one-line addition to
+            NAV_VIEWS above, not a layout change here. */}
         {isAdmin && (
           <div className="px-3 pt-3 flex-shrink-0">
-            <div className="flex bg-slate-800 rounded-md p-0.5">
-              <button
-                onClick={() => setNavView('admin')}
-                className={`flex-1 text-[12px] font-medium rounded-[5px] py-1 transition-colors ${
-                  navView === 'admin' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Admin
-              </button>
-              <button
-                onClick={() => setNavView('teacher')}
-                className={`flex-1 text-[12px] font-medium rounded-[5px] py-1 transition-colors ${
-                  navView === 'teacher' ? 'bg-primary-600 text-white' : 'text-slate-400 hover:text-slate-200'
-                }`}
-              >
-                Teacher
-              </button>
-            </div>
+            <select
+              value={navView}
+              onChange={e => setNavView(e.target.value)}
+              className="w-full bg-slate-800 text-white text-[12px] font-medium rounded-md py-1.5 px-2 border border-slate-700 focus:outline-none focus:ring-1 focus:ring-primary-500"
+            >
+              {NAV_VIEWS.map(v => (
+                <option key={v.value} value={v.value} className="bg-slate-800 text-white">
+                  {v.label}
+                </option>
+              ))}
+            </select>
           </div>
         )}
 

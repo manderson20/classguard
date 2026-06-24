@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.10] - 2026-06-24
+
+### Changed
+- **Sidebar Admin/Teacher switcher is now a dropdown** instead of a fixed two-button toggle (`NAV_VIEWS` array in `Layout.jsx`). Purely a control-rendering change — `cg_nav_view` localStorage persistence and the admin/teacher nav-switching logic are unchanged. Adding a future view down the line (e.g. a counselor- or IT-focused nav) is now a one-line addition to `NAV_VIEWS` plus its own nav-section condition, rather than a layout rewrite.
+
+---
+
 ## [0.7.9] - 2026-06-24
 
 ### Changed
