@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.23] - 2026-06-24
+
+### Added
+- **Multiple bell schedules.** Bell Schedule now supports more than one schedule district-wide — e.g. a Middle School split across two staggered schedules for hallway capacity — instead of assuming every student follows the same period times. Create as many named schedules as needed, each with its own periods (period labels can repeat across schedules with different times). Assign a schedule to a group of students via **either** their Google OU (longest-prefix match, same pattern Policies already uses) **or** their OneRoster-synced grade level (exact match) — never both at once; a district-wide toggle picks one matching strategy so there's always exactly one unambiguous answer for which schedule a student follows. Anyone with no matching assignment falls back to a designated default schedule. New `bell_schedules` and `bell_schedule_assignments` tables, `bell_schedule_periods` now scoped per-schedule (migration 067). The nightly teacher-period-utilization batch job now resolves each enrolled student's own schedule individually rather than assuming one global set of period times, so utilization reporting stays accurate for a Middle School (or any district) running more than one schedule. Building/school-level matching isn't supported yet — OneRoster doesn't sync that data into ClassGuard today, which would be new sync work, not just a new matching rule.
+
+---
+
 ## [0.7.22] - 2026-06-24
 
 ### Added
