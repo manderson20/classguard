@@ -799,194 +799,6 @@ function LogTab() {
 }
 
 // ---------------------------------------------------------------------------
-// Google Secure LDAP setup wizard — guides an admin through the one-time
-// Google Admin Console steps, uploading the resulting cert/key (instead of
-// asking them to find a way to copy files into the server's filesystem,
-// which most admins can't do directly), deriving the LDAP base DN from their
-// Workspace domain, and testing the result — all without needing a public
-// domain or port-forwarding, since Secure LDAP is an outbound-only TLS
-// connection to ldap.google.com.
-// ---------------------------------------------------------------------------
-function domainToBaseDn(domain) {
-  return domain.trim().toLowerCase().split('.').filter(Boolean).map(p => `dc=${p}`).join(',');
-}
-
-function LdapWizard({ ldapTesting, ldapResult, testLdap }) {
-  const [step, setStep]       = useState(1);
-  const [domain, setDomain]   = useState('');
-  const [baseDn, setBaseDn]   = useState('');
-  const [baseDnEdited, setBaseDnEdited] = useState(false);
-  const [certFile, setCertFile] = useState(null);
-  const [keyFile, setKeyFile]   = useState(null);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState(null);
-  const [uploaded, setUploaded] = useState(false);
-  const [enabling, setEnabling] = useState(false);
-  const [enabled, setEnabled]   = useState(false);
-
-  const onDomainChange = v => {
-    setDomain(v);
-    if (!baseDnEdited) setBaseDn(domainToBaseDn(v));
-  };
-
-  const upload = async () => {
-    setUploadError(null);
-    if (!certFile || !keyFile) { setUploadError('Both the certificate and key files are required.'); return; }
-    if (!baseDn) { setUploadError('Base DN is required.'); return; }
-
-    setUploading(true);
-    const form = new FormData();
-    form.append('cert', certFile);
-    form.append('key', keyFile);
-    form.append('base_dn', baseDn);
-    form.append('google_domain', domain);
-
-    try {
-      const token = localStorage.getItem('cg_token');
-      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/v1/radius/ldap/upload`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
-      setUploaded(true);
-      setStep(3);
-    } catch (e) {
-      setUploadError(e.message);
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const enableLdap = async () => {
-    setEnabling(true);
-    try {
-      await api.put('/settings', { ldap_google_enabled: 'true' });
-      setEnabled(true);
-    } catch (e) {
-      setUploadError(e.message);
-    } finally {
-      setEnabling(false);
-    }
-  };
-
-  const StepDot = ({ n, label }) => (
-    <div className={`flex items-center gap-2 text-xs font-medium ${step===n?'text-primary-700':step>n?'text-green-600':'text-slate-400'}`}>
-      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[11px] ${step===n?'bg-primary-100 border border-primary-400':step>n?'bg-green-100':'bg-slate-100'}`}>
-        {step>n ? '✓' : n}
-      </span>
-      {label}
-    </div>
-  );
-
-  return (
-    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-      <h3 className="font-semibold text-slate-900 mb-1">Google Secure LDAP Setup</h3>
-      <p className="text-xs text-slate-500 mb-4">
-        Used for EAP-TTLS/PAP on a BYOD SSID — FreeRADIUS passes a user's Google password through ClassGuard,
-        which validates it against Google's LDAP endpoint. This connects <em>outbound only</em> to Google —
-        no public domain or port-forwarding needed.
-      </p>
-
-      <div className="flex items-center gap-5 mb-5 flex-wrap">
-        <StepDot n={1} label="Google Admin setup"/>
-        <StepDot n={2} label="Upload cert + key"/>
-        <StepDot n={3} label="Test connection"/>
-        <StepDot n={4} label="Enable"/>
-      </div>
-
-      {step === 1 && (
-        <div className="flex flex-col gap-3">
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-900 space-y-1">
-            <div className="font-semibold mb-2">In Google Admin Console:</div>
-            <ol className="list-decimal list-inside space-y-1">
-              <li>Go to Account → LDAP → Add LDAP Client</li>
-              <li>Name it e.g. "ClassGuard FreeRADIUS"</li>
-              <li>Under Access permissions, enable both <strong>Verify user credentials</strong> and <strong>Read user information</strong></li>
-              <li>On the client's Authentication tab, click <strong>Generate New Certificate</strong></li>
-              <li>Download the generated certificate and private key (PEM files)</li>
-            </ol>
-          </div>
-          <div className="flex justify-end">
-            <button onClick={()=>setStep(2)} className="btn-primary text-sm">I've done this — Continue</button>
-          </div>
-        </div>
-      )}
-
-      {step === 2 && (
-        <div className="flex flex-col gap-3">
-          <Field label="Your Google Workspace domain">
-            <input className={INPUT} value={domain} onChange={e=>onDomainChange(e.target.value)} placeholder="school.org"/>
-          </Field>
-          <Field label="LDAP base DN" hint="auto-filled from domain — edit only if your Workspace setup differs">
-            <input className={INPUT} value={baseDn} onChange={e=>{setBaseDn(e.target.value); setBaseDnEdited(true);}} placeholder="dc=school,dc=org"/>
-          </Field>
-          <div className="grid md:grid-cols-2 gap-4">
-            <Field label="Certificate file" hint=".crt / .pem from Google">
-              <input type="file" accept=".crt,.pem,.cer" className={INPUT} onChange={e=>setCertFile(e.target.files?.[0]||null)}/>
-            </Field>
-            <Field label="Private key file" hint=".key / .pem from Google">
-              <input type="file" accept=".key,.pem" className={INPUT} onChange={e=>setKeyFile(e.target.files?.[0]||null)}/>
-            </Field>
-          </div>
-          {uploadError && <p className="text-red-500 text-xs">{uploadError}</p>}
-          <div className="flex justify-between mt-2">
-            <button onClick={()=>setStep(1)} className="btn-secondary text-sm">Back</button>
-            <button onClick={upload} disabled={uploading} className="btn-primary text-sm">
-              {uploading ? 'Uploading…' : 'Upload & Continue'}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {step === 3 && (
-        <div className="flex flex-col gap-3">
-          {uploaded && <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">Certificate and key saved.</p>}
-          {ldapResult && (
-            <div className={`text-sm px-3 py-2 rounded-lg border ${ldapResult.ok?'bg-green-50 border-green-200 text-green-800':'bg-red-50 border-red-200 text-red-800'}`}>
-              {ldapResult.ok ? '✓ Connection successful — TLS handshake with Google LDAP succeeded' : `✗ ${ldapResult.reason}`}
-            </div>
-          )}
-          <div className="flex justify-between mt-2">
-            <button onClick={()=>setStep(2)} className="btn-secondary text-sm">Back</button>
-            <div className="flex gap-2">
-              <button onClick={testLdap} disabled={ldapTesting} className="btn-secondary text-sm">
-                {ldapTesting?'Testing…':'Test Connection'}
-              </button>
-              <button onClick={()=>setStep(4)} disabled={!ldapResult?.ok} className="btn-primary text-sm">Continue</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {step === 4 && (
-        <div className="flex flex-col gap-3">
-          {enabled ? (
-            <p className="text-sm text-green-700 bg-green-50 border border-green-200 rounded-lg px-3 py-2">
-              ✓ Google Secure LDAP is enabled. Create a BYOD policy in the Wi-Fi Policies tab pointing at your BYOD SSID to start allowing personal devices.
-            </p>
-          ) : (
-            <p className="text-sm text-slate-600">
-              Everything's tested and working. Enable Secure LDAP so FreeRADIUS will actually use it for EAP-TTLS/PAP authentication.
-            </p>
-          )}
-          {uploadError && <p className="text-red-500 text-xs">{uploadError}</p>}
-          <div className="flex justify-between mt-2">
-            <button onClick={()=>setStep(3)} className="btn-secondary text-sm">Back</button>
-            {!enabled && (
-              <button onClick={enableLdap} disabled={enabling} className="btn-primary text-sm">
-                {enabling ? 'Enabling…' : 'Enable Google Secure LDAP'}
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // HA & Config Tab
 // ---------------------------------------------------------------------------
 function HaConfigTab() {
@@ -994,8 +806,6 @@ function HaConfigTab() {
   const [haForm, setHaForm] = useState(null);
   const [bundle, setBundle] = useState(null);
   const [loadingBundle, setLoadingBundle] = useState(false);
-  const [ldapTesting, setLdapTesting]     = useState(false);
-  const [ldapResult, setLdapResult]       = useState(null);
   const [activeFile, setActiveFile]       = useState(null);
 
   const { data: ha = {} } = useQuery({
@@ -1016,13 +826,6 @@ function HaConfigTab() {
       setBundle(b);
       setActiveFile(Object.keys(b)[0]);
     } finally { setLoadingBundle(false); }
-  };
-
-  const testLdap = async () => {
-    setLdapTesting(true);
-    try { setLdapResult(await api.post('/radius/ldap/test')); }
-    catch(e) { setLdapResult({ ok: false, reason: e.message }); }
-    setLdapTesting(false);
   };
 
   const downloadFile = (name, content) => {
@@ -1073,8 +876,12 @@ function HaConfigTab() {
         </div>
       </div>
 
-      {/* Google Secure LDAP */}
-      <LdapWizard ldapTesting={ldapTesting} ldapResult={ldapResult} testLdap={testLdap}/>
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-xs text-blue-800">
+        Looking for Google Secure LDAP setup? It moved to{' '}
+        <a href="/admin/integrations" className="underline font-medium">Integrations → Google Workspace → Secure LDAP</a>{' '}
+        — it's a Workspace-level credential other features can use too, not a RADIUS-specific one.
+      </div>
+
 
       {/* Android / WiFi profile guide */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
