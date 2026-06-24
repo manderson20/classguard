@@ -44,6 +44,44 @@ export default function UserDetail() {
     onError:    (err) => setImpersonateError(err.message),
   });
 
+  // Parent report — screen time + flagged safety events only (no raw
+  // browsing history, no screenshot images), see services/parentReport.js.
+  // Binary PDF response, so it goes through a raw fetch + blob download
+  // rather than the JSON-only `api` helper.
+  const [reportOpen, setReportOpen] = useState(false);
+  const [reportFrom, setReportFrom] = useState(() => new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10));
+  const [reportTo, setReportTo]     = useState(() => new Date().toISOString().slice(0, 10));
+  const [reportError, setReportError] = useState(null);
+  const [reportLoading, setReportLoading] = useState(false);
+
+  const downloadParentReport = async () => {
+    setReportError(null);
+    setReportLoading(true);
+    try {
+      const token = localStorage.getItem('cg_token');
+      const params = new URLSearchParams({ from: reportFrom, to: reportTo });
+      const res = await fetch(`/api/v1/parent-report/${userId}?${params}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to generate report (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `parent-report-${(user?.full_name || 'student').replace(/\s+/g, '-')}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      setReportOpen(false);
+    } catch (err) {
+      setReportError(err.message);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
   // Local-password fallback (not just for accounts created locally — this
   // also works on a Google-synced account, so there's always a way in if
   // Google SSO itself is ever the thing that's broken).
@@ -121,6 +159,32 @@ export default function UserDetail() {
             >
               View Browser
             </button>
+          )}
+
+          {user.role === 'student' && (
+            <div className="mt-1">
+              {!reportOpen ? (
+                <button onClick={() => { setReportOpen(true); setReportError(null); }} className="btn-secondary text-sm w-full">
+                  Generate Parent Report
+                </button>
+              ) : (
+                <div className="space-y-2 border border-slate-200 rounded-lg p-3">
+                  <p className="text-xs text-slate-500">Screen time and flagged safety events only — no raw browsing history or screenshots.</p>
+                  <div className="flex items-center gap-2">
+                    <input type="date" className="input text-xs flex-1" value={reportFrom} onChange={e => setReportFrom(e.target.value)} />
+                    <span className="text-slate-400 text-xs">to</span>
+                    <input type="date" className="input text-xs flex-1" value={reportTo} onChange={e => setReportTo(e.target.value)} />
+                  </div>
+                  {reportError && <p className="text-xs text-red-600">{reportError}</p>}
+                  <div className="flex items-center gap-2">
+                    <button className="btn-primary text-sm" disabled={reportLoading} onClick={downloadParentReport}>
+                      {reportLoading ? 'Generating…' : 'Download PDF'}
+                    </button>
+                    <button className="text-xs text-slate-400 hover:text-slate-600" onClick={() => setReportOpen(false)}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
 
           {canImpersonate && user.role === 'teacher' && user.id !== viewer?.id && (

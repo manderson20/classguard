@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.35] - 2026-06-24
+
+### Added
+- **Parent Report.** On a student's User Detail page, staff (teacher for their own roster, admin/superadmin gated by the existing `screenshots` permission) can generate a PDF covering screen time and flagged safety events for a chosen date range, to hand or email to a parent. Deliberately excludes raw browsing/DNS history and the actual screenshot images — describes that an incident happened (category, date, risk tier, status) without exporting the underlying evidence itself. On-demand only; no parent-facing portal/login was built, since longer-term parent access is intended to route through the district's SIS rather than a second login surface in ClassGuard.
+
+---
+
 ## [0.7.34] - 2026-06-24
 
 ### Fixed
