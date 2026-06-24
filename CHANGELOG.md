@@ -18,6 +18,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.13] - 2026-06-24
+
+### Fixed
+- **nginx upstream resolution bug that silently 502'd every API call after a backend rebuild.** `frontend/nginx.conf` proxied to `api`/`scep` as a literal hostname, which nginx resolves once at config load and caches forever — since `classguard-api` gets a new container IP every time it's recreated (the normal `docker compose build && up -d` update flow), any update would 502 the entire admin UI, all socket.io connections, and cross-node HA heartbeats until something incidentally also reloaded nginx. Found live in production. Converted every `api`/`scep` proxy_pass to nginx's `resolver` + variable pattern (matching the existing fix already in place for `scep`) so the upstream re-resolves per-request instead of caching indefinitely. Along the way, hit and fixed nginx's well-known variable-`proxy_pass` gotcha (it drops the original request path entirely unless explicitly told to forward `$request_uri`, or for the `/scep/` prefix-stripping case, `$uri$is_args$args` after an explicit `rewrite ... break`) — first attempt at the fix silently broke every proxied route in a different way before this was caught and corrected.
+- **VPN client certificate enrollment (SCEP) crash-looping with "PEM decode failed".** `node-forge`'s PEM encoder emits strict RFC 1421 CRLF line endings; strongSwan's parser (the VPN container) tolerates that, but the SCEP server's Go-based PEM parser doesn't, so the container never came up once SCEP was actually enabled. `backend/src/services/ca.js`'s `generateCa()` now normalizes to LF before returning; the already-generated CA already in this deployment's database was normalized in place (same CA identity/fingerprint, just fixed line endings — safe since no devices had enrolled yet).
+
+---
+
 ## [0.7.12] - 2026-06-24
 
 ### Added
