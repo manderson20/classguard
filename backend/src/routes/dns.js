@@ -261,7 +261,7 @@ router.get('/summary', authenticate, requireMinRole('admin'), async (req, res) =
     GROUP BY time_bucket('1 hour', queried_at), action
   `;
 
-  const [totals, topDomains, topStudents, hourly] = await Promise.all([
+  const [totals, topDomains, topStudents, hourly, cacheStats] = await Promise.all([
     // Overall totals from continuous aggregate (fast) + live tail
     query(
       `SELECT action, SUM(count)::int AS count FROM (
@@ -302,11 +302,26 @@ router.get('/summary', authenticate, requireMinRole('admin'), async (req, res) =
        ORDER BY bucket ASC`,
       [from]
     ),
+    // Cache hit rate — raw dns_logs, not the continuous aggregate (which
+    // predates the cache_hit column and doesn't break it out). cache_hit
+    // IS NULL for blocked/local queries, which never reach the cache.
+    query(
+      `SELECT
+         COUNT(*) FILTER (WHERE cache_hit = true)  AS hits,
+         COUNT(*) FILTER (WHERE cache_hit = false) AS misses
+       FROM dns_logs
+       WHERE queried_at >= $1 AND cache_hit IS NOT NULL`,
+      [from]
+    ),
   ]);
 
   const actionTotals = Object.fromEntries(totals.rows.map(r => [r.action, r.count]));
   const total   = Object.values(actionTotals).reduce((a, b) => a + parseInt(b, 10), 0);
   const blocked = parseInt(actionTotals.blocked || 0, 10);
+
+  const cacheHits   = parseInt(cacheStats.rows[0]?.hits   || 0, 10);
+  const cacheMisses = parseInt(cacheStats.rows[0]?.misses || 0, 10);
+  const cacheTotal  = cacheHits + cacheMisses;
 
   res.json({
     period_hours: hours,
@@ -318,6 +333,9 @@ router.get('/summary', authenticate, requireMinRole('admin'), async (req, res) =
     top_blocked_domains: topDomains.rows,
     top_active_students: topStudents.rows,
     hourly_trend:        hourly.rows,
+    cache_hits:          cacheHits,
+    cache_misses:        cacheMisses,
+    cache_hit_rate:      cacheTotal > 0 ? Math.round((cacheHits / cacheTotal) * 1000) / 10 : null,
   });
 });
 

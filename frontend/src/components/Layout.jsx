@@ -45,7 +45,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.26';
+const VERSION = '0.7.27';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {

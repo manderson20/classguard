@@ -67,12 +67,14 @@ export default function DnsStats() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6">
         {[
           { label: 'Total Queries', value: summary?.total,      color: 'text-blue-700',  bg: 'bg-blue-50' },
           { label: 'Allowed',       value: summary?.allowed,    color: 'text-green-700', bg: 'bg-green-50' },
           { label: 'Blocked',       value: summary?.blocked,    color: 'text-red-700',   bg: 'bg-red-50' },
           { label: 'Block Rate',    value: summary ? `${summary.block_rate}%` : null, color: 'text-slate-700', bg: 'bg-slate-50' },
+          { label: 'Cache Hit Rate', value: summary?.cache_hit_rate != null ? `${summary.cache_hit_rate}%` : 'n/a',
+            color: 'text-purple-700', bg: 'bg-purple-50' },
         ].map(c => (
           <div key={c.label} className={`${c.bg} rounded-xl p-4 border border-transparent`}>
             <div className={`text-2xl font-bold ${c.color}`}>
