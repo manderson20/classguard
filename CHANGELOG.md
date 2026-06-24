@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.22] - 2026-06-24
+
+### Added
+- **Built-in roles unified with the custom permission system.** Super Admin, Admin, and Teacher are now real rows in the roles table instead of hardcoded strings with no manageable permission set. Super Admin is locked — always has every permission, can't be edited or weakened, so there's always a guaranteed full-access account. Admin defaults to every permission (matching today's behavior) but is now editable, so a district can narrow what admins can do. Teacher gets a real, editable row too, ready for teacher-specific permission keys as they're added (none exist in the catalog yet, so its checkbox grid starts empty). Existing admin/teacher/superadmin users were backfilled to point at the matching built-in role; anyone already on a custom role keeps it. New `is_builtin`/`is_locked`/`base_role` columns on `custom_roles` (migration 066); built-in roles can't be deleted or renamed, and the locked one rejects permission edits outright. The local-user-creation and per-user role dropdowns are now one unified picker sourced from the real roles list (built-in + custom) instead of four disconnected hardcoded strings — picking a role now actually assigns its permission set.
+
+---
+
 ## [0.7.21] - 2026-06-24
 
 ### Added

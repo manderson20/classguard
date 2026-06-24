@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
+import { roleOptionsFromCustomRoles, decodeRoleValue } from '../../lib/roleOptions';
 
 // Creates a local-password account — the only way to add ANY user when
 // Google Workspace sync isn't the source (a test account, a break-glass
@@ -8,11 +9,20 @@ import api from '../../lib/api';
 // broken). Superadmin-only, mirrors POST /api/v1/users.
 export default function AddUserModal({ onClose }) {
   const qc = useQueryClient();
-  const [form, setForm] = useState({ fullName: '', email: '', password: '', role: 'teacher' });
+  const [form, setForm] = useState({ fullName: '', email: '', password: '', roleValue: 'teacher' });
   const [error, setError] = useState(null);
 
+  const { data: customRoles = [] } = useQuery({
+    queryKey: ['custom-roles'],
+    queryFn:  () => api.get('/custom-roles'),
+  });
+  const roleOptions = roleOptionsFromCustomRoles(customRoles);
+
   const create = useMutation({
-    mutationFn: () => api.post('/users', form),
+    mutationFn: () => api.post('/users', {
+      fullName: form.fullName, email: form.email, password: form.password,
+      ...decodeRoleValue(form.roleValue),
+    }),
     onSuccess:  () => { qc.invalidateQueries({ queryKey: ['users'] }); onClose(); },
     onError:    (err) => setError(err.message),
   });
@@ -47,11 +57,8 @@ export default function AddUserModal({ onClose }) {
           </div>
           <div>
             <label className="label">Role</label>
-            <select className="input" value={form.role} onChange={e => f('role', e.target.value)}>
-              <option value="student">student</option>
-              <option value="teacher">teacher</option>
-              <option value="admin">admin</option>
-              <option value="superadmin">superadmin</option>
+            <select className="input" value={form.roleValue} onChange={e => f('roleValue', e.target.value)}>
+              {roleOptions.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
           </div>
           {error && <p className="text-sm text-red-600 font-medium">{error}</p>}
