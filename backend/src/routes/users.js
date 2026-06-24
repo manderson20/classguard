@@ -64,6 +64,16 @@ router.get('/me/permissions', authenticate, requireMinRole('admin'), async (req,
 router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
   const { role, userId } = req.user;
   const { search, google_ou, role: filterRole } = req.query;
+  // Capped at 500/page -- a district can have 40-50k users, and an
+  // unbounded SELECT * was the previous behavior (fine at hundreds of
+  // rows, not at tens of thousands: multi-MB JSON payload, slow render on
+  // an unvirtualized table). 500 specifically because PolicySimulator.jsx
+  // and PolicyEditor.jsx already request exactly that for their student
+  // picker dropdowns -- the Users page itself defaults to 50. limit/offset
+  // rather than a cursor since every other list page in this app
+  // (live-view/audit, impersonation/audit) already uses the same pattern.
+  const limit  = Math.min(parseInt(req.query.limit, 10)  || 50, 500);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
 
   const conditions = [];
   const values     = [];
@@ -97,10 +107,14 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
      FROM users u
      LEFT JOIN custom_roles cr ON cr.id = u.custom_role_id
      ${where}
-     ORDER BY u.full_name`,
-    values
+     ORDER BY u.full_name
+     LIMIT $${values.length + 1} OFFSET $${values.length + 2}`,
+    [...values, limit, offset]
   );
-  res.json(rows);
+  const { rows: [{ count }] } = await query(
+    `SELECT COUNT(*) FROM users u ${where}`, values
+  );
+  res.json({ users: rows, total: parseInt(count, 10) });
 });
 
 // ---------------------------------------------------------------------------
