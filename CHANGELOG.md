@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.26] - 2026-06-24
+
+### Added
+- **Server resource usage on the System Health page.** New "Server Resources" section shows CPU load, memory, and disk usage for this node and every other known cluster node — so you can tell if a server is close to or exceeding capacity, not just whether services are up. Color-coded gauges (green/amber/red at 70%/90% thresholds). New `GET /system/resources` endpoint; disk usage (previously not collected anywhere) added via a small shared `systemResources.js` helper, reused by `/metrics` so Zabbix gets the same numbers — including two new triggers in the generated Zabbix template (disk above 90%, sustained CPU load above 90% for 5+ minutes). Cross-node resource fetching reuses the existing Zabbix metrics token (auto-generated now if one doesn't exist yet) rather than `INTERNAL_SECRET`, which is deliberately node-local and never synced across the cluster — the token works because it lives in the `settings` table, which already replicates HA-wide.
+
+---
+
 ## [0.7.25] - 2026-06-24
 
 ### Added
