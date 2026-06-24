@@ -141,6 +141,77 @@ router.get('/logs', authenticate, requireMinRole('teacher'), requirePermissionIf
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/dns/logs/unique-domains
+// Same filters as /logs, but collapsed to one row per blocked domain --
+// the workflow this is for is "what's actually showing up as blocked, so I
+// can decide what to allow", and a raw per-query log makes that tedious
+// once one popular blocked domain accounts for hundreds of rows. Always
+// action=blocked (that's the whole point of this view); sorted by hit
+// count, since the domain blocking the most queries is the one most worth
+// triaging first.
+//
+// Query params: student_id, domain (substring), from, to, page, limit
+// ---------------------------------------------------------------------------
+router.get('/logs/unique-domains', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('dns_logs'), async (req, res) => {
+  const { student_id, domain, from, to, page = 1, limit = 50 } = req.query;
+
+  const PAGE_LIMIT = Math.min(parseInt(limit, 10) || 50, 500);
+  const OFFSET     = (Math.max(parseInt(page, 10) || 1, 1) - 1) * PAGE_LIMIT;
+
+  const conditions = [`action = 'blocked'`];
+  const values     = [];
+
+  const fromTs = from ? new Date(from) : new Date(Date.now() - 86400_000);
+  const toTs   = to   ? new Date(to)   : new Date();
+  conditions.push(`queried_at >= $${values.length + 1}`); values.push(fromTs);
+  conditions.push(`queried_at <= $${values.length + 1}`); values.push(toTs);
+
+  if (student_id) {
+    conditions.push(`user_id = $${values.length + 1}`);
+    values.push(student_id);
+  }
+  if (domain) {
+    conditions.push(`domain ILIKE $${values.length + 1}`);
+    values.push(`%${domain}%`);
+  }
+  if (req.user.role === 'teacher') {
+    conditions.push(`user_id IN (
+      SELECT cm.student_id FROM class_members cm
+      JOIN classes c ON c.id = cm.class_id
+      WHERE c.teacher_id = $${values.length + 1}
+    )`);
+    values.push(req.user.userId);
+  }
+
+  const where = `WHERE ${conditions.join(' AND ')}`;
+
+  const [{ rows: domains }, { rows: countRow }] = await Promise.all([
+    query(
+      `SELECT domain, COUNT(*) AS count,
+              MIN(queried_at) AS first_seen, MAX(queried_at) AS last_seen,
+              (ARRAY_AGG(block_reason ORDER BY queried_at DESC))[1] AS last_block_reason
+       FROM dns_logs
+       ${where}
+       GROUP BY domain
+       ORDER BY count DESC
+       LIMIT ${PAGE_LIMIT} OFFSET ${OFFSET}`,
+      values
+    ),
+    query(
+      `SELECT COUNT(DISTINCT domain) AS total FROM dns_logs ${where}`,
+      values
+    ),
+  ]);
+
+  res.json({
+    total:   parseInt(countRow[0].total, 10),
+    page:    parseInt(page, 10),
+    limit:   PAGE_LIMIT,
+    results: domains,
+  });
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/v1/dns/stats
 // Aggregated DNS statistics using the TimescaleDB continuous aggregate
 //

@@ -80,7 +80,7 @@ function AllowDomainModal({ domain, onClose }) {
   );
 }
 
-function ResolveRow({ domain }) {
+function ResolveRow({ domain, colSpan = 5 }) {
   const { data, isLoading, error } = useQuery({
     queryKey: ['dns-resolve', domain],
     queryFn:  () => api.get(`/dns/resolve?domain=${encodeURIComponent(domain)}`),
@@ -89,7 +89,7 @@ function ResolveRow({ domain }) {
 
   return (
     <tr className="bg-slate-50">
-      <td colSpan={5} className="px-4 py-2.5 text-xs">
+      <td colSpan={colSpan} className="px-4 py-2.5 text-xs">
         {isLoading ? (
           <span className="text-slate-400">Looking up {domain} via 1.1.1.1 / 8.8.8.8…</span>
         ) : error ? (
@@ -137,9 +137,14 @@ export default function DnsLogs() {
   const [lookupKey, setLookupKey] = useState(null);
   const [whyKey, setWhyKey] = useState(null);
   const [allowDomain, setAllowDomain] = useState(null);
+  // 'list' is the original per-query log, unchanged. 'unique' collapses
+  // the same filters down to one row per blocked domain -- for working
+  // through "what's actually showing up blocked, does it need to be
+  // allowed" without scrolling past hundreds of rows for one popular site.
+  const [view, setView] = useState('list');
 
   const { data, isLoading, error } = useQuery({
-    queryKey: ['dns-logs', filters, page],
+    queryKey: ['dns-logs', view, filters, page],
     queryFn: () => {
       const p = new URLSearchParams({
         ...Object.fromEntries(Object.entries(filters).filter(([, v]) => v)),
@@ -148,7 +153,7 @@ export default function DnsLogs() {
         page,
         limit: 50,
       });
-      return api.get(`/dns/logs?${p}`);
+      return api.get(view === 'unique' ? `/dns/logs/unique-domains?${p}` : `/dns/logs?${p}`);
     },
     keepPreviousData: true,
   });
@@ -161,11 +166,42 @@ export default function DnsLogs() {
     setPage(1);
   }
 
+  function handleViewChange(next) {
+    setView(next);
+    setPage(1);
+    setLookupKey(null);
+    setWhyKey(null);
+    // The unique-domains view is blocked-only by definition -- force the
+    // action filter to match so switching back to "list" doesn't silently
+    // carry over a filter the user never actually chose.
+    if (next === 'unique' && filters.action !== 'blocked') {
+      setFilters(f => ({ ...f, action: 'blocked' }));
+    }
+  }
+
   return (
     <div className="p-6 max-w-6xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold text-slate-900">DNS Query Logs</h1>
-        <p className="text-slate-500 text-sm mt-0.5">Powered by TimescaleDB — up to 4M+ queries/day</p>
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">DNS Query Logs</h1>
+          <p className="text-slate-500 text-sm mt-0.5">Powered by TimescaleDB — up to 4M+ queries/day</p>
+        </div>
+        <div className="flex gap-1 bg-slate-100 rounded-lg p-1">
+          <button
+            onClick={() => handleViewChange('list')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors
+              ${view === 'list' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            All queries
+          </button>
+          <button
+            onClick={() => handleViewChange('unique')}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors
+              ${view === 'unique' ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+          >
+            Unique blocked domains
+          </button>
+        </div>
       </div>
 
       {/* Filters */}
@@ -188,7 +224,13 @@ export default function DnsLogs() {
           </div>
           <div>
             <label className="label">Action</label>
-            <select className="input" value={filters.action} onChange={e => handleFilter('action', e.target.value)}>
+            <select
+              className="input disabled:bg-slate-50 disabled:text-slate-400"
+              value={view === 'unique' ? 'blocked' : filters.action}
+              onChange={e => handleFilter('action', e.target.value)}
+              disabled={view === 'unique'}
+              title={view === 'unique' ? 'Unique blocked domains is always blocked-only' : undefined}
+            >
               <option value="">All</option>
               <option value="allowed">Allowed</option>
               <option value="blocked">Blocked</option>
@@ -218,6 +260,62 @@ export default function DnsLogs() {
       {error && <div className="card p-4 text-red-600 text-sm mb-4">Error: {error.message}</div>}
 
       {/* Table */}
+      {view === 'unique' ? (
+      <div className="card overflow-hidden">
+        <table className="w-full text-left text-sm">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Domain</th>
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Blocked count</th>
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">First seen</th>
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Last seen</th>
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Last reason</th>
+              <th className="px-4 py-3" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {results.map((row) => (
+              <Fragment key={row.domain}>
+                <tr className="hover:bg-slate-50">
+                  <td className="px-4 py-2.5 font-mono text-xs text-slate-700 max-w-xs truncate">
+                    <button
+                      onClick={() => setLookupKey(lookupKey === row.domain ? null : row.domain)}
+                      className="hover:underline hover:text-primary-600"
+                      title="Look up what this domain resolves to right now"
+                    >
+                      {row.domain}
+                    </button>
+                  </td>
+                  <td className="px-4 py-2.5 text-xs text-slate-600 font-semibold">{parseInt(row.count, 10).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">{new Date(row.first_seen).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">{new Date(row.last_seen).toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-xs text-slate-400 max-w-[160px] truncate" title={row.last_block_reason || ''}>
+                    {row.last_block_reason || '—'}
+                  </td>
+                  <td className="px-4 py-2.5 text-right">
+                    <button
+                      className="text-xs text-primary-600 hover:underline whitespace-nowrap"
+                      onClick={() => setAllowDomain(row.domain)}
+                      title="Add this domain to the allow list on one or more policies"
+                    >
+                      + Allow
+                    </button>
+                  </td>
+                </tr>
+                {lookupKey === row.domain && <ResolveRow domain={row.domain} colSpan={6} />}
+              </Fragment>
+            ))}
+            {!isLoading && results.length === 0 && (
+              <tr>
+                <td colSpan={6} className="px-4 py-10 text-center text-slate-400 text-sm">
+                  No blocked domains match your filters
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+      ) : (
       <div className="card overflow-hidden">
         <table className="w-full text-left text-sm">
           <thead>
@@ -300,6 +398,7 @@ export default function DnsLogs() {
           </tbody>
         </table>
       </div>
+      )}
 
       {allowDomain && (
         <AllowDomainModal domain={allowDomain} onClose={() => setAllowDomain(null)} />
