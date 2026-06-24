@@ -365,6 +365,16 @@ router.get('/firewall-rules', async (req, res) => {
       { proto: 'vrrp', comment: 'VRRP heartbeat' },
     ];
 
+    // NTP server (chrony) runs on every node, not just the primary -- same
+    // no-leader-election reasoning as DNS (services/chrony.js) -- so this
+    // check is unconditional on role, only on the feature's own setting.
+    const { rows: [ntpCfg] } = await pool.query(
+      `SELECT enabled FROM ntp_server_config LIMIT 1`
+    ).catch(() => ({ rows: [{ enabled: false }] }));
+    if (ntpCfg?.enabled) {
+      staticRules.push({ port: '123', proto: 'udp', comment: 'NTP server' });
+    }
+
     let postgresPeerIps = [];
 
     if (isPrimary) {
@@ -1360,6 +1370,35 @@ router.get('/vrrp', ...auth, async (req, res) => {
   try {
     const cfg = await keepalived.getHaConfig();
     res.json(keepalived.redactHaConfig(cfg));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/ha/vrrp-sync — localhost-only, same trust boundary as
+// /firewall-rules and /update-status, polled by infrastructure/keepalived/
+// sync-keepalived.sh. Returns THIS node's own rendered keepalived.conf +
+// notify.sh, self-scoped rather than the admin-facing /radius/config-bundle
+// (which returns every node's files at once for manual download). `enabled`
+// mirrors nginx.conf's own existing rule: no real VIP configured yet means
+// this is a single-node install that was never meant to run keepalived at
+// all, not an error.
+// ---------------------------------------------------------------------------
+router.get('/vrrp-sync', async (req, res) => {
+  try {
+    const cfg = await keepalived.getHaConfig();
+    if (!cfg.vip_address) return res.json({ enabled: false });
+
+    const nodes   = await keepalived.getNodes();
+    const nodeRow = nodes.find(n => n.node_id === config.node.id);
+    if (!nodeRow) return res.json({ enabled: false });
+
+    res.json({
+      enabled: true,
+      conf:    keepalived.generateKeepalived(cfg, nodeRow),
+      notify:  keepalived.generateNotifyScript(),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

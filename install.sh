@@ -260,6 +260,19 @@ bash "$REPO_DIR/infrastructure/firewall/sync-ufw.sh" || warn "Firewall sync fail
 info "ufw + fail2ban configured for this node's role"
 
 # ---------------------------------------------------------------------------
+# 8b/8c. VRRP (keepalived) and NTP server (chrony) — both no-op entirely
+# unless an admin has actually configured a VIP / turned the NTP server
+# feature on, same opt-in reasoning as the firewall step above. Re-run
+# every minute by the update-watcher so cluster/config changes propagate
+# without anyone re-running install.sh by hand.
+# ---------------------------------------------------------------------------
+section "Step 8b — VRRP / keepalived"
+bash "$REPO_DIR/infrastructure/keepalived/sync-keepalived.sh" || warn "keepalived sync failed — check manually with: systemctl status keepalived"
+
+section "Step 8c — NTP server (chrony)"
+bash "$REPO_DIR/infrastructure/chrony/sync-chrony.sh" || warn "chrony sync failed — check manually with: systemctl status chrony"
+
+# ---------------------------------------------------------------------------
 # 9. Scheduled-update watcher — installed once, idempotent on re-run.
 # Polls this node's own API every minute for an admin-scheduled update
 # (HA page → Software Updates) and runs this exact install.sh again once

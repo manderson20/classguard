@@ -43,6 +43,19 @@ fi
 # run anything by hand. See infrastructure/firewall/sync-ufw.sh.
 bash "$REPO_DIR/infrastructure/firewall/sync-ufw.sh" || true
 
+# --- VRRP / keepalived sync ----------------------------------------------
+# Same idea, for keepalived -- a priority change or a node joining/leaving
+# updates this node's own rendered keepalived.conf automatically. No-ops
+# entirely if no VIP is configured (single-node install). See
+# infrastructure/keepalived/sync-keepalived.sh.
+bash "$REPO_DIR/infrastructure/keepalived/sync-keepalived.sh" || true
+
+# --- NTP server (chrony) sync --------------------------------------------
+# Same idea again, for the opt-in NTP server feature. No-ops entirely unless
+# an admin has turned it on (NTP page → Server). See
+# infrastructure/chrony/sync-chrony.sh.
+bash "$REPO_DIR/infrastructure/chrony/sync-chrony.sh" || true
+
 RESPONSE=$(curl -sf http://localhost:3001/api/v1/ha/update-status) || exit 0
 PENDING=$(echo "$RESPONSE" | jq -r '.pending')
 [ "$PENDING" = "null" ] && exit 0

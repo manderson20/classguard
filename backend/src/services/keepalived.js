@@ -485,4 +485,7 @@ async function buildVrrpOnlyBundle() {
   };
 }
 
-module.exports = { buildConfigBundle, buildVrrpOnlyBundle, getHaConfig, getNodes, redactHaConfig };
+module.exports = {
+  buildConfigBundle, buildVrrpOnlyBundle, getHaConfig, getNodes, redactHaConfig,
+  generateKeepalived, generateNotifyScript,
+};
