@@ -255,7 +255,15 @@ router.get('/me', authenticate, async (req, res) => {
       [req.user.userId]
     );
     if (!rows[0]) return res.status(404).json({ error: 'User not found' });
-    res.json(rows[0]);
+    res.json({
+      ...rows[0],
+      // Present only when this token came from POST /impersonation/:id/start
+      // (routes/impersonation.js) -- the frontend uses this to show the
+      // "viewing as" banner and to know whether there's an admin session to
+      // return to. Never set on a normal login token.
+      impersonatedBy:          req.user.impersonatedBy || null,
+      impersonationSessionId:  req.user.impersonationSessionId || null,
+    });
   } catch (err) {
     console.error('[auth] me error:', err.message);
     res.status(500).json({ error: 'Internal server error' });
@@ -266,6 +274,16 @@ router.get('/me', authenticate, async (req, res) => {
 // POST /api/v1/auth/refresh
 // ---------------------------------------------------------------------------
 router.post('/refresh', authenticate, (req, res) => {
+  // An impersonation token re-minted here with the normal expiresIn would
+  // silently turn a deliberately short, audited "view as" session into a
+  // persistent, untracked teacher identity -- the impersonatedBy claim
+  // would either have to be dropped (losing the audit trail entirely) or
+  // carried forward indefinitely (defeating the whole point of a short
+  // TTL). Simplest safe answer: impersonation sessions can't be refreshed
+  // at all -- end this one and start a fresh one if more time is needed.
+  if (req.user.impersonatedBy) {
+    return res.status(403).json({ error: 'Impersonation sessions cannot be refreshed — end this session and start a new one if more time is needed' });
+  }
   const token = jwt.sign(
     { userId: req.user.userId, email: req.user.email, role: req.user.role },
     config.jwt.secret,

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import api from '../../lib/api';
 import Avatar from '../../components/Avatar';
@@ -21,10 +21,28 @@ const HISTORY_ACTION_COLORS = {
 
 export default function UserDetail() {
   const { userId } = useParams();
-  const { user: viewer } = useAuth();
+  const navigate = useNavigate();
+  const { user: viewer, startImpersonation } = useAuth();
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const canLiveView = (ROLES[viewer?.role] ?? 0) >= ROLES.admin;
+  const isAdmin       = (ROLES[viewer?.role] ?? 0) >= ROLES.admin;
   const isSuperAdmin = (ROLES[viewer?.role] ?? 0) >= ROLES.superadmin;
+
+  const { data: myPermissions } = useQuery({
+    queryKey: ['my-permissions'],
+    queryFn:  () => api.get('/users/me/permissions'),
+    enabled:  isAdmin,
+    staleTime: 60_000,
+  });
+  const canImpersonate = isSuperAdmin || myPermissions?.unrestricted ||
+    myPermissions?.permissions?.includes('impersonate_users');
+
+  const [impersonateError, setImpersonateError] = useState(null);
+  const impersonate = useMutation({
+    mutationFn: () => startImpersonation(userId),
+    onSuccess:  () => navigate('/classes'),
+    onError:    (err) => setImpersonateError(err.message),
+  });
 
   // Local-password fallback (not just for accounts created locally — this
   // also works on a Google-synced account, so there's always a way in if
@@ -103,6 +121,24 @@ export default function UserDetail() {
             >
               View Browser
             </button>
+          )}
+
+          {canImpersonate && user.role === 'teacher' && user.id !== viewer?.id && (
+            <div className="mt-1">
+              <button
+                onClick={() => { setImpersonateError(null); impersonate.mutate(); }}
+                disabled={impersonate.isPending}
+                className="btn-secondary text-sm w-full disabled:opacity-60"
+              >
+                {impersonate.isPending ? 'Starting…' : 'View as this teacher'}
+              </button>
+              <p className="text-[11px] text-slate-400 mt-1">
+                Opens a 30-minute session as {user.full_name || 'this teacher'}. Logged in Impersonation Audit.
+              </p>
+              {impersonateError && (
+                <p className="text-xs text-red-600 mt-1">{impersonateError}</p>
+              )}
+            </div>
           )}
 
           {isSuperAdmin && (

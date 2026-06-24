@@ -38,6 +38,7 @@ import {
   mdiTunnelOutline,
   mdiAccountKeyOutline,
   mdiBellAlertOutline,
+  mdiIncognito,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -45,7 +46,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.27';
+const VERSION = '0.7.28';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -85,6 +86,44 @@ function UrgentAlertBanner({ socket, navigate }) {
         onClick={() => setAlerts([])}
       >
         Dismiss
+      </button>
+    </div>
+  );
+}
+
+// Shown whenever the current session is an impersonation token (see
+// routes/impersonation.js) -- the one place in the UI that makes "you are
+// not actually this teacher" unmissable, since the session otherwise looks
+// and behaves exactly like a real teacher login by design (same userId,
+// same role, same data). Purple rather than the red/amber alert banners
+// above since this isn't an alert, just a persistent status the admin
+// needs to keep seeing for as long as the session lasts.
+function ImpersonationBanner({ user, navigate }) {
+  const { endImpersonation } = useAuth();
+  const [ending, setEnding] = useState(false);
+  if (!user?.impersonatedBy) return null;
+
+  const handleExit = async () => {
+    setEnding(true);
+    await endImpersonation();
+    navigate('/admin');
+  };
+
+  return (
+    <div className="bg-purple-700 text-white px-4 py-2 flex items-center gap-3 flex-wrap">
+      <MdiIcon path={mdiIncognito} size="1.1em" className="flex-shrink-0" />
+      <span className="font-semibold text-sm">
+        Viewing as {user.full_name || user.email} (Teacher)
+      </span>
+      <span className="text-sm text-purple-200">
+        — you are {user.impersonatedBy.name || user.impersonatedBy.email}, impersonating this account. Every change you make is logged.
+      </span>
+      <button
+        className="ml-auto bg-white text-purple-700 text-xs font-semibold px-3 py-1 rounded hover:bg-purple-50 disabled:opacity-60"
+        onClick={handleExit}
+        disabled={ending}
+      >
+        {ending ? 'Exiting…' : 'Exit impersonation'}
       </button>
     </div>
   );
@@ -218,6 +257,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/browser-history',   icon: mdiHistory,        label: 'Browser History',   permissionKey: 'browser_history' },
       { to: '/admin/chat',              icon: mdiChatOutline,    label: 'Chat Audit',        permissionKey: 'chat_audit' },
       { to: '/admin/device-view-audit', icon: mdiEyeOutline,     label: 'Device View Audit', permissionKey: 'device_view_audit' },
+      { to: '/admin/impersonation-audit', icon: mdiIncognito,   label: 'Impersonation Audit', permissionKey: 'impersonate_users' },
       { to: '/admin/ai',                icon: mdiRobotOutline,   label: 'AI Classifier',     permissionKey: 'ai_classifier' },
       { to: '/admin/safety-alerts',     icon: mdiBellAlertOutline, label: 'Safety Alerts',   permissionKey: 'safety_alerts' },
       { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true, permissionKey: 'unblock_requests' },
@@ -452,6 +492,7 @@ export default function Layout() {
 
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
+        <ImpersonationBanner user={user} navigate={navigate} />
         {isStaff && <UrgentAlertBanner socket={socket} navigate={navigate} />}
         {isStaff && <InternetHealthBanner socket={socket} navigate={navigate} />}
         {isSuperAdmin && <HaAutoPromoteBanner socket={socket} navigate={navigate} />}
