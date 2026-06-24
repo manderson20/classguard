@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.18] - 2026-06-24
+
+### Fixed
+- **install.sh could silently skip steps after a self-update.** `git pull --ff-only` in Step 0 can rewrite `install.sh` itself while this same process is still executing it; bash doesn't re-read a running script as it goes; it keeps reading from its buffered position in the *old* file, which after a pull that changes file size/content lands on arbitrary wrong bytes in the *new* file rather than continuing in logical order. Confirmed live: this is exactly what happened on classguard2's first run after 0.7.17 added three new install steps — it pulled successfully, rebuilt the containers correctly (hence reporting the right version), but silently jumped from "Step 7 — Health check" straight to whatever ended up at the old "Step 8" byte offset, skipping the new firewall/keepalived/chrony/FreeRADIUS steps entirely. Now re-execs the freshly-pulled script immediately after a real pull, so everything after that point is guaranteed to come from the file actually on disk, read from the start.
+
+---
+
 ## [0.7.17] - 2026-06-24
 
 ### Added
