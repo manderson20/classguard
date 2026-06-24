@@ -598,7 +598,7 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
 
   const { data: users = [] } = useQuery({
     queryKey: ['radius-policy-user-search', userSearch],
-    queryFn:  () => api.get(`/users?search=${encodeURIComponent(userSearch)}`),
+    queryFn:  () => api.get(`/users?search=${encodeURIComponent(userSearch)}&limit=20`).then(r => r.users),
     enabled:  form.target === 'user' && userSearch.length > 1,
   });
   const { data: groups = [] } = useQuery({

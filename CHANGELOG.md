@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.29] - 2026-06-24
+
+### Added
+- **Pagination on the Users page.** `GET /users` was previously unbounded — fine at a few hundred accounts, but a large district can have 40-50k users, which meant one multi-MB JSON response and an unvirtualized table trying to render all of it at once. Now paginates 50/page with Previous/Next controls, capped at 500/request server-side (matching what the policy student-picker dropdowns on Policy Simulator/Policy Editor already request). Response shape changed from a bare array to `{ users, total }`; the one other caller of this endpoint (RADIUS policy's user-search) updated to match.
+
+---
+
 ## [0.7.28] - 2026-06-24
 
 ### Added

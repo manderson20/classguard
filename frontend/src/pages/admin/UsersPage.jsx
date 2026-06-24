@@ -16,23 +16,37 @@ const ROLE_BADGE = {
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
+const PAGE_SIZE = 50;
+
 export default function UsersPage() {
   const { user: me } = useAuth();
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [addOpen, setAddOpen] = useState(false);
+  const [page, setPage] = useState(0);
 
-  const { data = [], isLoading } = useQuery({
-    queryKey: ['users', search, roleFilter],
+  // Reset to page 1 whenever a filter changes -- otherwise e.g. typing a
+  // search while sitting on page 5 of the unfiltered list shows "no
+  // results" instead of the actual (much shorter) filtered first page.
+  const handleSearch = (v) => { setSearch(v); setPage(0); };
+  const handleRoleFilter = (v) => { setRoleFilter(v); setPage(0); };
+
+  const { data, isLoading } = useQuery({
+    queryKey: ['users', search, roleFilter, page],
     queryFn:  () => {
       const p = new URLSearchParams();
       if (search)     p.set('search', search);
       if (roleFilter) p.set('role', roleFilter);
+      p.set('limit', PAGE_SIZE);
+      p.set('offset', page * PAGE_SIZE);
       return api.get(`/users?${p}`);
     },
     keepPreviousData: true,
   });
+  const users = data?.users || [];
+  const total = data?.total || 0;
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
   const setRole = useMutation({
     mutationFn: ({ userId, roleValue }) => api.put(`/users/${userId}/role`, decodeRoleValue(roleValue)),
@@ -53,7 +67,7 @@ export default function UsersPage() {
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Users</h1>
         <div className="flex items-center gap-4">
-          <span className="text-slate-400 text-sm">{data.length} users</span>
+          <span className="text-slate-400 text-sm">{total.toLocaleString()} users</span>
           {isSuperAdmin && (
             <button className="btn-primary text-sm" onClick={() => setAddOpen(true)}>
               + Add Local User
@@ -70,9 +84,9 @@ export default function UsersPage() {
           className="input flex-1 max-w-xs"
           placeholder="Search name or email…"
           value={search}
-          onChange={e => setSearch(e.target.value)}
+          onChange={e => handleSearch(e.target.value)}
         />
-        <select className="input w-36" value={roleFilter} onChange={e => setRoleFilter(e.target.value)}>
+        <select className="input w-36" value={roleFilter} onChange={e => handleRoleFilter(e.target.value)}>
           <option value="">All roles</option>
           <option value="student">Student</option>
           <option value="teacher">Teacher</option>
@@ -97,10 +111,10 @@ export default function UsersPage() {
             {isLoading && (
               <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">Loading…</td></tr>
             )}
-            {!isLoading && data.length === 0 && (
+            {!isLoading && users.length === 0 && (
               <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">No users found</td></tr>
             )}
-            {data.map(u => (
+            {users.map(u => (
               <tr key={u.id} className="hover:bg-slate-50">
                 <td className="px-4 py-3">
                   <div className="flex items-center gap-2">
@@ -136,6 +150,30 @@ export default function UsersPage() {
           </tbody>
         </table>
       </div>
+
+      {pageCount > 1 && (
+        <div className="flex items-center justify-between mt-4 text-sm">
+          <span className="text-slate-400">
+            Page {page + 1} of {pageCount.toLocaleString()}
+          </span>
+          <div className="flex gap-2">
+            <button
+              className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40"
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={page === 0}
+            >
+              ← Previous
+            </button>
+            <button
+              className="btn-secondary text-xs px-3 py-1.5 disabled:opacity-40"
+              onClick={() => setPage(p => Math.min(pageCount - 1, p + 1))}
+              disabled={page >= pageCount - 1}
+            >
+              Next →
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
