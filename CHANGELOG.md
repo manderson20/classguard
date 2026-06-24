@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.25] - 2026-06-24
+
+### Added
+- **Send test email from Settings > Communications.** Verify the mail server (SMTP) configuration works by sending a real test email to any address, right after configuring it — instead of only finding out it's broken when a real Safety Alert tries to fire. New `POST /settings/smtp/test` endpoint (gated by the same `settings` permission as the rest of the SMTP config), separate from Safety Alerts' existing test (which sends to the configured alert recipient list specifically) since this tests the mail relay itself.
+
+---
+
 ## [0.7.24] - 2026-06-24
 
 ### Fixed

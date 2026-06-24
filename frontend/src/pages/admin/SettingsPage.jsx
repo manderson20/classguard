@@ -287,6 +287,8 @@ function CommunicationsSection({ appSettings, appLoading, saved, setSaved }) {
     smtp_host: '', smtp_port: '587', smtp_secure: 'false',
     smtp_user: '', smtp_password: '', smtp_from: '',
   });
+  const [testTo, setTestTo] = useState('');
+  const [testResult, setTestResult] = useState(null);
 
   useEffect(() => {
     if (appSettings && Object.keys(appSettings).length) {
@@ -308,6 +310,12 @@ function CommunicationsSection({ appSettings, appLoading, saved, setSaved }) {
       setSaved('communications');
       setTimeout(() => setSaved(''), 2500);
     },
+  });
+
+  const sendTest = useMutation({
+    mutationFn: () => api.post('/settings/smtp/test', { to: testTo }),
+    onSuccess:  (res) => setTestResult({ ok: true, msg: `Sent to ${res.sentTo}` }),
+    onError:    (err) => setTestResult({ ok: false, msg: err.message }),
   });
 
   return (
@@ -343,6 +351,24 @@ function CommunicationsSection({ appSettings, appLoading, saved, setSaved }) {
           <div className="flex items-center gap-3 mt-4">
             <button className="btn-primary" onClick={() => save.mutate()}>Save</button>
             {saved === 'communications' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+          </div>
+
+          <div className="mt-6 pt-4 border-t border-slate-100">
+            <Field label="Send test email" hint="Verify the mail server above actually works, before relying on it for Safety Alerts or anything else">
+              <div className="flex items-center gap-3">
+                <input className="input" value={testTo} onChange={e => setTestTo(e.target.value)} placeholder="you@yourschool.org" />
+                <button
+                  className="btn-secondary whitespace-nowrap"
+                  disabled={!testTo.trim() || sendTest.isPending}
+                  onClick={() => { setTestResult(null); sendTest.mutate(); }}
+                >
+                  {sendTest.isPending ? 'Sending…' : 'Send test email'}
+                </button>
+              </div>
+            </Field>
+            {testResult && (
+              <span className={`text-sm font-medium ${testResult.ok ? 'text-green-600' : 'text-red-600'}`}>{testResult.msg}</span>
+            )}
           </div>
         </>
       )}
