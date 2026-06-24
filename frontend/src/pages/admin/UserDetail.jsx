@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation } from '@tanstack/react-query';
 import api from '../../lib/api';
 import Avatar from '../../components/Avatar';
 import { useAuth } from '../../contexts/AuthContext';
@@ -24,6 +24,19 @@ export default function UserDetail() {
   const { user: viewer } = useAuth();
   const [liveViewOpen, setLiveViewOpen] = useState(false);
   const canLiveView = (ROLES[viewer?.role] ?? 0) >= ROLES.admin;
+  const isSuperAdmin = (ROLES[viewer?.role] ?? 0) >= ROLES.superadmin;
+
+  // Local-password fallback (not just for accounts created locally — this
+  // also works on a Google-synced account, so there's always a way in if
+  // Google SSO itself is ever the thing that's broken).
+  const [resetOpen, setResetOpen] = useState(false);
+  const [newPassword, setNewPassword] = useState('');
+  const [resetResult, setResetResult] = useState(null);
+  const resetPassword = useMutation({
+    mutationFn: () => api.put(`/users/${userId}/password`, { password: newPassword }),
+    onSuccess:  () => { setResetResult({ ok: true, msg: 'Password updated.' }); setNewPassword(''); },
+    onError:    (err) => setResetResult({ ok: false, msg: err.message }),
+  });
 
   const { data: user, isLoading: uLoading } = useQuery({
     queryKey: ['user', userId],
@@ -90,6 +103,51 @@ export default function UserDetail() {
             >
               View Browser
             </button>
+          )}
+
+          {isSuperAdmin && (
+            <div className="border-t border-slate-100 pt-3">
+              {!resetOpen ? (
+                <button
+                  onClick={() => { setResetOpen(true); setResetResult(null); }}
+                  className="btn-secondary text-sm w-full"
+                >
+                  Set / Reset Local Password
+                </button>
+              ) : (
+                <div className="space-y-2">
+                  <p className="text-xs text-slate-500">
+                    Sets a local password for this account — works even if it normally signs in via Google,
+                    as a fallback if SSO is ever unavailable.
+                  </p>
+                  <input
+                    type="password"
+                    className="input text-sm w-full"
+                    placeholder="New password (10+ characters)"
+                    value={newPassword}
+                    onChange={e => setNewPassword(e.target.value)}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="btn-primary text-sm"
+                      disabled={newPassword.length < 10 || resetPassword.isPending}
+                      onClick={() => resetPassword.mutate()}
+                    >
+                      {resetPassword.isPending ? 'Saving…' : 'Save Password'}
+                    </button>
+                    <button
+                      className="text-xs text-slate-400 hover:text-slate-600"
+                      onClick={() => { setResetOpen(false); setNewPassword(''); setResetResult(null); }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                  {resetResult && (
+                    <p className={`text-xs font-medium ${resetResult.ok ? 'text-green-600' : 'text-red-600'}`}>{resetResult.msg}</p>
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
 

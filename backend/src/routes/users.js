@@ -1,10 +1,12 @@
 const { Router } = require('express');
+const crypto = require('crypto');
 const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { requirePermission } = require('../middleware/permissions');
 const { resolvePolicy } = require('../services/policyResolver');
 const { getEffectivePermissions, invalidatePermissions, UNRESTRICTED } = require('../services/permissions');
+const { hashPassword } = require('../services/passwordHash');
 
 const router = Router();
 
@@ -89,6 +91,66 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
     values
   );
   res.json(rows);
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/users  (superadmin only)
+// Local-password account creation — district staff normally arrive via
+// Google Workspace sync, which is exactly why this exists: without it,
+// there was no way to create ANY account (test, break-glass, or a real new
+// hire) without Google sync running, and no fallback at all if Google SSO
+// itself ever broke. google_id gets a 'local:<random>' placeholder, same
+// scheme /auth/setup's first-run superadmin already uses, so this is just
+// that same account shape, available beyond the very first user.
+// ---------------------------------------------------------------------------
+router.post('/', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { email, password, fullName, role = 'teacher' } = req.body;
+
+  if (!email || !password || !fullName) {
+    return res.status(400).json({ error: 'email, password, and fullName are required' });
+  }
+  if (password.length < 10) {
+    return res.status(400).json({ error: 'Password must be at least 10 characters' });
+  }
+  if (!['student','teacher','admin','superadmin'].includes(role)) {
+    return res.status(400).json({ error: 'Invalid role' });
+  }
+
+  try {
+    const hash = hashPassword(password);
+    const googleId = `local:${crypto.randomBytes(8).toString('hex')}`;
+
+    const { rows } = await query(
+      `INSERT INTO users (google_id, email, full_name, given_name, role, password_hash, last_synced_at)
+       VALUES ($1, $2, $3, $4, $5, $6, NOW())
+       RETURNING id, email, full_name, role, created_at`,
+      [googleId, email.toLowerCase().trim(), fullName, fullName.split(' ')[0], role, hash]
+    );
+    res.status(201).json(rows[0]);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A user with that email already exists' });
+    console.error('[users] create error:', err);
+    res.status(500).json({ error: 'Failed to create user' });
+  }
+});
+
+// PUT /api/v1/users/:id/password  (superadmin only)
+// Sets or resets a local password for ANY existing user, including one that
+// arrived via Google sync and has never had one — the fallback path for "I
+// need to get into this account and Google SSO is the problem."
+router.put('/:id/password', authenticate, requireMinRole('superadmin'), async (req, res) => {
+  const { password } = req.body;
+  if (!password || password.length < 10) {
+    return res.status(400).json({ error: 'Password must be at least 10 characters' });
+  }
+
+  const hash = hashPassword(password);
+  const { rows } = await query(
+    `UPDATE users SET password_hash = $1 WHERE id = $2 RETURNING id`,
+    [hash, req.params.id]
+  );
+  if (!rows.length) return res.status(404).json({ error: 'User not found' });
+  res.json({ ok: true });
 });
 
 // GET /api/v1/users/:id

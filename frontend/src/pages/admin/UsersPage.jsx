@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { useAuth } from '../../contexts/AuthContext';
 import Avatar from '../../components/Avatar';
+import AddUserModal from '../../components/admin/AddUserModal';
 
 const ROLE_BADGE = {
   student:    'badge-slate',
@@ -19,6 +20,7 @@ export default function UsersPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [addOpen, setAddOpen] = useState(false);
 
   const { data = [], isLoading } = useQuery({
     queryKey: ['users', search, roleFilter],
@@ -53,8 +55,17 @@ export default function UsersPage() {
     <div className="p-6 max-w-5xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-slate-900">Users</h1>
-        <span className="text-slate-400 text-sm">{data.length} users</span>
+        <div className="flex items-center gap-4">
+          <span className="text-slate-400 text-sm">{data.length} users</span>
+          {isSuperAdmin && (
+            <button className="btn-primary text-sm" onClick={() => setAddOpen(true)}>
+              + Add Local User
+            </button>
+          )}
+        </div>
       </div>
+
+      {addOpen && <AddUserModal onClose={() => setAddOpen(false)} />}
 
       {/* Filters */}
       <div className="flex gap-3 mb-5">

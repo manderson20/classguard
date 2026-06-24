@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.11] - 2026-06-24
+
+### Added
+- **Local-password account management (superadmin-only)**, closing a real continuity gap found while setting up a test account: `POST /api/v1/auth/setup` only ever works once (fails with 409 the instant any user exists), and there was no other route anywhere to create a user or set/reset a password. In practice this meant only the single original setup account could ever log in without Google Workspace SSO — any outage or misconfiguration there, and there'd be no way in besides that one account. New `POST /api/v1/users` (create a local-password account, any role) and `PUT /api/v1/users/:id/password` (set/reset a password on *any* existing user, including Google-synced ones, as an SSO-outage fallback) plus matching UI: "+ Add Local User" on the Users page, "Set / Reset Local Password" on a user's detail page. Password hashing extracted from `auth.js` into a shared `services/passwordHash.js` so login, setup, and these new routes can never drift apart.
+
+---
+
 ## [0.7.10] - 2026-06-24
 
 ### Changed
