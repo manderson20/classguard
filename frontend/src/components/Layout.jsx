@@ -45,7 +45,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.13';
+const VERSION = '0.7.14';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -121,6 +121,49 @@ function InternetHealthBanner({ socket, navigate }) {
         onClick={() => { setAlert(null); navigate('/admin'); }}
       >
         View dashboard
+      </button>
+      <button
+        className="text-white/80 hover:text-white text-xs"
+        onClick={() => setAlert(null)}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
+// HA auto-promotion firing — superadmin-only room (backend/src/sockets/
+// index.js), since "a node just auto-promoted its database" is meaningless
+// noise to a teacher or building admin. Red, not amber, since unlike the
+// internet-health banner above this is irreversible and may mean the
+// cluster has just split-brained.
+function HaAutoPromoteBanner({ socket, navigate }) {
+  const [alert, setAlert] = useState(null);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onAlert = (payload) => setAlert(payload);
+    socket.on('system:ha_auto_promote', onAlert);
+    return () => socket.off('system:ha_auto_promote', onAlert);
+  }, [socket]);
+
+  if (!alert) return null;
+
+  return (
+    <div className="bg-red-600 text-white px-4 py-2 flex items-center gap-3 flex-wrap">
+      <span className="font-semibold text-sm">
+        {alert.ok ? '⚠ HA auto-promotion fired:' : '⚠ HA auto-promotion FAILED:'}
+      </span>
+      <span className="text-sm">
+        {alert.ok
+          ? `Node ${alert.node_id} auto-promoted itself to primary. Check for split-brain before trusting both copies agree.`
+          : `Node ${alert.node_id} tried to auto-promote and failed (${alert.error}). Still read-only — needs manual attention.`}
+      </span>
+      <button
+        className="ml-auto bg-white text-red-700 text-xs font-semibold px-3 py-1 rounded hover:bg-red-50"
+        onClick={() => { setAlert(null); navigate('/admin/ha'); }}
+      >
+        View HA page
       </button>
       <button
         className="text-white/80 hover:text-white text-xs"
@@ -411,6 +454,7 @@ export default function Layout() {
       <div className="flex-1 flex flex-col overflow-hidden">
         {isStaff && <UrgentAlertBanner socket={socket} navigate={navigate} />}
         {isStaff && <InternetHealthBanner socket={socket} navigate={navigate} />}
+        {isSuperAdmin && <HaAutoPromoteBanner socket={socket} navigate={navigate} />}
         <main className="flex-1 overflow-auto bg-slate-100">
           <Outlet />
         </main>

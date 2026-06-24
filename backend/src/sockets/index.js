@@ -31,6 +31,13 @@ const setupSockets = (io) => {
       socket.join('role:staff');
     }
 
+    // Infra/ops events (e.g. an HA node auto-promoting its database) are
+    // meaningless noise to a teacher or building admin and only meant for
+    // whoever can actually act on them.
+    if (role === 'superadmin') {
+      socket.join('role:superadmin');
+    }
+
     // Teachers and admins join class rooms on demand (called by the dashboard)
     socket.on('join:class', (classId) => {
       if (['teacher','admin','superadmin'].includes(role)) {
@@ -135,6 +142,12 @@ const setupSockets = (io) => {
   // infra concern, not a student-safety one.
   events.on('system:internet_alert', (payload) => {
     io.to('role:staff').emit('system:internet_alert', payload);
+  });
+
+  // HA auto-promotion firing is an infra/ops event, not a student-safety or
+  // general-staff one — superadmins only (see sockets join logic above).
+  events.on('system:ha_auto_promote', (payload) => {
+    io.to('role:superadmin').emit('system:ha_auto_promote', payload);
   });
 
   // Teacher-initiated screenshot request: push to student's extension socket
