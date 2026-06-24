@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.12] - 2026-06-24
+
+### Added
+- **Firewall / Ports Reference on the HA page**, built after manually hardening classguard-1's host firewall (ufw + fail2ban) surfaced that nothing documented which ports are pure LAN traffic between cluster nodes vs. which need forwarding through the district's edge router. New section on `HaPage.jsx`: a LAN-internal table (VRRP protocol 112, Postgres replication restricted to the peer node, inter-node HTTP) and a router/edge table (VPN IKEv2 ports, conditionally required TCP 80/443 for off-campus extension sync), plus an explicit "do not forward" list (SSH, Postgres, DNS, DHCP). Pulls live values (VIP, peer node, VPN enabled, TLS validation method) rather than hardcoding them — caught and fixed a real bug during verification where the page asserted "DNS-01, no port forwarding needed" unconditionally, when this deployment is actually configured for HTTP-01 (which *does* require forwarding 80/443) — the TLS note is now conditional on the real configured `provider`.
+
+---
+
 ## [0.7.11] - 2026-06-24
 
 ### Added

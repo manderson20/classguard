@@ -974,6 +974,112 @@ function ChangeRoleModal({ node, onClose, qc }) {
 }
 
 // ---------------------------------------------------------------------------
+// Firewall / Ports reference — built after a real host-firewall lockdown
+// (ufw + fail2ban) on classguard-1 surfaced that nobody had this written
+// down anywhere: which ports are pure LAN traffic between nodes, vs. which
+// (if any) actually need forwarding through the district's edge
+// router/firewall for something outside this network to reach the server.
+// Pulls live values (VIP, peer node, VPN enabled) where possible so this
+// doesn't silently go stale as the deployment changes; the rest is fixed
+// reference content describing what ClassGuard itself needs, since this
+// tool has no visibility into the actual router/edge firewall config.
+// ---------------------------------------------------------------------------
+function PortRow({ port, label, note }) {
+  return (
+    <tr className="border-b border-slate-50 last:border-0">
+      <td className="py-2 pr-4 font-mono text-xs text-slate-700 whitespace-nowrap">{port}</td>
+      <td className="py-2 pr-4 text-sm text-slate-800">{label}</td>
+      <td className="py-2 text-xs text-slate-500">{note}</td>
+    </tr>
+  );
+}
+
+function FirewallSection() {
+  const { data: vrrp = {} } = useQuery({
+    queryKey: ['ha-vrrp'],
+    queryFn:  () => api.get('/ha/vrrp'),
+  });
+  const { data: nodes = [] } = useQuery({
+    queryKey: ['ha-nodes'],
+    queryFn:  () => api.get('/ha/nodes'),
+  });
+  const { data: vpnConfig = {} } = useQuery({
+    queryKey: ['vpn-config'],
+    queryFn:  () => api.get('/vpn/config').catch(() => ({})),
+  });
+  const { data: tlsConfig = {} } = useQuery({
+    queryKey: ['tls-config'],
+    queryFn:  () => api.get('/tls'),
+  });
+
+  const vip = vrrp.vip_address || '<VIP not configured yet — see above>';
+  const usesHttp01 = tlsConfig.provider === 'http01';
+  const peer = nodes.find(n => n.ha_role !== 'primary') || nodes[1];
+  const peerLabel = peer ? `${peer.hostname} (${peer.api_url?.replace(/^https?:\/\//, '') || '?'})` : 'the other node';
+
+  return (
+    <div className="mb-8">
+      <h2 className="font-semibold text-slate-800 mb-3">Firewall / Ports Reference</h2>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">Between cluster nodes (LAN-internal)</h3>
+        <p className="text-xs text-slate-500 mb-3">
+          classguard-1 and {peerLabel} must be able to reach each other on these — they should be on the same
+          network segment (VRRP's multicast heartbeat doesn't route across subnets without extra config).
+          None of this needs to leave your network.
+        </p>
+        <table className="w-full text-left">
+          <tbody>
+            <PortRow port="protocol 112 (VRRP)" label="Failover heartbeat (keepalived)" note="Multicast 224.0.0.18 — must not be filtered by any switch ACL between nodes" />
+            <PortRow port="TCP 5432" label="PostgreSQL streaming replication" note={`Currently restricted to ${peer?.api_url?.replace(/^https?:\/\//, '') || 'the peer node'} only via ufw`} />
+            <PortRow port="TCP 80" label="Inter-node API calls (update scheduling, log/event forwarding, health checks)" note="Plain HTTP — internal traffic only, never exposed to the internet" />
+          </tbody>
+        </table>
+      </div>
+
+      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
+        <h3 className="text-sm font-semibold text-slate-700 mb-1">Router / edge firewall — inbound from outside your network</h3>
+        <p className="text-xs text-slate-500 mb-3">
+          Forward these to the virtual IP (<code className="bg-slate-100 px-1 rounded">{vip}</code>), not a
+          single node's own address — that way port-forwards keep working through a failover.
+        </p>
+        <table className="w-full text-left">
+          <tbody>
+            <PortRow
+              port="UDP 500 + UDP 4500"
+              label="VPN (IKEv2 + NAT-T)"
+              note={vpnConfig.enabled ? `Needed — VPN is enabled. Forward to ${vip}.` : 'Not needed right now — VPN is disabled in Settings'}
+            />
+            <PortRow
+              port="TCP 80 + 443"
+              label="Admin UI / Chrome extension sync for off-campus devices"
+              note={
+                usesHttp01
+                  ? 'Required right now — TLS is set to HTTP-01 validation (Settings above), which needs Let\'s Encrypt to reach this server directly on 80/443 to renew. Switching to a DNS-01 provider (Cloudflare/Route53) would remove this requirement.'
+                  : 'Optional — only forward this if students/staff need extension policy sync or you need remote admin access from outside. Many districts intentionally leave this LAN/VPN-only.'
+              }
+            />
+          </tbody>
+        </table>
+      </div>
+
+      <div className="bg-amber-50 border border-amber-200 rounded-xl p-4">
+        <h3 className="text-sm font-semibold text-amber-900 mb-1.5">Do not forward these</h3>
+        <p className="text-xs text-amber-800">
+          SSH (22), PostgreSQL (5432), DNS (53), DHCP (67) — these are LAN-only by design. SSH especially:
+          if you need remote shell access, use the VPN above rather than exposing 22 to the internet.
+        </p>
+        <p className="text-xs text-amber-800 mt-2">
+          {usesHttp01
+            ? 'Your TLS setup currently uses HTTP-01 validation, which is the one exception — see the 80/443 row above, that one does need forwarding for certificate renewal.'
+            : "TLS certificate renewal uses DNS-01 validation here, which needs no inbound port at all — don't forward anything just for Let's Encrypt to keep working."}
+        </p>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Page
 // ---------------------------------------------------------------------------
 export default function HaPage() {
@@ -1145,6 +1251,8 @@ export default function HaPage() {
       <VrrpSection />
 
       <TlsSection />
+
+      <FirewallSection />
 
       {/* Setup guide */}
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-5">
