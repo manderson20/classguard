@@ -55,18 +55,22 @@ async function insertDnsLogBatch(records) {
   const actions          = records.map(r => r.action           || 'allowed');
   const blockReasons     = records.map(r => r.blockReason      || null);
   const sourceIps        = records.map(r => r.sourceIp          || null);
+  // '' (not yet evaluated, e.g. blocked/local queries never reach the
+  // cache) must stay NULL, not false -- "wasn't a cache hit" and "this
+  // query never checked the cache at all" are different facts.
+  const cacheHits        = records.map(r => r.cacheHit === '' || r.cacheHit == null ? null : r.cacheHit === 'true');
   const queriedAts       = records.map(r =>
     r.timestamp ? new Date(parseInt(r.timestamp, 10)) : new Date()
   );
 
   try {
     await query(
-      `INSERT INTO dns_logs (user_id, device_id, lesson_session_id, domain, action, block_reason, source_ip, queried_at)
+      `INSERT INTO dns_logs (user_id, device_id, lesson_session_id, domain, action, block_reason, source_ip, cache_hit, queried_at)
        SELECT * FROM unnest(
-         $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::inet[], $8::timestamptz[]
+         $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::inet[], $8::boolean[], $9::timestamptz[]
        )
        ON CONFLICT DO NOTHING`,
-      [userIds, deviceIds, lessonSessionIds, domains, actions, blockReasons, sourceIps, queriedAts]
+      [userIds, deviceIds, lessonSessionIds, domains, actions, blockReasons, sourceIps, cacheHits, queriedAts]
     );
   } catch (err) {
     // unnest() inserts the whole batch as one statement — one malformed

@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.27] - 2026-06-24
+
+### Added
+- **DNS cache hit rate on DNS Statistics.** New "Cache Hit Rate" card shows what fraction of allowed queries were served from dns-engine's existing Redis response cache vs. required a real upstream lookup, over the same time window (1h/24h/7d/30d) as the rest of the page — previously this was invisible; the cache itself has always been there (Redis, TTL from the real upstream response capped by Settings > DNS & Retention's "DNS Cache TTL"), there was just no way to see it working. New `cache_hit` column on `dns_logs` (migration 068), threaded through dns-engine's resolver → ring-buffer logger → Redis stream → scheduler drain, the same path every other DNS log field already takes — no new infrastructure, just one more fact recorded per query.
+
+---
+
 ## [0.7.26] - 2026-06-24
 
 ### Added

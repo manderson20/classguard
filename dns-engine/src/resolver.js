@@ -171,12 +171,12 @@ async function resolveQuery(name, typeNum, sourceIp) {
  * empty answers array and is left alone.
  */
 async function forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId, lessonSessionId = null) {
-  const answers = await forwardToUpstream(domain, typeNum);
+  const { answers, cacheHit } = await forwardToUpstream(domain, typeNum);
   if (answers === null) {
     logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'unresolvable' });
     return { action: 'blocked', answers: [], blockReason: 'unresolvable' };
   }
-  logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: null });
+  logQuery({ domain, action: 'allowed', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: null, cacheHit });
   return { action: 'allowed', answers };
 }
 
@@ -197,21 +197,21 @@ const UNRESOLVABLE_RCODES = new Set([
  */
 async function forwardToUpstream(domain, typeNum) {
   const cached = await cache.get(domain, typeNum);
-  if (cached) return cached;
+  if (cached) return { answers: cached, cacheHit: true };
 
   try {
     const result = await upstream.resolve(domain, typeNum);
-    if (UNRESOLVABLE_RCODES.has(result?.header?.rcode)) return null;
+    if (UNRESOLVABLE_RCODES.has(result?.header?.rcode)) return { answers: null, cacheHit: false };
 
     const answers = result?.answers || [];
     if (answers.length > 0) {
       await cache.set(domain, typeNum, answers);
     }
-    return answers;
+    return { answers, cacheHit: false };
   } catch {
     // Transport failure (timeout, every configured upstream unreachable) —
     // same "doesn't resolve" treatment as an explicit NXDOMAIN/SERVFAIL.
-    return null;
+    return { answers: null, cacheHit: false };
   }
 }
 

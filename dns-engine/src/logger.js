@@ -65,6 +65,7 @@ async function flushToRedis() {
           'policyId',        e.policyId,
           'lessonSessionId', e.lessonSessionId,
           'blockReason',     e.blockReason,
+          'cacheHit',        e.cacheHit,
           'timestamp',       e.timestamp,
         );
       }
@@ -85,7 +86,7 @@ setInterval(() => {
  * logQuery — synchronous ring buffer enqueue. Zero I/O on the hot DNS path.
  * Called without `await` from resolver.js so resolution never waits for logging.
  */
-function logQuery({ domain, action, sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason }) {
+function logQuery({ domain, action, sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason, cacheHit }) {
   enqueue({
     domain:          domain          || '',
     action:          action          || 'allowed',
@@ -95,6 +96,10 @@ function logQuery({ domain, action, sourceIp, studentId, deviceId, policyId, les
     policyId:        policyId        || '',
     lessonSessionId: lessonSessionId || '',
     blockReason:     blockReason     || '',
+    // Only meaningful for action='allowed' (the only path that ever calls
+    // forwardToUpstream/cache.get) -- '' for blocked/local queries, which
+    // never reach the cache at all.
+    cacheHit:        cacheHit === undefined ? '' : String(cacheHit),
     timestamp:       Date.now().toString(),
   });
 }
