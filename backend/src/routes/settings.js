@@ -56,9 +56,11 @@ const ALLOWED_KEYS = new Set([
   // a private repo (indistinguishable from "doesn't exist"), which silently
   // broke the whole check-for-update -> schedule-update flow.
   'github_update_token',
-  // Safety Evidence Capture — urgent alert delivery (Settings > Safety Alerts)
+  // Mail relay connection (Settings > Communications) — reusable
+  // infrastructure for any feature that sends email. Who actually receives
+  // a safety alert (safety_alert_emails) is a separate, narrower-permissioned
+  // concern — see /safety-alert-recipients below.
   'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_password', 'smtp_from',
-  'safety_alert_emails',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object
@@ -103,10 +105,36 @@ router.put('/', ...auth, async (req, res) => {
   }
 });
 
+// safety_alert_emails is governed by its own 'safety_alerts' permission
+// (Safety Alerts > Alerting), not the blanket 'settings' permission that
+// guards everything else in this file — it's an application-level decision
+// (who should know about a safety event), not core server config, and a
+// custom role can be granted one without the other. Reusing PUT/GET /
+// for this one key would mean a safety_alerts-only user could read/write
+// every other key here too (Google credentials, LDAP passwords, ...), so
+// it gets a narrow, dedicated pair of routes instead.
+const safetyAlertsAuth = [authenticate, requirePermission('safety_alerts')];
+
+router.get('/safety-alert-recipients', ...safetyAlertsAuth, async (req, res) => {
+  const { rows } = await pool.query(`SELECT value FROM settings WHERE key = 'safety_alert_emails'`);
+  res.json({ safety_alert_emails: rows[0]?.value || '' });
+});
+
+router.put('/safety-alert-recipients', ...safetyAlertsAuth, async (req, res) => {
+  const { safety_alert_emails } = req.body;
+  if (safety_alert_emails === undefined) return res.status(400).json({ error: 'safety_alert_emails required' });
+  await pool.query(
+    `INSERT INTO settings (key, value, updated_at) VALUES ('safety_alert_emails', $1, NOW())
+     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+    [String(safety_alert_emails)]
+  );
+  res.json({ saved: ['safety_alert_emails'] });
+});
+
 // POST /api/v1/settings/safety-alerts/test — sends a real test email to
 // the configured safety_alert_emails list, so an admin can confirm SMTP
 // works before relying on it for a real self-harm/violence alert.
-router.post('/safety-alerts/test', ...auth, async (req, res) => {
+router.post('/safety-alerts/test', ...safetyAlertsAuth, async (req, res) => {
   const { sendMail, getSmtpSettings } = require('../services/mailer');
   const cfg = await getSmtpSettings();
   const recipients = (cfg.safety_alert_emails || '').split(',').map(s => s.trim()).filter(Boolean);

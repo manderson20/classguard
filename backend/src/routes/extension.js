@@ -588,7 +588,7 @@ router.get('/keywords', authenticate, async (req, res) => {
 // separate from the per-policy domain/URL rule editor — these are in-page
 // TEXT matches, not domain rules.
 // ---------------------------------------------------------------------------
-router.get('/keywords/manage', authenticate, requirePermission('settings'), async (req, res) => {
+router.get('/keywords/manage', authenticate, requirePermission('safety_alerts'), async (req, res) => {
   const { rows } = await query(
     `SELECT k.id, k.keyword, k.category, k.is_active, k.created_at, u.full_name AS added_by_name
      FROM content_keywords k LEFT JOIN users u ON u.id = k.added_by
@@ -597,7 +597,7 @@ router.get('/keywords/manage', authenticate, requirePermission('settings'), asyn
   res.json(rows);
 });
 
-router.post('/keywords', authenticate, requirePermission('settings'), async (req, res) => {
+router.post('/keywords', authenticate, requirePermission('safety_alerts'), async (req, res) => {
   const { keyword, category = 'profanity' } = req.body;
   if (!keyword?.trim()) return res.status(400).json({ error: 'keyword required' });
 
@@ -611,7 +611,7 @@ router.post('/keywords', authenticate, requirePermission('settings'), async (req
   res.json(rows[0]);
 });
 
-router.patch('/keywords/:id', authenticate, requirePermission('settings'), async (req, res) => {
+router.patch('/keywords/:id', authenticate, requirePermission('safety_alerts'), async (req, res) => {
   const { is_active, category } = req.body;
   const sets = [], params = [];
   if (is_active !== undefined) { sets.push(`is_active = $${params.length+1}`); params.push(is_active); }
@@ -627,7 +627,7 @@ router.patch('/keywords/:id', authenticate, requirePermission('settings'), async
   res.json({ ok: true });
 });
 
-router.delete('/keywords/:id', authenticate, requirePermission('settings'), async (req, res) => {
+router.delete('/keywords/:id', authenticate, requirePermission('safety_alerts'), async (req, res) => {
   await query(`DELETE FROM content_keywords WHERE id = $1`, [req.params.id]);
   res.json({ ok: true });
 });
