@@ -7,6 +7,7 @@ const { syncAll } = require('./blocklistSync');
 const { syncNetworkClientsToIpam } = require('./ipamSync');
 const { syncAll: syncCategories, classifyRecentDomains } = require('./categoryImport');
 const acmeTls   = require('./acmeTls');
+const securityScan = require('./securityScan');
 const pingScan  = require('./pingScan');
 const dhcpDnsAutoRegister = require('./dhcpDnsAutoRegister');
 const dhcpKeaSync = require('./dhcpKeaSync');
@@ -407,6 +408,12 @@ function startScheduler() {
   // TLS certificate renewal check — daily 5am, renews within 30 days of expiry
   cron.schedule('0 5 * * *', () => {
     acmeTls.renewIfNeeded().catch(err => console.error('[scheduler] TLS renewal error:', err.message));
+  });
+
+  // Dependency vulnerability scan — daily 5:30am (npm audit + CISA KEV
+  // cross-reference, see services/securityScan.js)
+  cron.schedule('30 5 * * *', () => {
+    securityScan.runScan().catch(err => console.error('[scheduler] security scan error:', err.message));
   });
 
   // Presence (ping) scan — every 10 minutes, subnets with scan_enabled=true
