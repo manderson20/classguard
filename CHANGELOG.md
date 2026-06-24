@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.14] - 2026-06-24
+
+### Added
+- **Automatic database promotion for HA failover**, opt-in and off by default. Previously, a VRRP failover moved the floating IP automatically but left the standby's Postgres read-only until an admin manually clicked "Promote to Primary" — every write would 500 until someone noticed and acted. A standby now auto-promotes itself once it has held VRRP MASTER *and* independently confirmed the old primary is unreachable, continuously, for a configurable grace period (default 5 minutes). With 3+ nodes, "confirmed unreachable" requires a quorum vote from the other nodes (`GET /ha/can-reach-primary` on each), not just this standby's own view of the network — a 2-node cluster has no quorum to take and falls back to that standby's own judgment alone, which the new HA page warning calls out explicitly as meaningfully less safe (a one-sided network partition is indistinguishable from a real primary failure with only two nodes). Fires a superadmin-only in-app banner + email (new `role:superadmin` socket room, deliberately separate from the general safety-alert recipient list — this is an infra event, not a student-safety one) so an admin can check for split-brain before trusting both copies still agree.
+
+---
+
 ## [0.7.13] - 2026-06-24
 
 ### Fixed

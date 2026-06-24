@@ -8,6 +8,8 @@ const { requireMinRole } = require('../middleware/roles');
 const { requirePermission } = require('../middleware/permissions');
 const config     = require('../config');
 const keepalived = require('../services/keepalived');
+const events     = require('../events');
+const mailer     = require('../services/mailer');
 
 const auth      = [authenticate, requirePermission('ha_monitoring')];
 const superauth = [authenticate, requireMinRole('superadmin')];
@@ -76,6 +78,137 @@ async function registerSelf() {
   ).catch(err => console.warn('[ha] self-register:', err.message));
 }
 
+// In-memory only, deliberately not persisted — this code only ever runs on
+// a standby (read-only Postgres, can't write to `settings` itself), and a
+// restart of this process resetting the countdown is the safe direction to
+// fail in (re-confirm from zero) rather than the unsafe one (resume a stale
+// countdown blindly). Cleared the instant either condition stops holding.
+let autoPromoteCandidateSince = null;
+
+// Tri-state: true = primary confirmed reachable (or inconclusive — treat
+// the same, since "don't know" must never look like "confirmed down" to the
+// caller), false = quorum-confirmed unreachable. With a 3rd+ node in the
+// cluster, "quorum" means a strict majority of the OTHER nodes (excluding
+// this one and the primary) independently agree they can't reach the
+// primary either — one standby's own view of the network can't be trusted
+// alone, since a partition that isolates just this node looks identical
+// from here to the primary actually being down. With only 2 nodes total
+// (no third node to ask), there's no quorum to take, and this necessarily
+// falls back to this node's own observation alone — meaningfully less safe,
+// which is exactly why the HA page's warning text calls that out and
+// recommends a 3rd node specifically for this.
+async function isPrimaryReachableByQuorum() {
+  const { rows: [primary] } = await pool.query(
+    `SELECT node_id, api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+  ).catch(() => ({ rows: [] }));
+  if (!primary?.api_url) return true; // no known primary at all -- ambiguous, never treat as confirmed-down
+
+  let selfReachable = true;
+  try {
+    await axios.get(`${primary.api_url}/health`, { timeout: 3000 });
+  } catch {
+    selfReachable = false;
+  }
+
+  const { rows: peers } = await pool.query(
+    `SELECT api_url FROM nodes WHERE node_id != $1 AND node_id != $2 AND api_url IS NOT NULL AND is_active = true`,
+    [config.node.id, primary.node_id]
+  ).catch(() => ({ rows: [] }));
+
+  if (!peers.length) {
+    // 2-node cluster -- no third opinion available, self-only judgment.
+    return selfReachable;
+  }
+
+  const votes = await Promise.allSettled(
+    peers.map(p => axios.get(`${p.api_url}/api/v1/ha/can-reach-primary`, { timeout: 3000 }).then(r => r.data.reachable))
+  );
+  const responded = votes
+    .filter(v => v.status === 'fulfilled' && v.value !== null)
+    .map(v => v.value);
+
+  if (!responded.length) {
+    // Every other node was itself unreachable for a vote -- can't form a
+    // quorum, fall back to self-only (same reduced confidence as 2-node).
+    return selfReachable;
+  }
+
+  const unreachableVotes = responded.filter(v => v === false).length + (selfReachable ? 0 : 1);
+  const totalVotes        = responded.length + 1; // +1 for this node's own vote
+  return unreachableVotes <= totalVotes / 2; // true unless a strict majority says "down"
+}
+
+async function notifyAutoPromotion({ ok, error }) {
+  events.emit('system:ha_auto_promote', { ok, error: error || null, node_id: config.node.id, at: new Date().toISOString() });
+
+  try {
+    // Deliberately superadmins only, not the safety-alert recipient list --
+    // this is an infra/ops event ("a database just auto-promoted itself"),
+    // meaningless and alarming to a teacher or building admin who only
+    // expects student-safety emails from that list.
+    const { rows: admins } = await pool.query(`SELECT email FROM users WHERE role = 'superadmin'`);
+    const recipients = admins.map(a => a.email).filter(Boolean);
+    if (!recipients.length) return;
+
+    const cfg = await mailer.getSmtpSettings();
+    if (!cfg.smtp_host) return;
+
+    const subject = ok
+      ? `[ClassGuard] Node ${config.node.id} auto-promoted itself to primary`
+      : `[ClassGuard] Auto-promotion attempt on ${config.node.id} FAILED`;
+    const text = ok
+      ? `This node held VRRP MASTER and could not reach the old primary for the configured grace period, so it auto-promoted itself to a writable primary.\n\n` +
+        `If the old primary comes back online, check the HA page for a split-brain warning before assuming the two copies still agree -- they may have diverged during the outage.`
+      : `This node attempted to auto-promote itself to primary but the attempt failed: ${error}\n\nIt remains a read-only standby. Manual intervention (HA page -> Promote) is likely needed.`;
+    await mailer.sendMail({ to: recipients.join(','), subject, text });
+  } catch (err) {
+    console.error('[ha] auto-promote notification email failed:', err.message);
+  }
+}
+
+// Called every heartbeat tick while this node is a standby. No-ops
+// immediately unless an admin has explicitly opted in (see PUT
+// /ha/auto-promote-config) -- this is off by default precisely because a
+// 2-node cluster can't tell "primary is dead" apart from "I can't currently
+// reach the primary" with full confidence; see isPrimaryReachableByQuorum.
+async function maybeAutoPromote() {
+  const { rows: [enabledRow] } = await pool.query(
+    `SELECT value FROM settings WHERE key = 'ha_auto_promote_enabled'`
+  ).catch(() => ({ rows: [] }));
+  if (enabledRow?.value !== 'true') { autoPromoteCandidateSince = null; return; }
+
+  const { rows: [selfRow] } = await pool.query(
+    `SELECT vrrp_state FROM nodes WHERE node_id = $1`, [config.node.id]
+  ).catch(() => ({ rows: [] }));
+  if (selfRow?.vrrp_state !== 'MASTER') { autoPromoteCandidateSince = null; return; }
+
+  const primaryLooksUp = await isPrimaryReachableByQuorum();
+  if (primaryLooksUp) { autoPromoteCandidateSince = null; return; }
+
+  if (!autoPromoteCandidateSince) autoPromoteCandidateSince = Date.now();
+
+  const { rows: [graceRow] } = await pool.query(
+    `SELECT value FROM settings WHERE key = 'ha_auto_promote_grace_seconds'`
+  ).catch(() => ({ rows: [] }));
+  const graceMs  = (parseInt(graceRow?.value, 10) || 300) * 1000;
+  const elapsed  = Date.now() - autoPromoteCandidateSince;
+
+  console.warn(`[ha] auto-promote candidate for ${Math.round(elapsed / 1000)}s / ${graceMs / 1000}s ` +
+    `(holding VRRP MASTER, primary unreachable by quorum)`);
+
+  if (elapsed < graceMs) return;
+
+  autoPromoteCandidateSince = null; // reset regardless of outcome -- avoid an instant retry storm on failure
+  console.error('[ha] AUTO-PROMOTING: grace period elapsed with VRRP MASTER held and primary unreachable');
+  try {
+    await promoteThisNode();
+    await notifyAutoPromotion({ ok: true });
+  } catch (err) {
+    console.error('[ha] auto-promote failed:', err.message);
+    await notifyAutoPromotion({ ok: false, error: err.message });
+  }
+}
+
 function startHeartbeat() {
   registerSelf();
   setInterval(async () => {
@@ -83,7 +216,8 @@ function startHeartbeat() {
       .catch(() => ({ rows: [{ in_recovery: false }] }));
 
     if (in_recovery) {
-      return relayToPrimary({ node_id: config.node.id, version: config.version });
+      await relayToPrimary({ node_id: config.node.id, version: config.version });
+      return maybeAutoPromote();
     }
 
     await pool.query(
@@ -181,6 +315,110 @@ router.get('/split-brain-status', ...auth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/ha/can-reach-primary — quorum vote endpoint for auto-promotion
+// below. Unauthenticated by design, same reasoning as /role-check: a
+// standby asking its peers "can YOU reach the primary?" has to work even
+// when nothing about the caller's identity can be verified against
+// (possibly stale) replicated data. Reveals nothing sensitive, just a bool.
+// ---------------------------------------------------------------------------
+router.get('/can-reach-primary', async (req, res) => {
+  try {
+    const { rows: [primary] } = await pool.query(
+      `SELECT api_url FROM nodes WHERE ha_role = 'primary' AND is_active ORDER BY last_seen DESC LIMIT 1`
+    );
+    if (!primary?.api_url) return res.json({ reachable: null });
+    try {
+      await axios.get(`${primary.api_url}/health`, { timeout: 3000 });
+      res.json({ reachable: true });
+    } catch {
+      res.json({ reachable: false });
+    }
+  } catch (err) {
+    res.json({ reachable: null });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET/PUT /api/v1/ha/auto-promote-config — the opt-in toggle + grace period
+// for maybeAutoPromote() above. Off by default on every install; an admin
+// has to deliberately turn this on after reading the warning on the HA
+// page. Writes only succeed against the primary (it's a normal `settings`
+// row, same as every other write in this app) -- in steady state the VIP
+// already points at the primary, so this isn't a special case to handle.
+// ---------------------------------------------------------------------------
+router.get('/auto-promote-config', ...auth, async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT key, value FROM settings WHERE key IN ('ha_auto_promote_enabled', 'ha_auto_promote_grace_seconds')`
+  );
+  const byKey = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  res.json({
+    enabled:       byKey.ha_auto_promote_enabled === 'true',
+    grace_seconds: parseInt(byKey.ha_auto_promote_grace_seconds, 10) || 300,
+  });
+});
+
+router.put('/auto-promote-config', ...superauth, async (req, res) => {
+  const { enabled, grace_seconds } = req.body;
+  try {
+    if (enabled !== undefined) {
+      await pool.query(
+        `INSERT INTO settings (key, value) VALUES ('ha_auto_promote_enabled', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [enabled ? 'true' : 'false']
+      );
+    }
+    if (grace_seconds !== undefined) {
+      const seconds = Math.max(60, parseInt(grace_seconds, 10) || 300);
+      await pool.query(
+        `INSERT INTO settings (key, value) VALUES ('ha_auto_promote_grace_seconds', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+        [String(seconds)]
+      );
+    }
+    res.json({ saved: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Shared by the manual /promote route and the auto-promotion heartbeat
+// logic below. Throws on failure rather than returning an error shape —
+// callers decide how to surface that (HTTP response vs. a log line + alert
+// email).
+async function promoteThisNode() {
+  const { rows: [{ in_recovery }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery');
+  if (!in_recovery) {
+    throw new Error('This node is already a writable primary');
+  }
+
+  await pool.query('SELECT pg_promote()');
+
+  // pg_promote() returns almost immediately but recovery actually ending
+  // lags a beat behind — poll briefly rather than assume it's instant.
+  let promoted = false;
+  for (let i = 0; i < 20; i++) {
+    const { rows: [{ in_recovery: stillRecovering }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery');
+    if (!stillRecovering) { promoted = true; break; }
+    await new Promise(r => setTimeout(r, 500));
+  }
+  if (!promoted) {
+    throw new Error('pg_promote() did not complete in time — check postgres logs');
+  }
+
+  const nodeId = config.node.id;
+  await pool.query(`UPDATE nodes SET ha_role = 'primary', is_active = true WHERE node_id = $1`, [nodeId]);
+  // Purely informational on this node's own (now-authoritative) copy —
+  // does NOT reach out and touch the old primary, which may not even be
+  // reachable right now.
+  await pool.query(`UPDATE nodes SET ha_role = 'demoted' WHERE node_id != $1 AND ha_role = 'primary'`, [nodeId]);
+
+  await pool.query(
+    `INSERT INTO settings (key, value) VALUES ('pending_promotion_env_update', 'true')
+     ON CONFLICT (key) DO UPDATE SET value = 'true'`
+  );
+}
+
+// ---------------------------------------------------------------------------
 // POST /api/v1/ha/promote — turns THIS standby into a real, writable
 // primary. Must be called directly against the node being promoted —
 // there's no live primary to relay through, that's the entire point of
@@ -194,37 +432,7 @@ router.post('/promote', ...superauth, async (req, res) => {
     return res.status(400).json({ error: 'confirm:true is required — this is irreversible' });
   }
   try {
-    const { rows: [{ in_recovery }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery');
-    if (!in_recovery) {
-      return res.status(400).json({ error: 'This node is already a writable primary' });
-    }
-
-    await pool.query('SELECT pg_promote()');
-
-    // pg_promote() returns almost immediately but recovery actually ending
-    // lags a beat behind — poll briefly rather than assume it's instant.
-    let promoted = false;
-    for (let i = 0; i < 20; i++) {
-      const { rows: [{ in_recovery: stillRecovering }] } = await pool.query('SELECT pg_is_in_recovery() AS in_recovery');
-      if (!stillRecovering) { promoted = true; break; }
-      await new Promise(r => setTimeout(r, 500));
-    }
-    if (!promoted) {
-      return res.status(500).json({ error: 'pg_promote() did not complete in time — check postgres logs' });
-    }
-
-    const nodeId = config.node.id;
-    await pool.query(`UPDATE nodes SET ha_role = 'primary', is_active = true WHERE node_id = $1`, [nodeId]);
-    // Purely informational on this node's own (now-authoritative) copy —
-    // does NOT reach out and touch the old primary, which may not even be
-    // reachable right now.
-    await pool.query(`UPDATE nodes SET ha_role = 'demoted' WHERE node_id != $1 AND ha_role = 'primary'`, [nodeId]);
-
-    await pool.query(
-      `INSERT INTO settings (key, value) VALUES ('pending_promotion_env_update', 'true')
-       ON CONFLICT (key) DO UPDATE SET value = 'true'`
-    );
-
+    await promoteThisNode();
     res.json({ promoted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

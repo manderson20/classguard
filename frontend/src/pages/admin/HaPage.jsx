@@ -97,6 +97,98 @@ function PromoteSection() {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-Promotion — opt-in, off by default. A standby will only auto-promote
+// itself once it has held the VRRP MASTER state AND independently confirmed
+// the old primary is unreachable, continuously, for the configured grace
+// period. With a 3rd+ node in the cluster, "confirmed unreachable" means a
+// quorum of the OTHER nodes agree, not just this one's own view of the
+// network — with only 2 nodes total there's no quorum to take and it falls
+// back to this node's own judgment alone, which is meaningfully less safe
+// (a network partition that isolates just the standby looks identical, from
+// the standby's side, to the primary actually being dead). See ha.js's
+// isPrimaryReachableByQuorum for the exact logic.
+// ---------------------------------------------------------------------------
+function AutoPromoteSection() {
+  const qc = useQueryClient();
+  const [grace, setGrace] = useState(null);
+
+  const { data: cfg = {} } = useQuery({
+    queryKey: ['ha-auto-promote-config'],
+    queryFn:  () => api.get('/ha/auto-promote-config'),
+  });
+
+  const { data: nodes = [] } = useQuery({
+    queryKey: ['ha-nodes'],
+    queryFn:  () => api.get('/ha/nodes'),
+  });
+
+  const save = useMutation({
+    mutationFn: (body) => api.put('/ha/auto-promote-config', body),
+    onSuccess:  () => qc.invalidateQueries({ queryKey: ['ha-auto-promote-config'] }),
+  });
+
+  const graceSeconds = grace ?? cfg.grace_seconds ?? 300;
+  const otherNodes   = Math.max(0, (nodes?.length || 1) - 1);
+  const hasQuorum    = otherNodes >= 2; // self + 2 others = 3 total, majority is possible
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-8">
+      <h2 className="font-semibold text-slate-800 mb-2">Automatic Database Promotion</h2>
+      <p className="text-xs text-slate-500 mb-4">
+        When enabled, a standby that holds the floating IP and can't reach the primary for the grace period below
+        will promote itself automatically, instead of waiting for an admin to click "Promote to Primary" manually.
+      </p>
+
+      <div className={`rounded-lg p-3 mb-4 text-xs ${hasQuorum ? 'bg-blue-50 border border-blue-200 text-blue-900' : 'bg-amber-50 border border-amber-300 text-amber-900'}`}>
+        {hasQuorum ? (
+          <p>
+            <span className="font-semibold">{otherNodes} other nodes</span> in this cluster — quorum is possible.
+            A standby will only auto-promote if a majority of the <em>other</em> nodes also can't reach the primary,
+            not just its own view of the network.
+          </p>
+        ) : (
+          <p>
+            <span className="font-semibold">Only {otherNodes === 1 ? '1 other node' : 'one other node'} in this cluster</span> —
+            there's no third node to break a tie. A standby's decision to auto-promote relies entirely on its own
+            view of the network, which can't always tell "the primary is dead" apart from "I personally can't
+            reach it right now" (a one-sided network partition). Adding a 3rd node lets the cluster require
+            agreement before promoting, which is significantly safer. Until then, a false promotion would mean
+            two writable databases that have diverged — recoverable only by manually picking one copy and
+            discarding the other's writes since the split.
+          </p>
+        )}
+      </div>
+
+      <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer mb-4">
+        <input
+          type="checkbox"
+          className="w-4 h-4 rounded"
+          checked={cfg.enabled === true}
+          onChange={e => save.mutate({ enabled: e.target.checked })}
+        />
+        Enable automatic promotion
+      </label>
+
+      <Field label="Grace period (seconds)" hint="how long the conditions above must hold continuously before promoting">
+        <div className="flex items-center gap-2 max-w-xs">
+          <input
+            type="number"
+            min="60"
+            className={INPUT}
+            value={graceSeconds}
+            onChange={e => setGrace(e.target.value)}
+            onBlur={() => { if (grace !== null) { save.mutate({ grace_seconds: grace }); setGrace(null); } }}
+          />
+          <span className="text-xs text-slate-400 whitespace-nowrap">({Math.round(graceSeconds / 60)} min)</span>
+        </div>
+      </Field>
+
+      {save.error && <p className="text-red-600 text-sm mt-3">{save.error.message}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Software Updates — checks the installed version against GitHub's main
 // branch, and lets an admin schedule a maintenance window instead of
 // running anything by hand. Scheduling cascades to every registered node
@@ -1132,6 +1224,7 @@ export default function HaPage() {
       </div>
 
       <PromoteSection />
+      <AutoPromoteSection />
 
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
