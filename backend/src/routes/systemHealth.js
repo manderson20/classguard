@@ -6,11 +6,13 @@
 // control by pinning a version) and already have their own status surface.
 const { Router } = require('express');
 const axios = require('axios');
+const os = require('os');
 const { pool } = require('../db');
 const redis = require('../redis');
 const { keaCommand } = require('../services/kea');
 const { authenticate } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
+const { getResourceUsage } = require('../services/systemResources');
 
 const router = Router();
 const auth = [authenticate, requirePermission('system_health')];
@@ -75,6 +77,71 @@ function checkApi() {
     detail:  `uptime ${Math.floor(process.uptime() / 3600)}h`,
   };
 }
+
+// Resource usage (CPU load, memory, disk) for this node plus every other
+// known cluster node -- reuses /metrics (already token-gated) as the data
+// source for OTHER nodes. Deliberately NOT using INTERNAL_SECRET here: that
+// value is generated independently per node at install time and never
+// synced (see ha.js's vrrp-local comment) -- it only ever proves "this is
+// trusted local infra", never "this is another cluster member". The
+// zabbix_metrics_token, by contrast, lives in the `settings` table, which
+// already replicates HA-wide via Postgres -- the same row is visible on
+// every node with zero extra sync code. Auto-generated here if missing so
+// the cluster resource view works without requiring Zabbix to be set up
+// first (it also conveniently pre-fills the field under Settings >
+// Monitoring for whenever Zabbix is configured).
+async function getOrCreateMetricsToken() {
+  const { rows } = await pool.query(`SELECT value FROM settings WHERE key = 'zabbix_metrics_token'`);
+  if (rows[0]?.value) return rows[0].value;
+  const token = require('crypto').randomBytes(24).toString('hex');
+  await pool.query(
+    `INSERT INTO settings (key, value, updated_at) VALUES ('zabbix_metrics_token', $1, NOW())
+     ON CONFLICT (key) DO NOTHING`,
+    [token]
+  );
+  const { rows: after } = await pool.query(`SELECT value FROM settings WHERE key = 'zabbix_metrics_token'`);
+  return after[0]?.value || token;
+}
+
+async function getClusterResources() {
+  const nodeId = process.env.NODE_ID || os.hostname();
+  const local  = { node_id: nodeId, hostname: os.hostname(), reachable: true, ...getResourceUsage() };
+
+  const [{ rows: nodes }, token] = await Promise.all([
+    pool.query('SELECT node_id, hostname, api_url FROM nodes WHERE node_id <> $1', [nodeId]).catch(() => ({ rows: [] })),
+    getOrCreateMetricsToken().catch(() => null),
+  ]);
+
+  const others = await Promise.all(nodes.map(async (n) => {
+    if (!n.api_url || !token) return { node_id: n.node_id, hostname: n.hostname, reachable: false };
+    try {
+      const r = await axios.get(`${n.api_url}/metrics`, {
+        headers: { 'X-Metrics-Token': token }, timeout: 3000,
+      });
+      return {
+        node_id: n.node_id, hostname: n.hostname, reachable: true,
+        cpu_count:       r.data.os_cpu_count,
+        cpu_load_avg_1m: r.data.os_load_avg_1m,
+        cpu_load_pct:    r.data.os_cpu_load_pct,
+        mem_used_pct:    r.data.os_mem_used_pct,
+        disk_total_gb:   r.data.os_disk_total_gb,
+        disk_used_pct:   r.data.os_disk_used_pct,
+      };
+    } catch {
+      return { node_id: n.node_id, hostname: n.hostname, reachable: false };
+    }
+  }));
+
+  return [local, ...others];
+}
+
+router.get('/resources', ...auth, async (req, res) => {
+  try {
+    res.json(await getClusterResources());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.get('/health', ...auth, async (req, res) => {
   const checks = {

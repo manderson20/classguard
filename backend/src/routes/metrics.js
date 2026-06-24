@@ -28,6 +28,7 @@ const { pool }  = require('../db');
 const redis     = require('../redis');
 const os        = require('os');
 const { getHaConfig, getNodes } = require('../services/keepalived');
+const { getResourceUsage } = require('../services/systemResources');
 
 const DNS_STREAM = 'classguard:dns-log';
 
@@ -68,6 +69,7 @@ async function collectMetrics() {
   const freemem    = os.freemem();
   const totalmem   = os.totalmem();
   const uptimeSec  = process.uptime();
+  const resources  = getResourceUsage(); // adds disk usage, which os.* alone can't provide
 
   // DNS query counts from TimescaleDB (last 60s and last 24h)
   const { rows: dnsRows } = await pool.query(`
@@ -175,6 +177,9 @@ async function collectMetrics() {
     os_mem_total_mb:         Math.round(totalmem / 1024 / 1024),
     os_mem_used_pct:         parseFloat((((totalmem - freemem) / totalmem) * 100).toFixed(2)),
     os_cpu_count:            os.cpus().length,
+    os_cpu_load_pct:         resources.cpu_load_pct,
+    os_disk_total_gb:        resources.disk_total_gb,
+    os_disk_used_pct:        resources.disk_used_pct,
 
     // PostgreSQL
     pg_connections_total:    parseInt(pg.total_connections, 10)  || 0,
@@ -338,6 +343,23 @@ router.get('/zabbix-template', metricsAuth, async (req, res) => {
       <name>ClassGuard: ${t.shortName} VRRP role changed (failover event)</name>
       <priority>3</priority><!-- average -->
     </trigger>`);
+  // Disk/CPU thresholds -- skipped if the metric came back null (df failed,
+  // e.g. on a filesystem type df couldn't read) rather than emitting a
+  // trigger that can never fire.
+  if (metrics.os_disk_used_pct != null) {
+    nodeTargets.forEach(t => triggers.push(`
+    <trigger>
+      <expression>last(/${t.techName}/classguard.os_disk_used_pct)&gt;90</expression>
+      <name>ClassGuard: ${t.shortName} disk usage above 90%</name>
+      <priority>4</priority><!-- high -->
+    </trigger>`));
+  }
+  nodeTargets.forEach(t => triggers.push(`
+    <trigger>
+      <expression>min(/${t.techName}/classguard.os_cpu_load_pct,5m)&gt;90</expression>
+      <name>ClassGuard: ${t.shortName} CPU load above 90% for 5+ minutes</name>
+      <priority>3</priority><!-- average -->
+    </trigger>`));
   if (nodeTargets.length >= 2) {
     const sumExpr = nodeTargets.map(t => `last(/${t.techName}/classguard.is_vrrp_master)`).join('+');
     triggers.push(`
