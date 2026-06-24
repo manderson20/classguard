@@ -48,6 +48,11 @@ const PERMISSION_CATALOG = [
   { key: 'system_health',    label: 'System Health',       section: 'System' },
   { key: 'internet_monitoring', label: 'Internet Health (view)', section: 'System' },
   { key: 'settings',         label: 'Settings',            section: 'System', sensitive: true },
+  // Export only -- restore is hardcoded superadmin-only at the route
+  // level (backend/src/routes/backup.js), same tier as VPN CA/HA promote/
+  // TLS issuance, since a bad restore can overwrite the whole district's
+  // configuration in one request.
+  { key: 'backup_export',   label: 'Backup Export',       section: 'System', sensitive: true },
 ];
 
 const PERMISSION_KEYS = new Set(PERMISSION_CATALOG.map(p => p.key));

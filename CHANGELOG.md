@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.31] - 2026-06-24
+
+### Added
+- **Encrypted configuration backup & restore** (new "Backup & Restore" page). Export a passphrase-encrypted file containing this district's policies, settings, roster, network/DHCP/RADIUS/phone config, and integrations — for moving to new hardware or just keeping a safe copy. Deliberately excludes activity history (DNS logs, browser history, chat, audit trails) and cluster topology, which don't belong in a "move my configuration" backup. AES-256-GCM encryption (fails closed on a wrong passphrase or corrupted file, never silently returns garbage); the cleartext header (created date, ClassGuard version, table list) lets you confirm you're restoring the right file before being asked for the passphrase. Restore is superadmin-only and intended for a freshly-installed, empty server — it deletes then re-inserts every covered table inside one transaction, so a server that already has activity history referencing existing records fails cleanly with a foreign-key error (by design) rather than silently destroying that history. Export is delegable via a new `backup_export` permission. Tested end-to-end against a fully disposable Postgres+Redis instance (never against real district data) including a full restore with row-for-row data verification.
+
+---
+
 ## [0.7.30] - 2026-06-24
 
 ### Added
