@@ -260,17 +260,21 @@ bash "$REPO_DIR/infrastructure/firewall/sync-ufw.sh" || warn "Firewall sync fail
 info "ufw + fail2ban configured for this node's role"
 
 # ---------------------------------------------------------------------------
-# 8b/8c. VRRP (keepalived) and NTP server (chrony) — both no-op entirely
-# unless an admin has actually configured a VIP / turned the NTP server
-# feature on, same opt-in reasoning as the firewall step above. Re-run
-# every minute by the update-watcher so cluster/config changes propagate
-# without anyone re-running install.sh by hand.
+# 8b/8c/8d. VRRP (keepalived), NTP server (chrony), and FreeRADIUS — all
+# three no-op entirely unless an admin has actually configured a VIP /
+# turned the NTP server feature on / turned on track_freeradius, same
+# opt-in reasoning as the firewall step above. Re-run every minute by the
+# update-watcher so cluster/config changes propagate without anyone
+# re-running install.sh by hand.
 # ---------------------------------------------------------------------------
 section "Step 8b — VRRP / keepalived"
 bash "$REPO_DIR/infrastructure/keepalived/sync-keepalived.sh" || warn "keepalived sync failed — check manually with: systemctl status keepalived"
 
 section "Step 8c — NTP server (chrony)"
 bash "$REPO_DIR/infrastructure/chrony/sync-chrony.sh" || warn "chrony sync failed — check manually with: systemctl status chrony"
+
+section "Step 8d — FreeRADIUS"
+bash "$REPO_DIR/infrastructure/freeradius/sync-freeradius.sh" || warn "FreeRADIUS sync failed — check manually with: systemctl status freeradius"
 
 # ---------------------------------------------------------------------------
 # 9. Scheduled-update watcher — installed once, idempotent on re-run.

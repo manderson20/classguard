@@ -56,6 +56,12 @@ bash "$REPO_DIR/infrastructure/keepalived/sync-keepalived.sh" || true
 # infrastructure/chrony/sync-chrony.sh.
 bash "$REPO_DIR/infrastructure/chrony/sync-chrony.sh" || true
 
+# --- FreeRADIUS sync ------------------------------------------------------
+# Same idea again, for FreeRADIUS itself -- no-ops entirely unless
+# track_freeradius is turned on (RADIUS page → HA & Config). See
+# infrastructure/freeradius/sync-freeradius.sh.
+bash "$REPO_DIR/infrastructure/freeradius/sync-freeradius.sh" || true
+
 RESPONSE=$(curl -sf http://localhost:3001/api/v1/ha/update-status) || exit 0
 PENDING=$(echo "$RESPONSE" | jq -r '.pending')
 [ "$PENDING" = "null" ] && exit 0
