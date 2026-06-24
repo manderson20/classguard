@@ -716,6 +716,21 @@ router.post('/self-report', authenticate, requireMinRole('superadmin'), async (r
 // ---------------------------------------------------------------------------
 const GITHUB_REPO = 'manderson20/classguard';
 
+// This host's outbound DNS resolution to api.github.com has been observed to
+// fail intermittently (EAI_AGAIN) even at the OS level, independent of
+// Docker — a network-level blip, not a GitHub or ClassGuard issue. One retry
+// after a short delay is enough to ride out a single bad lookup.
+async function githubGetWithRetry(url, opts, attempts = 2) {
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await axios.get(url, opts);
+    } catch (err) {
+      if (i === attempts) throw err;
+      await new Promise(r => setTimeout(r, 500));
+    }
+  }
+}
+
 router.get('/check-update', ...auth, async (req, res) => {
   try {
     const { rows: [tokenRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'github_update_token'`);
@@ -728,7 +743,7 @@ router.get('/check-update', ...auth, async (req, res) => {
       ? { Authorization: `Bearer ${tokenRow.value}` }
       : {};
 
-    const { data: latestVersionRaw } = await axios.get(
+    const { data: latestVersionRaw } = await githubGetWithRetry(
       `https://api.github.com/repos/${GITHUB_REPO}/contents/VERSION?ref=main`,
       { headers: { Accept: 'application/vnd.github.raw', ...githubHeaders }, timeout: 8000 }
     );
@@ -736,7 +751,7 @@ router.get('/check-update', ...auth, async (req, res) => {
 
     let changelog = null;
     try {
-      const { data: changelogRaw } = await axios.get(
+      const { data: changelogRaw } = await githubGetWithRetry(
         `https://api.github.com/repos/${GITHUB_REPO}/contents/CHANGELOG.md?ref=main`,
         { headers: { Accept: 'application/vnd.github.raw', ...githubHeaders }, timeout: 8000 }
       );
