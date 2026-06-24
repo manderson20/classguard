@@ -6,6 +6,7 @@ const { requireMinRole } = require('../middleware/roles');
 const { requirePermission } = require('../middleware/permissions');
 const ntp     = require('../services/ntp');
 const chrony  = require('../services/chrony');
+const config  = require('../config');
 
 const auth      = [authenticate, requirePermission('ntp_monitoring')];
 const superauth = [authenticate, requireMinRole('superadmin')];
@@ -123,6 +124,26 @@ router.put('/server-config', ...superauth, async (req, res) => {
 router.get('/server-bundle', ...superauth, async (req, res) => {
   try {
     res.json(await chrony.buildNtpBundle());
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/v1/ntp/server-sync — localhost-only, same trust boundary as
+// /ha/firewall-rules, polled by infrastructure/chrony/sync-chrony.sh. Config
+// is identical on every node (chrony.js's whole point is no leader-election/
+// priority concept), so unlike vrrp-sync this needs no per-node row lookup.
+// ---------------------------------------------------------------------------
+router.get('/server-sync', async (req, res) => {
+  try {
+    const cfg = await chrony.getNtpConfig();
+    if (!cfg.enabled) return res.json({ enabled: false });
+    res.json({
+      enabled:           true,
+      conf:              chrony.generateChronyConf(cfg),
+      client_report_sh:  chrony.generateClientReportScript(config.node.id),
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

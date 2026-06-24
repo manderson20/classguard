@@ -18,6 +18,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.16] - 2026-06-24
+
+### Added
+- **Automated VRRP/keepalived and NTP server (chrony) sync**, extending the same pattern as v0.7.15's firewall automation to the other two host-level config bundles that were previously manual download-and-deploy-yourself steps. New `GET /ha/vrrp-sync` (this node's own rendered keepalived.conf + notify.sh, self-scoped rather than the admin-facing all-nodes bundle) and `GET /ntp/server-sync` (chrony.conf, identical on every node — no leader-election concept there). New `infrastructure/keepalived/sync-keepalived.sh` and `infrastructure/chrony/sync-chrony.sh`, both no-op entirely unless actually configured (a real VIP / the NTP server feature switched on), run once during install.sh and every minute by the update-watcher. `/ha/firewall-rules` now also opens 123/udp when the NTP server feature is enabled.
+
+  Both sync scripts deliberately normalize away comments and whitespace before deciding whether to restart anything — the config generators embed a live timestamp plus other comment text that can drift between versions without anything *functional* changing, and restarting keepalived on a false-positive diff risks an actual VRRP role flip on the live MASTER (a brief advertisement gap during restart can let a BACKUP node grab MASTER, and `nopreempt` means the original node won't automatically reclaim it afterward). Caught and fixed before this ever ran against the live cluster, where classguard-1 is the current MASTER.
+
+---
+
 ## [0.7.15] - 2026-06-24
 
 ### Added
