@@ -18,6 +18,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.33] - 2026-06-24
+
+### Fixed
+- Resolved 9 of 10 vulnerabilities surfaced by the new Security Scan (v0.7.32): upgraded `nodemailer` 6.10.1 → 9.0.1 (fixes a real exploitable high-severity SSRF/arbitrary-file-read issue, plus several CRLF-injection issues — verified our usage never touches the affected `raw`/`envelope.size` code paths, and confirmed an actual SMTP send still works end-to-end against a disposable test mail server post-upgrade), and ran `npm audit fix` for `ws`, `engine.io`, and `socket.io-adapter` (non-breaking transitive bumps).
+- Deliberately left one remaining moderate finding (`uuid` < 11.1.1, bundled internally inside `exceljs`/`gaxios`/`googleapis`/`googleapis-common`/`node-cron`'s own dependency trees — not something our code calls directly): the only available fix forces major-version bumps to those packages (`googleapis` 148→173 in particular touches the live, carefully-debugged Google Workspace integration), and the underlying issue requires the vulnerable library to pass an attacker-controlled buffer into `uuid()` internally, which none of ours do. Tracked, visible in the Security Scan page, not silently ignored — revisit if it ever escalates or a non-major fix becomes available.
+
+### Notes
+- On "fix vulnerabilities from the UI and push to the cluster automatically": dependency upgrades that need actual review (does this break anything we rely on?) go through the same path every other fix in this project has used all session — edit code, rebuild, test, commit, push, then `/ha/schedule-update` rolls it out cluster-wide. That pipeline already is the fix-and-propagate mechanism; a one-click in-app auto-upgrade-and-redeploy button was deliberately not built, since blindly forcing major version bumps (like the `googleapis` one above) without reviewing breaking changes first risks silently breaking a working integration in production with no review step — worse than the vulnerability it'd be "fixing."
+
+---
+
 ## [0.7.32] - 2026-06-24
 
 ### Added
