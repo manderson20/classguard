@@ -131,6 +131,28 @@ router.put('/safety-alert-recipients', ...safetyAlertsAuth, async (req, res) => 
   res.json({ saved: ['safety_alert_emails'] });
 });
 
+// POST /api/v1/settings/smtp/test — sends a real test email to an address
+// the admin types in, so the mail relay itself can be verified right after
+// configuring it, independent of any feature's recipient list (Safety
+// Alerts has its own separate test against safety_alert_emails below).
+router.post('/smtp/test', ...auth, async (req, res) => {
+  const { to } = req.body;
+  if (!to?.trim()) return res.status(400).json({ error: 'to address is required' });
+
+  const { sendMail } = require('../services/mailer');
+  try {
+    const result = await sendMail({
+      to: to.trim(),
+      subject: '[ClassGuard] Test email',
+      text: 'This is a test email from ClassGuard. If you received this, the mail server is configured correctly.',
+    });
+    if (!result.sent) return res.status(400).json({ error: result.reason });
+    res.json({ ok: true, sentTo: to.trim() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/v1/settings/safety-alerts/test — sends a real test email to
 // the configured safety_alert_emails list, so an admin can confirm SMTP
 // works before relying on it for a real self-harm/violence alert.
