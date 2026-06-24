@@ -103,7 +103,7 @@ function startHeartbeat() {
       const { rows: peers } = await pool.query(
         `SELECT api_url FROM nodes WHERE node_id != $1 AND api_url IS NOT NULL`,
         [config.node.id]
-      );
+      ).catch(() => ({ rows: [] }));
       let conflict = false;
       for (const { api_url } of peers) {
         try {

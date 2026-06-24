@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.7] - 2026-06-24
+
+### Fixed
+- **A transient DB connection blip could crash the entire API process.** The HA split-brain probe in `startHeartbeat()`'s 30s timer queried `nodes` for peer URLs with no `.catch()` guard, unlike every other query in that function. A `setInterval` callback has no error boundary the way an Express route handler does, so an unhandled rejection there terminates the whole Node process — confirmed live: a single `pg-pool` "Connection terminated due to connection timeout" crashed the API and it stayed down for over an hour, since `node --watch` does not auto-restart after a crash exit (only on a watched file change). Added the same `.catch()` fallback every sibling query in this function already has. Found and fixed by restarting the live, down API and root-causing the crash log.
+
+---
+
 ## [0.7.6] - 2026-06-23
 
 ### Fixed
