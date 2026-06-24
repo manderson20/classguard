@@ -18,6 +18,15 @@ const { pki } = forge;
 
 const CA_VALIDITY_YEARS = 10;
 
+// node-forge's PEM encoder hardcodes CRLF line endings (strict RFC 1421) --
+// strongSwan's parser (the VPN container) tolerates that fine, but the
+// SCEP server's Go-based PEM parser doesn't and fails outright ("PEM decode
+// failed", crash-looping the container). Normalize to LF so every consumer
+// of this output gets identical, universally-parseable PEM.
+function toLf(pem) {
+  return pem.replace(/\r\n/g, '\n');
+}
+
 function generateCa() {
   const keys = pki.rsa.generateKeyPair(4096);
   const cert = pki.createCertificate();
@@ -41,8 +50,8 @@ function generateCa() {
   cert.sign(keys.privateKey, forge.md.sha256.create());
 
   return {
-    ca_cert_pem:        pki.certificateToPem(cert),
-    ca_private_key_pem: pki.privateKeyToPem(keys.privateKey),
+    ca_cert_pem:        toLf(pki.certificateToPem(cert)),
+    ca_private_key_pem: toLf(pki.privateKeyToPem(keys.privateKey)),
   };
 }
 
