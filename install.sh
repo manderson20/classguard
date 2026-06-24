@@ -52,6 +52,19 @@ if [[ -d .git ]]; then
       info "Already up to date ($AFTER_REV)"
     else
       info "Updated $BEFORE_REV -> $AFTER_REV"
+      # The pull just changed install.sh itself (this very file) on disk
+      # out from under the running process. Bash doesn't re-read a script
+      # file as it executes one -- it keeps reading from wherever its own
+      # buffered position in the OLD file content left off, which after a
+      # pull that changes the file's size/content corresponds to
+      # arbitrary, wrong bytes in the NEW file. Concretely: this is exactly
+      # what silently skipped every step after "Health check" on classguard2
+      # the first time this ran post-pull -- it landed on the new file's
+      # old byte offset instead of actually continuing in order. Re-exec
+      # fresh so every step after this point is guaranteed to come from
+      # the file that's actually on disk now, read from the start.
+      info "install.sh changed -- re-executing the updated version"
+      exec bash "$REPO_DIR/install.sh" "$@"
     fi
   fi
 fi
