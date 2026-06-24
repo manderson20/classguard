@@ -8,6 +8,7 @@ const config = require('../config');
 const { query, pool } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { getServiceAccountAuth, getOuRoleRules, resolveRoleFromOu } = require('../services/google');
+const { hashPassword, verifyPassword } = require('../services/passwordHash');
 
 const router = express.Router();
 
@@ -21,25 +22,6 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'Too many login attempts — try again in a few minutes' },
 });
-
-// ---------------------------------------------------------------------------
-// Password helpers (Node built-in crypto — no extra dependency)
-// ---------------------------------------------------------------------------
-function hashPassword(password) {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
-}
-
-function verifyPassword(password, stored) {
-  try {
-    const [salt, hash] = stored.split(':');
-    const input = crypto.scryptSync(password, salt, 64);
-    return crypto.timingSafeEqual(Buffer.from(hash, 'hex'), input);
-  } catch {
-    return false;
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Load Google OAuth credentials — env vars take precedence, DB settings fallback

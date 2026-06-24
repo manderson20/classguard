@@ -6,6 +6,11 @@ node_modules/
 .yarn/cache
 .pnp.*
 
+# Local-only browser tooling for UI verification — never deployed, not
+# part of the app, just a Playwright install used to drive/screenshot
+# the live frontend during development.
+.devtools/
+
 # ============================================================
 # Environment & Secrets — NEVER commit these
 # ============================================================
