@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.15] - 2026-06-24
+
+### Added
+- **Automated firewall setup and ongoing sync**, closing the gap where every `ufw`/`fail2ban` rule applied earlier this session was entirely manual and one-time, with nothing keeping it current as the cluster changes. New `GET /ha/firewall-rules` computes the correct rule set for whoever calls it based on its actual role (DHCP/VPN ports only ever appear for a primary, and VPN specifically only if `vpn_config.enabled` is true — standbys never run Kea/VPN at all per `install.sh`) and live cluster membership (the Postgres-allow list is built from whichever standby IPs are *currently* active, pulled from `nodes.api_url` since `nodes.ip` is just an unused placeholder). New `infrastructure/firewall/sync-ufw.sh` installs `ufw`+`fail2ban` if missing and reconciles rules to match — added once during `install.sh` (new Step 8) and re-run every minute by the existing host-level update-watcher, so a 3rd node joining (or one leaving) updates the primary's Postgres firewall rule automatically within a minute, with zero manual SSH access required. The VPN status port (9999, unauthenticated) deliberately never appears in the generated rule set under any role/config combination.
+
+---
+
 ## [0.7.14] - 2026-06-24
 
 ### Added

@@ -248,13 +248,25 @@ SERVER_IP=$(grep '^APP_URL=' .env | cut -d= -f2- | sed 's|http://||;s|https://||
 SERVER_IP="${SERVER_IP:-this-server}"
 
 # ---------------------------------------------------------------------------
-# 8. Scheduled-update watcher — installed once, idempotent on re-run.
+# 8. Firewall — installs ufw + fail2ban if missing and brings ufw to the
+# correct rule set for whichever role this node has (see GET
+# /ha/firewall-rules and infrastructure/firewall/sync-ufw.sh). Runs again
+# every minute via the update-watcher below, so a node that later joins or
+# leaves the cluster keeps the Postgres peer-allow list current without
+# anyone re-running install.sh by hand.
+# ---------------------------------------------------------------------------
+section "Step 8 — Firewall"
+bash "$REPO_DIR/infrastructure/firewall/sync-ufw.sh" || warn "Firewall sync failed — check manually with: ufw status verbose"
+info "ufw + fail2ban configured for this node's role"
+
+# ---------------------------------------------------------------------------
+# 9. Scheduled-update watcher — installed once, idempotent on re-run.
 # Polls this node's own API every minute for an admin-scheduled update
 # (HA page → Software Updates) and runs this exact install.sh again once
 # the scheduled time arrives, so a maintenance window can be picked in the
 # UI instead of someone having to be on a terminal at a specific time.
 # ---------------------------------------------------------------------------
-section "Step 8 — Scheduled-update watcher"
+section "Step 9 — Scheduled-update watcher"
 cp "$REPO_DIR/infrastructure/update-watcher/classguard-update-watcher.service" /etc/systemd/system/
 cp "$REPO_DIR/infrastructure/update-watcher/classguard-update-watcher.timer"   /etc/systemd/system/
 chmod +x "$REPO_DIR/infrastructure/update-watcher/update-watcher.sh"

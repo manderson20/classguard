@@ -339,6 +339,74 @@ router.get('/can-reach-primary', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/v1/ha/firewall-rules — localhost-only (same trust boundary as
+// /update-status), polled every minute by the host-level update-watcher AND
+// run once during install.sh, to keep ufw in sync with this node's actual
+// role and the cluster's current membership. No relay-to-primary needed
+// here unlike /update-status — `nodes`/`vpn_config` are plain replicated
+// tables, readable locally on a standby same as the primary, only WRITES
+// need the primary. Port 9999 (the VPN status port) deliberately never
+// appears in this list -- it has no authentication and nothing outside
+// this host needs to reach it directly.
+// ---------------------------------------------------------------------------
+router.get('/firewall-rules', async (req, res) => {
+  try {
+    const isPrimary = config.node.role === 'primary';
+
+    // Universal -- every node runs frontend/dns/api regardless of role (DNS
+    // is N-way redundant by design, not just a primary thing -- see
+    // services/keepalived.js's header comment).
+    const staticRules = [
+      { port: '22',  proto: 'tcp', comment: 'SSH' },
+      { port: '80',  proto: 'tcp', comment: 'HTTP / ACME' },
+      { port: '443', proto: 'tcp', comment: 'HTTPS admin UI' },
+      { port: '53',  proto: 'tcp', comment: 'DNS' },
+      { port: '53',  proto: 'udp', comment: 'DNS' },
+      { proto: 'vrrp', comment: 'VRRP heartbeat' },
+    ];
+
+    let postgresPeerIps = [];
+
+    if (isPrimary) {
+      // Kea has no enable/disable toggle -- it's simply never started on a
+      // standby (install.sh), so DHCP is unconditional for whichever node
+      // is currently primary.
+      staticRules.push({ port: '67', proto: 'udp', comment: 'DHCP' });
+
+      // VPN/SCEP containers are likewise never started on a standby, but
+      // unlike Kea, VPN is genuinely optional even on the primary -- check
+      // the real setting instead of assuming every primary wants it open.
+      const { rows: [vpnCfg] } = await pool.query(
+        `SELECT enabled FROM vpn_config LIMIT 1`
+      ).catch(() => ({ rows: [{ enabled: false }] }));
+      if (vpnCfg?.enabled) {
+        staticRules.push({ port: '500',  proto: 'udp', comment: 'VPN IKE' });
+        staticRules.push({ port: '4500', proto: 'udp', comment: 'VPN NAT-T' });
+      }
+
+      // Postgres only needs to accept inbound from whichever nodes are
+      // currently active standbys -- not a fixed peer, so a 3rd/4th node
+      // joining (or an old one being removed) changes this list without
+      // any code change, same generalization keepalived.js already did
+      // for VRRP priority. nodes.ip is just a stale '0.0.0.0' placeholder
+      // (registerSelf() never actually populates it) -- api_url carries
+      // the real reachable address, so pull the IP out of that instead.
+      const { rows: standbys } = await pool.query(
+        `SELECT api_url FROM nodes WHERE node_id != $1 AND ha_role = 'standby' AND is_active = true AND api_url IS NOT NULL`,
+        [config.node.id]
+      ).catch(() => ({ rows: [] }));
+      postgresPeerIps = standbys
+        .map(s => s.api_url.replace(/^https?:\/\//, '').split(/[:/]/)[0])
+        .filter(Boolean);
+    }
+
+    res.json({ role: config.node.role, static_rules: staticRules, postgres_peer_ips: postgresPeerIps });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET/PUT /api/v1/ha/auto-promote-config — the opt-in toggle + grace period
 // for maybeAutoPromote() above. Off by default on every install; an admin
 // has to deliberately turn this on after reading the warning on the HA

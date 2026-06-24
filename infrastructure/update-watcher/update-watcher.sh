@@ -36,6 +36,13 @@ if [ "$PROMOTE_PENDING" = "true" ]; then
   logger "ClassGuard update-watcher: promotion complete"
 fi
 
+# --- Firewall sync ------------------------------------------------------
+# Keeps ufw in sync with this node's current role + cluster membership
+# every tick — a new node joining (or one leaving) changes the desired
+# Postgres peer-allow list without anyone having to log into this host and
+# run anything by hand. See infrastructure/firewall/sync-ufw.sh.
+bash "$REPO_DIR/infrastructure/firewall/sync-ufw.sh" || true
+
 RESPONSE=$(curl -sf http://localhost:3001/api/v1/ha/update-status) || exit 0
 PENDING=$(echo "$RESPONSE" | jq -r '.pending')
 [ "$PENDING" = "null" ] && exit 0
