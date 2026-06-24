@@ -18,6 +18,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.32] - 2026-06-24
+
+### Added
+- **Security Scan page.** Nightly (5:30am) dependency vulnerability scan of the backend's npm packages via `npm audit`, cross-referenced against CISA's Known Exploited Vulnerabilities (KEV) catalog. Surfaces severity, CVE/GHSA IDs, fix-available versions, and KEV matches in a new admin page, with a "Run Scan Now" button for on-demand checks. Gated by a new `security_scan` permission. Honest limitation noted right on the page: KEV is almost entirely enterprise/network-appliance CVEs, not application libraries, so KEV matches here will be rare by nature — that's not the scan failing to work. Frontend dependencies aren't covered by this in-app scan (it only sees the backend container's own lockfile); added `.github/dependabot.yml` covering both backend and frontend npm dependencies, Docker base images, and GitHub Actions, for full-repo automated coverage including PRs.
+
+This is the first piece of a broader security-monitoring ask — open-port/firewall self-checks and OS-level (Postgres/Redis/nginx/Kea image) vulnerability scanning were deliberately scoped out of this version, the latter because it would need Docker socket access to do properly and that's a real privilege tradeoff worth its own decision later, not something to bundle in silently.
+
+---
+
 ## [0.7.31] - 2026-06-24
 
 ### Added

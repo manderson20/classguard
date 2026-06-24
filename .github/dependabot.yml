@@ -1,0 +1,40 @@
+version: 2
+updates:
+  # Backend (Node/Express) -- also covered nightly in-app by the Security
+  # Scan page (backend/src/services/securityScan.js), which additionally
+  # cross-references CISA's KEV catalog. Dependabot here is redundancy +
+  # automatic PRs, not the only safety net.
+  - package-ecosystem: "npm"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # Frontend (React/Vite) -- not covered by the in-app scanner (which only
+  # runs against the backend container's own lockfile), so this is the
+  # only automated coverage for these dependencies.
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # Docker base images (node:20-alpine, nginx, etc. pinned in each Dockerfile)
+  - package-ecosystem: "docker"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/dns-engine"
+    schedule:
+      interval: "weekly"
+
+  # GitHub Actions workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
