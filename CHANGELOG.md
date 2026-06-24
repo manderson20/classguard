@@ -18,6 +18,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.36] - 2026-06-24
+
+### Added
+- **Reports framework.** New "Reports" page: pick a report type, generate a PDF snapshot, download it, and re-download any past one from a saved history (a report is a point-in-time artifact, not a live view — re-fetching a week-old report shows what was true then, not current state). Seeded with three types built off a system-wide schema survey: **IPAM Subnet Utilization** (documented IPs vs. capacity per subnet, flags anything over its alert threshold), **DNS Filtering Report** (query volume, block rate, top block reasons/domains, cache hit rate for a date range — suitable for CIPA/E-rate documentation), and **Device Fleet Health** (counts by source/status across Google Admin/Mosyle/Snipe-IT, stale devices, anything flagged missing/stolen/in-repair). A RADIUS-based report was deliberately left out of this round — live RADIUS session/auth-log data is essentially empty right now (802.1X isn't actively logging real traffic yet), so a report there wouldn't show anything real; straightforward to add to the registry once that's actively deployed. New `reports` permission, admin/superadmin only.
+- **Chromebook Lost Mode.** New page to search for a device and see its best available "where might it be" signal, plus lock/unlock it remotely. Built after verifying real constraints against Google's actual API docs rather than assuming: **GPS/geolocation and WiFi access-point identity are not exposed by any Google API for Chromebooks, at all** — not a licensing gap, the data simply isn't surfaced. What IS real: (1) if the device is currently on school WiFi, its live access point name/SSID/signal time, sourced from the existing UniFi controller integration (`network_clients`, matched by MAC through the existing device-consolidation service) — genuinely better signal than anything Google offers; (2) if it's gone offline, its last-known IP and last Google sync time. Lock/unlock uses the Directory API's device action endpoint — confirmed via Google's docs that there is **no per-incident custom message field**; the disable screen always shows whatever's configured once, domain-wide, in Admin Console (Devices › Chrome › Settings › Device › Device disabling) — the UI says this plainly rather than implying a template system that Google's API doesn't support. Requires adding the *write* scope (`admin.directory.device.chromeos`) to the existing service account's domain-wide delegation in Google Admin Console — a one-time action only a Workspace super admin can take; a missing-scope error surfaces with the exact fix rather than a generic failure. New `lost_mode` permission, admin/superadmin only. The disable/reenable action itself was deliberately not exercised against a real device during this build — only search/detail were tested live.
+
+### Notes
+- Surveyed every major schema area (RADIUS, IPAM, DNS, safety/screenshots, device inventory, HA, security scans, users/roster) before scoping Reports — found there was no "report" concept anywhere in the app prior to this, every page was a live view only.
+
+---
+
 ## [0.7.35] - 2026-06-24
 
 ### Added
