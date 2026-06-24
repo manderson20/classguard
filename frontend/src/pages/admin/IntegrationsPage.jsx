@@ -683,7 +683,265 @@ function YoutubeApiSection() {
   );
 }
 
-const GOOGLE_SUBTABS = ['Device & Directory Sync', 'SSO Login', 'Chrome Extension', 'YouTube Data API'];
+// ---------------------------------------------------------------------------
+// Secure LDAP — a Workspace-level credential (search-then-bind against
+// Google's directory), not a RADIUS-specific one, even though FreeRADIUS's
+// EAP-TTLS/PAP auth (RADIUS → HA & Config) is the only consumer today. Lives
+// here so any future feature needing to verify a Workspace password can
+// reuse the same connection instead of asking an admin to set it up twice.
+// ---------------------------------------------------------------------------
+function domainToBaseDn(domain) {
+  return domain.trim().toLowerCase().split('.').filter(Boolean).map(p => `dc=${p}`).join(',');
+}
+
+function GoogleLdapSection() {
+  const qc = useQueryClient();
+  const [domain, setDomain]   = useState('');
+  const [baseDn, setBaseDn]   = useState('');
+  const [baseDnEdited, setBaseDnEdited] = useState(false);
+  const [certFile, setCertFile] = useState(null);
+  const [keyFile, setKeyFile]   = useState(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState(null);
+  const [showReplaceForm, setShowReplaceForm] = useState(false);
+
+  const [testing, setTesting]   = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [testedAt, setTestedAt] = useState(null);
+
+  const [togglingEnabled, setTogglingEnabled] = useState(false);
+
+  const [testUser, setTestUser] = useState('');
+  const [testPass, setTestPass] = useState('');
+  const [testingUser, setTestingUser] = useState(false);
+  const [userTestResult, setUserTestResult] = useState(null);
+
+  const { data: appSettings } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn:  () => api.get('/settings').catch(() => ({})),
+  });
+
+  const configured = !!(appSettings?.ldap_client_cert_path && appSettings?.ldap_client_key_path && appSettings?.ldap_base_dn);
+  const enabled     = appSettings?.ldap_google_enabled === 'true';
+
+  useEffect(() => {
+    if (appSettings) {
+      setDomain(appSettings.ldap_google_domain || '');
+      setBaseDn(appSettings.ldap_base_dn || '');
+    }
+  }, [appSettings]);
+
+  const runTest = useCallback(async () => {
+    setTesting(true);
+    try {
+      setTestResult(await api.post('/radius/ldap/test'));
+    } catch (e) {
+      setTestResult({ ok: false, reason: e.message });
+    } finally {
+      setTesting(false);
+      setTestedAt(new Date());
+    }
+  }, []);
+
+  // Show real, current connection health as soon as the page loads if it's
+  // already configured -- an admin shouldn't have to know to click a button
+  // just to find out whether something set up previously is still working.
+  useEffect(() => {
+    if (configured) runTest();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [configured]);
+
+  const onDomainChange = v => {
+    setDomain(v);
+    if (!baseDnEdited) setBaseDn(domainToBaseDn(v));
+  };
+
+  const testUserLogin = async () => {
+    if (!testUser || !testPass) return;
+    setTestingUser(true);
+    setUserTestResult(null);
+    try {
+      setUserTestResult(await api.post('/radius/ldap/test-user', { username: testUser, password: testPass }));
+    } catch (e) {
+      setUserTestResult({ ok: false, reason: e.message });
+    } finally {
+      setTestingUser(false);
+      setTestPass(''); // never linger in memory longer than needed for the one request
+    }
+  };
+
+  const upload = async () => {
+    setUploadError(null);
+    if (!certFile || !keyFile) { setUploadError('Both the certificate and key files are required.'); return; }
+    if (!baseDn) { setUploadError('Base DN is required.'); return; }
+
+    setUploading(true);
+    const form = new FormData();
+    form.append('cert', certFile);
+    form.append('key', keyFile);
+    form.append('base_dn', baseDn);
+    form.append('google_domain', domain);
+
+    try {
+      const token = localStorage.getItem('cg_token');
+      const res = await fetch(`${import.meta.env.VITE_API_URL || ''}/api/v1/radius/ldap/upload`, {
+        method: 'POST',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        body: form,
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.error || `Upload failed (${res.status})`);
+      qc.invalidateQueries({ queryKey: ['app-settings'] });
+      setShowReplaceForm(false);
+      setCertFile(null);
+      setKeyFile(null);
+      await runTest();
+    } catch (e) {
+      setUploadError(e.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const toggleEnabled = async () => {
+    setTogglingEnabled(true);
+    try {
+      await api.put('/settings', { ldap_google_enabled: enabled ? 'false' : 'true' });
+      qc.invalidateQueries({ queryKey: ['app-settings'] });
+    } finally {
+      setTogglingEnabled(false);
+    }
+  };
+
+  const statusLabel = !configured
+    ? 'Not configured'
+    : !enabled
+      ? 'Configured, but disabled'
+      : testResult?.ok
+        ? 'Configured & working'
+        : testResult
+          ? 'Configured & enabled — connection failing'
+          : 'Configured & enabled';
+  const statusOk = configured && enabled && testResult?.ok;
+
+  return (
+    <div className="flex flex-col gap-5">
+      <p className="text-xs text-slate-500 max-w-2xl">
+        Lets ClassGuard verify a Workspace user's password against Google's directory (search-then-bind, so it
+        works across every domain/OU in this Workspace org, not just one) — used today for FreeRADIUS's
+        EAP-TTLS/PAP authentication on a BYOD SSID (see <a href="/admin/radius" className="text-primary-600 underline">RADIUS / NAC</a>).
+        This connects <em>outbound only</em> to Google — no public domain or port-forwarding needed.
+      </p>
+
+      {/* Status card -- the at-a-glance answer to "is this actually working" */}
+      <div className="border border-slate-200 rounded-lg p-4 flex flex-col gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <StatusDot ok={statusOk}/>
+          <span className="text-sm font-medium text-slate-800">{statusLabel}</span>
+          {configured && (
+            <span className="text-xs text-slate-400">
+              base DN: <span className="font-mono">{appSettings.ldap_base_dn}</span>
+            </span>
+          )}
+          <div className="ml-auto flex items-center gap-2">
+            {configured && (
+              <button onClick={runTest} disabled={testing} className="btn-secondary text-xs">
+                {testing ? 'Testing…' : 'Re-test connection'}
+              </button>
+            )}
+            {configured && (
+              <button onClick={toggleEnabled} disabled={togglingEnabled} className="btn-secondary text-xs">
+                {togglingEnabled ? '…' : enabled ? 'Disable' : 'Enable'}
+              </button>
+            )}
+          </div>
+        </div>
+        {testResult && !testResult.ok && (
+          <div className="text-xs px-3 py-2 rounded-lg border bg-red-50 border-red-200 text-red-800">
+            ✗ {testResult.reason}
+          </div>
+        )}
+        {testedAt && (
+          <div className="text-xs text-slate-400">Last tested: {testedAt.toLocaleString()}</div>
+        )}
+
+        {configured && testResult?.ok && (
+          <div className="border-t border-slate-100 pt-3 flex flex-col gap-2">
+            <div className="text-xs font-medium text-slate-600">
+              Test a real login — confirms an actual account authenticates (any domain/OU in this Workspace org), not just that the connection works.
+            </div>
+            <div className="flex items-end gap-2 flex-wrap">
+              <Field label="Email">
+                <input className={INPUT} value={testUser} onChange={e=>setTestUser(e.target.value)}
+                  placeholder="student@students.brookfieldr3.org" style={{minWidth: 260}}/>
+              </Field>
+              <Field label="Password">
+                <input type="password" className={INPUT} value={testPass} onChange={e=>setTestPass(e.target.value)} style={{minWidth: 160}}/>
+              </Field>
+              <button onClick={testUserLogin} disabled={testingUser || !testUser || !testPass} className="btn-secondary text-sm">
+                {testingUser ? 'Checking…' : 'Test login'}
+              </button>
+            </div>
+            {userTestResult && (
+              <div className={`text-xs px-3 py-2 rounded-lg border ${userTestResult.ok ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                {userTestResult.ok ? `✓ ${testUser} authenticated successfully` : `✗ ${userTestResult.reason}`}
+              </div>
+            )}
+            <div className="text-xs text-slate-400">Password is sent once to verify and is never stored or logged.</div>
+          </div>
+        )}
+      </div>
+
+      {/* Setup / replace form -- collapsed by default once something's configured,
+          since re-uploading isn't something you do every visit. */}
+      {(!configured || showReplaceForm) ? (
+        <div className="border border-slate-200 rounded-lg p-4 flex flex-col gap-3">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-900 space-y-1">
+            <div className="font-semibold mb-2">In Google Admin Console:</div>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>Go to Account → LDAP → Add LDAP Client</li>
+              <li>Name it e.g. "ClassGuard Secure LDAP"</li>
+              <li>Under Access permissions, enable both <strong>Verify user credentials</strong> and <strong>Read user information</strong></li>
+              <li>On the client's Authentication tab, click <strong>Generate New Certificate</strong></li>
+              <li>Download the generated certificate and private key (PEM files)</li>
+            </ol>
+          </div>
+          <Field label="Your Google Workspace domain">
+            <input className={INPUT} value={domain} onChange={e=>onDomainChange(e.target.value)} placeholder="school.org"/>
+          </Field>
+          <Field label="LDAP base DN" hint="auto-filled from domain — edit only if your Workspace setup differs">
+            <input className={INPUT} value={baseDn} onChange={e=>{setBaseDn(e.target.value); setBaseDnEdited(true);}} placeholder="dc=school,dc=org"/>
+          </Field>
+          <div className="grid md:grid-cols-2 gap-4">
+            <Field label="Certificate file" hint=".crt / .pem from Google">
+              <input type="file" accept=".crt,.pem,.cer" className={INPUT} onChange={e=>setCertFile(e.target.files?.[0]||null)}/>
+            </Field>
+            <Field label="Private key file" hint=".key / .pem from Google">
+              <input type="file" accept=".key,.pem" className={INPUT} onChange={e=>setKeyFile(e.target.files?.[0]||null)}/>
+            </Field>
+          </div>
+          {uploadError && <p className="text-red-500 text-xs">{uploadError}</p>}
+          <div className="flex justify-end gap-2 mt-1">
+            {configured && (
+              <button onClick={()=>{setShowReplaceForm(false); setUploadError(null);}} className="btn-secondary text-sm">Cancel</button>
+            )}
+            <button onClick={upload} disabled={uploading} className="btn-primary text-sm">
+              {uploading ? 'Uploading…' : 'Upload & Test'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex justify-end">
+          <button onClick={()=>setShowReplaceForm(true)} className="text-xs text-slate-500 hover:text-slate-700 underline">
+            Replace certificate / key
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const GOOGLE_SUBTABS = ['Device & Directory Sync', 'SSO Login', 'Secure LDAP', 'Chrome Extension', 'YouTube Data API'];
 
 function GoogleWorkspaceTab({ status }) {
   const [subtab, setSubtab] = useState('Device & Directory Sync');
@@ -700,6 +958,7 @@ function GoogleWorkspaceTab({ status }) {
       </div>
       {subtab === 'Device & Directory Sync' && <GoogleSyncSection status={status}/>}
       {subtab === 'SSO Login'               && <GoogleSsoSection/>}
+      {subtab === 'Secure LDAP'             && <GoogleLdapSection/>}
       {subtab === 'Chrome Extension'        && <ExtensionSection/>}
       {subtab === 'YouTube Data API'        && <YoutubeApiSection/>}
     </div>

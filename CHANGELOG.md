@@ -18,6 +18,18 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.19] - 2026-06-24
+
+### Fixed
+- **Google Secure LDAP authentication only ever worked for one bind DN/OU structure.** `radiusLdap.js`'s `authenticateUser()` guessed a fixed `uid=<email>,ou=Users,<base_dn>` bind DN, which breaks the moment a district's Workspace org separates students and staff into different OUs — exactly the situation a district with e.g. `@school.org` staff and `@students.school.org` students in one Workspace org runs into. Replaced with search-then-bind: search the whole base DN (subtree scope, `mail=<email>` filter) for the user's real DN first, using the same cert-authenticated connection Google's "Read user information" permission already authorizes, then bind as whatever DN that search actually returns to verify the password. Works for any domain/subdomain/OU combination in one Workspace org through the one LDAP connection — no per-domain config needed.
+- **"Test Connection" failed with `self-signed certificate` even with valid Google-issued client cert/key.** Root cause: the LDAP connection wasn't sending SNI (Server Name Indication), so Google's front end returned its own diagnostic fallback certificate (`CN=invalid2.invalid`, "No SNI provided — please fix your client") instead of `ldap.google.com`'s real, legitimately-issued certificate chain — which then correctly failed validation as self-signed. Fixed by explicitly setting `servername: 'ldap.google.com'` on both TLS connections (ldapjs doesn't derive this from the connection `url` on its own).
+
+### Added
+- Moved Google Secure LDAP setup from RADIUS / NAC → HA & Config (where it never conceptually belonged — it's a Workspace-level credential, not a VRRP/failover setting) to Integrations → Google Workspace → Secure LDAP, alongside the other Google connections it's a sibling of. RADIUS page now links to its new home.
+- New status card replacing the old wizard-only flow: shows at a glance whether LDAP is configured/enabled/actually connecting right now (auto-tests on page load, not just on a button click), with one-click enable/disable and re-test. New "Test a real login" form lets an admin verify any specific account (any domain/OU) authenticates correctly — credentials are typed directly into ClassGuard's UI and never appear in chat, logs, or storage; the password is discarded immediately after the one verification call. New `POST /radius/ldap/test-user` backend endpoint backs this, calling the exact same `authenticateUser()` FreeRADIUS uses in production.
+
+---
+
 ## [0.7.18] - 2026-06-24
 
 ### Fixed

@@ -681,6 +681,23 @@ router.post('/ldap/test', ...superauth, async (req, res) => {
   } catch (err) { res.status(502).json({ ok: false, reason: err.message }); }
 });
 
+// POST /radius/ldap/test-user — runs the real search-then-bind flow against
+// a specific account, so an admin can confirm e.g. a students.<domain> or a
+// staff <domain> account actually authenticates, not just that the TLS
+// connection itself works. The password is never logged or persisted — it
+// passes straight through to authenticateUser() (same function FreeRADIUS
+// calls in production) and is discarded once this returns.
+router.post('/ldap/test-user', ...superauth, async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ error: 'username and password are both required' });
+  }
+  try {
+    const result = await radiusLdap.authenticateUser(username, password);
+    res.json(result);
+  } catch (err) { res.status(502).json({ ok: false, reason: err.message }); }
+});
+
 // POST /radius/ldap/upload — accepts the cert/key files downloaded from
 // Google Admin's LDAP client setup and stores them in the shared certs
 // volume (same one TLS uses), then saves the resulting paths + base_dn/domain
