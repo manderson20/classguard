@@ -10,6 +10,16 @@ const { hashPassword } = require('../services/passwordHash');
 
 const router = Router();
 
+// The id of the builtin custom_roles row for a base role string, or null
+// (student has no permission concept at all, so nothing to look up).
+async function builtinRoleId(role) {
+  if (role === 'student') return null;
+  const { rows } = await query(
+    'SELECT id FROM custom_roles WHERE base_role = $1 AND is_builtin = true', [role]
+  );
+  return rows[0]?.id || null;
+}
+
 // GET /api/v1/users/me/effective-policy
 // Shorthand used by the Chrome extension (avoids needing to know own user ID)
 router.get('/me/effective-policy', authenticate, async (req, res) => {
@@ -104,7 +114,7 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
 // that same account shape, available beyond the very first user.
 // ---------------------------------------------------------------------------
 router.post('/', authenticate, requireMinRole('superadmin'), async (req, res) => {
-  const { email, password, fullName, role = 'teacher' } = req.body;
+  const { email, password, fullName, role = 'teacher', custom_role_id: explicitRoleId } = req.body;
 
   if (!email || !password || !fullName) {
     return res.status(400).json({ error: 'email, password, and fullName are required' });
@@ -119,12 +129,16 @@ router.post('/', authenticate, requireMinRole('superadmin'), async (req, res) =>
   try {
     const hash = hashPassword(password);
     const googleId = `local:${crypto.randomBytes(8).toString('hex')}`;
+    // Defaults to the role's builtin permission row (Super Admin/Admin/
+    // Teacher) so it's actually editable later — unless a specific custom
+    // role was chosen instead (only meaningful for 'admin').
+    const customRoleId = explicitRoleId || await builtinRoleId(role);
 
     const { rows } = await query(
-      `INSERT INTO users (google_id, email, full_name, given_name, role, password_hash, last_synced_at)
-       VALUES ($1, $2, $3, $4, $5, $6, NOW())
-       RETURNING id, email, full_name, role, created_at`,
-      [googleId, email.toLowerCase().trim(), fullName, fullName.split(' ')[0], role, hash]
+      `INSERT INTO users (google_id, email, full_name, given_name, role, password_hash, custom_role_id, last_synced_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+       RETURNING id, email, full_name, role, custom_role_id, created_at`,
+      [googleId, email.toLowerCase().trim(), fullName, fullName.split(' ')[0], role, hash, customRoleId]
     );
     res.status(201).json(rows[0]);
   } catch (err) {
@@ -166,16 +180,21 @@ router.get('/:id', authenticate, requirePermission('users'), async (req, res) =>
 });
 
 // PUT /api/v1/users/:id/role  (superadmin only)
+// Switches the base role to its builtin permission row (Super Admin/Admin/
+// Teacher) by default — pass custom_role_id explicitly to instead land on a
+// specific custom role (only meaningful when role is 'admin').
 router.put('/:id/role', authenticate, requireMinRole('superadmin'), async (req, res) => {
-  const { role } = req.body;
+  const { role, custom_role_id: explicitRoleId } = req.body;
   if (!['student','teacher','admin','superadmin'].includes(role)) {
     return res.status(400).json({ error: 'Invalid role' });
   }
+  const customRoleId = explicitRoleId !== undefined ? explicitRoleId : await builtinRoleId(role);
   const { rows } = await query(
-    'UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2 RETURNING *',
-    [role, req.params.id]
+    'UPDATE users SET role = $1, custom_role_id = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
+    [role, customRoleId, req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+  await invalidatePermissions(req.params.id);
   res.json(rows[0]);
 });
 

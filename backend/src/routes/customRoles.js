@@ -41,11 +41,17 @@ router.get('/:id', async (req, res) => {
     'SELECT permission_key FROM custom_role_permissions WHERE role_id = $1',
     [req.params.id]
   );
+  // Built-in roles (Teacher/Super Admin) can have hundreds or thousands of
+  // users — cap the list returned for display, the count covers the rest.
   const { rows: users } = await query(
-    'SELECT id, full_name, email FROM users WHERE custom_role_id = $1 ORDER BY full_name',
+    'SELECT id, full_name, email FROM users WHERE custom_role_id = $1 ORDER BY full_name LIMIT 20',
     [req.params.id]
   );
-  res.json({ ...rows[0], permissions: permRows.map(r => r.permission_key), users });
+  const { rows: countRows } = await query(
+    'SELECT COUNT(*) FROM users WHERE custom_role_id = $1',
+    [req.params.id]
+  );
+  res.json({ ...rows[0], permissions: permRows.map(r => r.permission_key), users, user_count: Number(countRows[0].count) });
 });
 
 // POST /api/v1/custom-roles
@@ -60,11 +66,18 @@ router.post('/', async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
-// PATCH /api/v1/custom-roles/:id
+// PATCH /api/v1/custom-roles/:id — built-in roles (Super Admin/Admin/Teacher)
+// keep their name/description fixed so they stay recognizable across the
+// app; only their permission set (for the non-locked ones) is editable.
 router.patch('/:id', async (req, res) => {
   const { name, description } = req.body;
   if (name === undefined && description === undefined) {
     return res.status(400).json({ error: 'name or description required' });
+  }
+  const { rows: existing } = await query('SELECT is_builtin FROM custom_roles WHERE id = $1', [req.params.id]);
+  if (!existing[0]) return res.status(404).json({ error: 'Role not found' });
+  if (existing[0].is_builtin) {
+    return res.status(403).json({ error: 'Built-in roles cannot be renamed' });
   }
   const fields = [];
   const values = [req.params.id];
@@ -81,7 +94,14 @@ router.patch('/:id', async (req, res) => {
 
 // DELETE /api/v1/custom-roles/:id — ON DELETE SET NULL on users.custom_role_id
 // means any user assigned this role falls back to unrestricted, not locked out.
+// Built-in roles (Super Admin/Admin/Teacher) can't be deleted — they're the
+// fixed roles every account's base `role` string maps to.
 router.delete('/:id', async (req, res) => {
+  const { rows: existing } = await query('SELECT is_builtin FROM custom_roles WHERE id = $1', [req.params.id]);
+  if (!existing[0]) return res.status(404).json({ error: 'Role not found' });
+  if (existing[0].is_builtin) {
+    return res.status(403).json({ error: 'Built-in roles cannot be deleted' });
+  }
   await invalidatePermissionsForRole(req.params.id);
   const { rows } = await query('DELETE FROM custom_roles WHERE id = $1 RETURNING id', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Role not found' });
@@ -90,7 +110,9 @@ router.delete('/:id', async (req, res) => {
 
 // PUT /api/v1/custom-roles/:id/permissions  body: { permissions: ['users', 'unblock_requests', ...] }
 // Replaces the full set in one transaction — simpler for a checkbox-grid UI
-// than incremental add/remove endpoints.
+// than incremental add/remove endpoints. Locked roles (Super Admin) reject
+// this outright — it's always fully unrestricted regardless of what's
+// stored here, so editing it would be misleading busywork at best.
 router.put('/:id/permissions', async (req, res) => {
   const { permissions } = req.body;
   if (!Array.isArray(permissions)) return res.status(400).json({ error: 'permissions array required' });
@@ -100,8 +122,11 @@ router.put('/:id/permissions', async (req, res) => {
     return res.status(400).json({ error: `Unknown permission key(s): ${invalid.join(', ')}` });
   }
 
-  const { rows } = await query('SELECT id FROM custom_roles WHERE id = $1', [req.params.id]);
+  const { rows } = await query('SELECT id, is_locked FROM custom_roles WHERE id = $1', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Role not found' });
+  if (rows[0].is_locked) {
+    return res.status(403).json({ error: 'This role is locked and always has every permission' });
+  }
 
   await withTransaction(async (client) => {
     await client.query('DELETE FROM custom_role_permissions WHERE role_id = $1', [req.params.id]);
