@@ -54,6 +54,8 @@ import DeviceViewAuditPage from './pages/admin/DeviceViewAuditPage';
 import ImpersonationAuditPage from './pages/admin/ImpersonationAuditPage';
 import BackupPage          from './pages/admin/BackupPage';
 import SecurityScanPage    from './pages/admin/SecurityScanPage';
+import ReportsPage         from './pages/admin/ReportsPage';
+import LostModePage        from './pages/admin/LostModePage';
 import VpnPage             from './pages/admin/VpnPage';
 import Ipv6Page             from './pages/admin/Ipv6Page';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
@@ -138,6 +140,8 @@ export default function App() {
           <Route path="/admin/impersonation-audit"    element={<ImpersonationAuditPage />} />
           <Route path="/admin/backup"                 element={<BackupPage />} />
           <Route path="/admin/security-scan"          element={<SecurityScanPage />} />
+          <Route path="/admin/reports"                element={<ReportsPage />} />
+          <Route path="/admin/lost-mode"               element={<LostModePage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
           <Route path="/admin/system-health"           element={<SystemHealthPage />} />
           <Route path="/admin/vpn"                    element={<VpnPage />} />

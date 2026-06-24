@@ -1,0 +1,242 @@
+// Generic reports framework -- a registry of report types, each producing
+// a PDF snapshot + a JSON summary (for the history list). Adding a new
+// report type means adding one entry here; routes/reports.js and the
+// frontend's picker are both driven off this registry, not hardcoded
+// per-type routes.
+const PDFDocument = require('pdfkit');
+const { query } = require('../db');
+
+function renderHeader(doc, title, subtitle) {
+  doc.fontSize(18).font('Helvetica-Bold').text('ClassGuard');
+  doc.fontSize(14).font('Helvetica').text(title);
+  if (subtitle) doc.fontSize(10).fillColor('#666').text(subtitle).fillColor('#000');
+  doc.fontSize(9).fillColor('#888').text(`Generated ${new Date().toLocaleString('en-US')}`).fillColor('#000');
+  doc.moveDown(1);
+}
+
+function renderTable(doc, headers, rows, colWidths) {
+  const startX = doc.x;
+  doc.font('Helvetica-Bold').fontSize(9);
+  let x = startX;
+  headers.forEach((h, i) => { doc.text(h, x, doc.y, { width: colWidths[i], continued: false }); x += colWidths[i]; });
+  doc.moveDown(0.3);
+  doc.font('Helvetica').fontSize(9);
+  for (const row of rows) {
+    const y = doc.y;
+    x = startX;
+    row.forEach((cell, i) => { doc.text(String(cell), x, y, { width: colWidths[i] }); x += colWidths[i]; });
+    doc.moveDown(0.1);
+    if (doc.y > 720) doc.addPage();
+  }
+}
+
+function pdfToBuffer(doc) {
+  const chunks = [];
+  doc.on('data', (c) => chunks.push(c));
+  const done = new Promise((resolve) => doc.on('end', () => resolve(Buffer.concat(chunks))));
+  doc.end();
+  return done;
+}
+
+function countIPv4(cidr) {
+  const [, prefix] = cidr.split('/');
+  const bits = 32 - parseInt(prefix, 10);
+  if (bits <= 0) return 1;
+  return Math.pow(2, bits) - 2; // exclude network + broadcast
+}
+
+// ---------------------------------------------------------------------------
+// IPAM Subnet Utilization
+// ---------------------------------------------------------------------------
+async function generateIpamUtilization() {
+  const { rows: subnets } = await query(
+    `SELECT s.id, s.subnet, s.ip_version, s.name, s.alert_threshold_pct,
+            COUNT(ia.id)::int AS documented_ips
+     FROM ipam_subnets s
+     LEFT JOIN ip_addresses ia ON ia.ipam_subnet_id = s.id
+     GROUP BY s.id
+     ORDER BY s.subnet`
+  );
+
+  const rowsForTable = [];
+  let overThreshold = 0;
+  for (const s of subnets) {
+    if (s.ip_version === 4) {
+      const total = countIPv4(s.subnet);
+      const pct = total > 0 ? Math.round((s.documented_ips / total) * 1000) / 10 : 0;
+      if (pct >= (s.alert_threshold_pct || 90)) overThreshold++;
+      rowsForTable.push([s.subnet, s.name || '—', s.documented_ips, total, `${pct}%`]);
+    } else {
+      // IPv6 address space is too large for a meaningful "% full" figure —
+      // documented-count is the only sane thing to report.
+      rowsForTable.push([s.subnet, s.name || '—', s.documented_ips, '—', 'n/a (IPv6)']);
+    }
+  }
+
+  const doc = new PDFDocument({ margin: 50 });
+  renderHeader(doc, 'IPAM Subnet Utilization Report');
+  doc.fontSize(11).font('Helvetica-Bold').text(`${subnets.length} subnets, ${overThreshold} at/over their alert threshold`);
+  doc.moveDown(1);
+  renderTable(doc, ['Subnet', 'Name', 'Documented', 'Total', 'Utilization'], rowsForTable, [140, 140, 80, 70, 90]);
+
+  const pdfBuffer = await pdfToBuffer(doc);
+  return {
+    summary: { total_subnets: subnets.length, over_threshold: overThreshold },
+    pdfBuffer,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// DNS Filtering / Compliance
+// ---------------------------------------------------------------------------
+async function generateDnsFiltering({ from, to }) {
+  const [{ rows: totals }, { rows: topDomains }, { rows: topReasons }, { rows: cacheRow }] = await Promise.all([
+    query(`SELECT action, COUNT(*)::int AS count FROM dns_logs WHERE queried_at >= $1 AND queried_at < $2 GROUP BY action`, [from, to]),
+    query(
+      `SELECT domain, COUNT(*)::int AS count FROM dns_logs
+       WHERE action = 'blocked' AND queried_at >= $1 AND queried_at < $2
+       GROUP BY domain ORDER BY count DESC LIMIT 15`,
+      [from, to]
+    ),
+    query(
+      `SELECT COALESCE(block_reason, 'unspecified') AS reason, COUNT(*)::int AS count FROM dns_logs
+       WHERE action = 'blocked' AND queried_at >= $1 AND queried_at < $2
+       GROUP BY reason ORDER BY count DESC`,
+      [from, to]
+    ),
+    query(
+      `SELECT COUNT(*) FILTER (WHERE cache_hit = true)::int AS hits, COUNT(*) FILTER (WHERE cache_hit = false)::int AS misses
+       FROM dns_logs WHERE queried_at >= $1 AND queried_at < $2`,
+      [from, to]
+    ),
+  ]);
+
+  const totalQueries = totals.reduce((s, t) => s + t.count, 0);
+  const blocked = totals.find(t => t.action === 'blocked')?.count || 0;
+  const blockRate = totalQueries > 0 ? Math.round((blocked / totalQueries) * 1000) / 10 : 0;
+  const { hits = 0, misses = 0 } = cacheRow[0] || {};
+  const cacheHitRate = (hits + misses) > 0 ? Math.round((hits / (hits + misses)) * 1000) / 10 : null;
+
+  const doc = new PDFDocument({ margin: 50 });
+  renderHeader(doc, 'DNS Filtering Report', `${new Date(from).toLocaleDateString()} – ${new Date(to).toLocaleDateString()}`);
+
+  doc.fontSize(11).font('Helvetica-Bold').text(`Total queries: ${totalQueries.toLocaleString()}`);
+  doc.font('Helvetica').text(`Blocked: ${blocked.toLocaleString()} (${blockRate}%)`);
+  if (cacheHitRate != null) doc.text(`Cache hit rate: ${cacheHitRate}%`);
+  doc.moveDown(1);
+
+  doc.fontSize(13).font('Helvetica-Bold').text('Block Reasons');
+  doc.moveDown(0.3);
+  if (!topReasons.length) {
+    doc.fontSize(10).font('Helvetica').fillColor('#666').text('No blocked queries in this period.').fillColor('#000');
+  } else {
+    renderTable(doc, ['Reason', 'Count'], topReasons.map(r => [r.reason, r.count]), [300, 100]);
+  }
+  doc.moveDown(1);
+
+  doc.fontSize(13).font('Helvetica-Bold').text('Top Blocked Domains');
+  doc.moveDown(0.3);
+  if (!topDomains.length) {
+    doc.fontSize(10).font('Helvetica').fillColor('#666').text('No blocked domains in this period.').fillColor('#000');
+  } else {
+    renderTable(doc, ['Domain', 'Count'], topDomains.map(d => [d.domain, d.count]), [350, 100]);
+  }
+
+  const pdfBuffer = await pdfToBuffer(doc);
+  return {
+    summary: { total_queries: totalQueries, blocked, block_rate_pct: blockRate, cache_hit_rate_pct: cacheHitRate },
+    pdfBuffer,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Device Fleet Health
+// ---------------------------------------------------------------------------
+async function generateDeviceFleetHealth() {
+  const [{ rows: bySourceStatus }, { rows: stale }, { rows: flagged }] = await Promise.all([
+    query(`SELECT source, status, COUNT(*)::int AS count FROM integration_devices GROUP BY source, status ORDER BY source, count DESC`),
+    query(`SELECT source, COUNT(*)::int AS count FROM integration_devices WHERE last_seen < NOW() - INTERVAL '30 days' OR last_seen IS NULL GROUP BY source`),
+    // Cross-source flag for statuses that explicitly mean "needs attention" —
+    // names differ per integration (Snipe-IT's free-text status_labels vs
+    // Google's fixed enum), so this is a substring match, not an exact one.
+    query(
+      `SELECT source, status, device_name, serial_number, last_seen FROM integration_devices
+       WHERE status ~* 'missing|stolen|problem|repair'
+       ORDER BY source, status`
+    ),
+  ]);
+
+  const totalDevices = bySourceStatus.reduce((s, r) => s + r.count, 0);
+
+  const doc = new PDFDocument({ margin: 50 });
+  renderHeader(doc, 'Device Fleet Health Report');
+
+  doc.fontSize(11).font('Helvetica-Bold').text(`Total tracked devices: ${totalDevices.toLocaleString()} across ${[...new Set(bySourceStatus.map(r => r.source))].length} sources`);
+  doc.moveDown(1);
+
+  doc.fontSize(13).font('Helvetica-Bold').text('By Source & Status');
+  doc.moveDown(0.3);
+  renderTable(doc, ['Source', 'Status', 'Count'], bySourceStatus.map(r => [r.source, r.status || '—', r.count]), [150, 220, 80]);
+  doc.moveDown(1);
+
+  doc.fontSize(13).font('Helvetica-Bold').text('Stale Devices (no check-in in 30+ days)');
+  doc.moveDown(0.3);
+  if (!stale.length) {
+    doc.fontSize(10).font('Helvetica').fillColor('#666').text('None — every tracked device has checked in within the last 30 days.').fillColor('#000');
+  } else {
+    renderTable(doc, ['Source', 'Stale Count'], stale.map(r => [r.source, r.count]), [200, 100]);
+  }
+  doc.moveDown(1);
+
+  doc.fontSize(13).font('Helvetica-Bold').text('Flagged for Attention (missing/stolen/repair/problem)');
+  doc.moveDown(0.3);
+  if (!flagged.length) {
+    doc.fontSize(10).font('Helvetica').fillColor('#666').text('None flagged.').fillColor('#000');
+  } else {
+    renderTable(
+      doc,
+      ['Source', 'Status', 'Device', 'Serial'],
+      flagged.map(r => [r.source, r.status, r.device_name || '—', r.serial_number || '—']),
+      [90, 130, 130, 100]
+    );
+  }
+
+  const pdfBuffer = await pdfToBuffer(doc);
+  return {
+    summary: {
+      total_devices: totalDevices,
+      stale_count: stale.reduce((s, r) => s + r.count, 0),
+      flagged_count: flagged.length,
+    },
+    pdfBuffer,
+  };
+}
+
+const REPORT_TYPES = {
+  ipam_utilization: {
+    label: 'IPAM Subnet Utilization',
+    description: 'Per-subnet documented IP counts vs. total capacity, flagging anything at or over its alert threshold.',
+    params: [],
+    generate: generateIpamUtilization,
+  },
+  dns_filtering: {
+    label: 'DNS Filtering Report',
+    description: 'Query volume, block rate, top block reasons and domains, and cache hit rate for a date range — suitable for CIPA/E-rate documentation.',
+    params: ['from', 'to'],
+    generate: generateDnsFiltering,
+  },
+  device_fleet_health: {
+    label: 'Device Fleet Health',
+    description: 'Device counts by source/status across every integration (Google Admin, Mosyle, Snipe-IT), stale devices, and anything flagged missing/stolen/in repair.',
+    params: [],
+    generate: generateDeviceFleetHealth,
+  },
+};
+
+async function runReport(type, params = {}) {
+  const def = REPORT_TYPES[type];
+  if (!def) throw new Error(`Unknown report type: ${type}`);
+  return def.generate(params);
+}
+
+module.exports = { REPORT_TYPES, runReport };

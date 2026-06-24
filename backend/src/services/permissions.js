@@ -47,6 +47,8 @@ const PERMISSION_CATALOG = [
   { key: 'ntp_monitoring',   label: 'NTP (view)',          section: 'System' },
   { key: 'system_health',    label: 'System Health',       section: 'System' },
   { key: 'security_scan',    label: 'Security Scan',       section: 'System', sensitive: true },
+  { key: 'reports',          label: 'Reports',             section: 'System', sensitive: true },
+  { key: 'lost_mode',        label: 'Chromebook Lost Mode', section: 'System', sensitive: true },
   { key: 'internet_monitoring', label: 'Internet Health (view)', section: 'System' },
   { key: 'settings',         label: 'Settings',            section: 'System', sensitive: true },
   // Export only -- restore is hardcoded superadmin-only at the route

@@ -13,6 +13,9 @@
  *        https://www.googleapis.com/auth/admin.directory.group.readonly
  *        https://www.googleapis.com/auth/admin.directory.orgunit.readonly
  *        https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly
+ *        https://www.googleapis.com/auth/admin.directory.device.chromeos   (write -- only
+ *          needed for Lost Mode's disable/reenable action below; omit this scope if you
+ *          don't want ClassGuard able to remotely disable a Chromebook at all)
  *   3. Set the Superadmin Email (same admin UI section) to a Google Workspace
  *      super-admin address; the service account impersonates them to call the Admin SDK.
  *
@@ -436,6 +439,40 @@ async function syncDevices(actorId) {
 }
 
 // ---------------------------------------------------------------------------
+// Lost Mode -- disable/reenable a Chromebook via the Directory API's device
+// action endpoint. Google has no API field for a per-incident custom lock
+// message: the disable screen always shows whatever's configured once,
+// domain- or OU-wide, in Admin Console > Devices > Chrome > Settings >
+// Device > "Device disabling" -- there's nothing to template here on
+// ClassGuard's side beyond pointing an admin at that one-time setup.
+// Needs the WRITE scope (admin.directory.device.chromeos, not .readonly) on
+// the domain-wide delegation grant -- a missing-scope error surfaces here as
+// a 403 from Google, which callers should show verbatim rather than retry.
+// ---------------------------------------------------------------------------
+async function setChromeDeviceAction(deviceId, action, actorId) {
+  if (!['disable', 'reenable'].includes(action)) throw new Error(`Unsupported action: ${action}`);
+
+  const auth  = await getServiceAccountAuth(['https://www.googleapis.com/auth/admin.directory.device.chromeos']);
+  const admin = google.admin({ version: 'directory_v1', auth });
+
+  const { rows: [customerSetting] } = await pool.query(
+    `SELECT value FROM settings WHERE key = 'google_customer_id'`
+  );
+
+  try {
+    await admin.chromeosdevices.action({
+      customerId: customerSetting?.value || process.env.GOOGLE_CUSTOMER_ID || 'my_customer',
+      deviceId,
+      requestBody: { action },
+    });
+    await _auditLog(actorId, `lost_mode_${action}`, { deviceId, result: 'success' });
+  } catch (err) {
+    await _auditLog(actorId, `lost_mode_${action}`, { deviceId, result: 'error', error: err.message });
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Internal audit log helper
 // ---------------------------------------------------------------------------
 async function _auditLog(actorId, action, details) {
@@ -452,5 +489,5 @@ async function _auditLog(actorId, action, details) {
 
 module.exports = {
   initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits, getServiceAccountAuth,
-  getOuRoleRules, resolveRoleFromOu, backfillRolesFromOu, syncDevices,
+  getOuRoleRules, resolveRoleFromOu, backfillRolesFromOu, syncDevices, setChromeDeviceAction,
 };

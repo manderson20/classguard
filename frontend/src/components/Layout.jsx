@@ -41,6 +41,8 @@ import {
   mdiIncognito,
   mdiBackupRestore,
   mdiShieldAlertOutline,
+  mdiClipboardTextMultipleOutline,
+  mdiLaptopOff,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -48,7 +50,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.35';
+const VERSION = '0.7.36';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -291,6 +293,8 @@ const ADMIN_SECTIONS = [
       { to: '/admin/system-health', icon: mdiPulse,             label: 'System Health', permissionKey: 'system_health' },
       { to: '/admin/backup',        icon: mdiBackupRestore,     label: 'Backup & Restore', permissionKey: 'backup_export' },
       { to: '/admin/security-scan', icon: mdiShieldAlertOutline, label: 'Security Scan', permissionKey: 'security_scan' },
+      { to: '/admin/reports', icon: mdiClipboardTextMultipleOutline, label: 'Reports', permissionKey: 'reports' },
+      { to: '/admin/lost-mode', icon: mdiLaptopOff, label: 'Lost Mode', permissionKey: 'lost_mode' },
       { to: '/admin/settings',     icon: mdiCogOutline,         label: 'Settings',     permissionKey: 'settings' },
       { to: '/admin/custom-roles', icon: mdiAccountKeyOutline,  label: 'Roles & Permissions', superadminOnly: true },
     ],
