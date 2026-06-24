@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.30] - 2026-06-24
+
+### Added
+- **"Unique blocked domains" view on DNS Query Logs.** A workflow shortcut for triaging what's actually getting blocked — same filters as the existing per-query log (which is unchanged and still the default), but collapsed to one row per domain, sorted by how often it was blocked, with first/last seen and the most recent block reason. Each row keeps the existing "+ Allow" action and domain resolve-lookup, so working through the list to decide what needs to be allowed doesn't require scrolling past hundreds of rows for one popular site. New `GET /dns/logs/unique-domains` endpoint.
+
+---
+
 ## [0.7.29] - 2026-06-24
 
 ### Added
