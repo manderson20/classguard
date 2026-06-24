@@ -82,7 +82,18 @@ async function searchUserDn(client, baseDn, email) {
     }, (err, res) => {
       if (err) return reject(err);
       let foundDn = null;
-      res.on('searchEntry', (entry) => { foundDn = entry.objectName || entry.dn?.toString(); });
+      res.on('searchEntry', (entry) => {
+        // entry.objectName is a @ldapjs/dn DN *instance*, not a plain
+        // string -- ldapjs's own setter converts whatever string you give
+        // it into one internally, and the getter hands that object straight
+        // back. Passing it on to bind() un-stringified is exactly what
+        // produced "stringToWrite must be a string": something downstream
+        // expects a real string and gets an object with a toString() method
+        // instead. Force it to a string here, once, rather than relying on
+        // truthy-object short-circuiting to "do the right thing".
+        const raw = entry.objectName ?? entry.dn;
+        foundDn = raw != null ? String(raw) : null;
+      });
       res.on('error', (searchErr) => reject(searchErr));
       res.on('end', (result) => {
         if (result.status !== 0) return reject(new Error(`search failed, status ${result.status}`));

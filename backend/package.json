@@ -1,6 +1,6 @@
 {
   "name": "classguard-backend",
-  "version": "0.7.19",
+  "version": "0.7.20",
   "description": "ClassGuard API server, WebSocket hub, and background services",
   "main": "src/index.js",
   "scripts": {
