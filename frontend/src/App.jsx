@@ -48,6 +48,7 @@ import SystemHealthPage from './pages/admin/SystemHealthPage';
 import RosterPage          from './pages/admin/RosterPage';
 import RadiusPage          from './pages/admin/RadiusPage';
 import ScreenshotsPage     from './pages/admin/ScreenshotsPage';
+import SafetyAlertsPage    from './pages/admin/SafetyAlertsPage';
 import ChatAuditPage       from './pages/admin/ChatAuditPage';
 import DeviceViewAuditPage from './pages/admin/DeviceViewAuditPage';
 import VpnPage             from './pages/admin/VpnPage';
@@ -128,6 +129,7 @@ export default function App() {
           <Route path="/admin/roster"                 element={<RosterPage />} />
           <Route path="/admin/radius"                 element={<RadiusPage />} />
           <Route path="/admin/screenshots"            element={<ScreenshotsPage />} />
+          <Route path="/admin/safety-alerts"          element={<SafetyAlertsPage />} />
           <Route path="/admin/chat"                   element={<ChatAuditPage />} />
           <Route path="/admin/device-view-audit"      element={<DeviceViewAuditPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />

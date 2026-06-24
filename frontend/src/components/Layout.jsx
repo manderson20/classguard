@@ -37,6 +37,7 @@ import {
   mdiVpn,
   mdiTunnelOutline,
   mdiAccountKeyOutline,
+  mdiBellAlertOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -44,7 +45,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.8';
+const VERSION = '0.7.9';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -163,6 +164,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/chat',              icon: mdiChatOutline,    label: 'Chat Audit',        permissionKey: 'chat_audit' },
       { to: '/admin/device-view-audit', icon: mdiEyeOutline,     label: 'Device View Audit', permissionKey: 'device_view_audit' },
       { to: '/admin/ai',                icon: mdiRobotOutline,   label: 'AI Classifier',     permissionKey: 'ai_classifier' },
+      { to: '/admin/safety-alerts',     icon: mdiBellAlertOutline, label: 'Safety Alerts',   permissionKey: 'safety_alerts' },
       { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true, permissionKey: 'unblock_requests' },
     ],
   },

@@ -18,6 +18,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.9] - 2026-06-24
+
+### Changed
+- **Reorganized Settings > Safety Alerts**, which had mixed three unrelated concerns under one tab: the SMTP mail relay connection (reusable infra), who receives an urgent alert + the test-send button (an application-level policy decision), and Flagged Keywords (a content-filtering feature, not a server setting). Split into:
+  - **Settings > Communications** — just the mail server connection (host/port/TLS/user/password/from). Settings now only covers true server/infra config.
+  - **New "Safety Alerts" page** (Policies & Safety nav, new `safety_alerts` permission key) with two tabs: **Flagged Keywords** (moved as-is) and **Alerting** (recipient list + send-test-alert, moved as-is).
+  - Re-gated the four keyword-management routes and added dedicated `GET/PUT /settings/safety-alert-recipients` endpoints under the new `safety_alerts` permission, instead of leaving them on the generic `settings` permission — otherwise a custom role granted only the new page wouldn't actually be able to load or save anything on it (RBAC gap closed before it ever shipped). `safety_alert_emails` removed from the generic `/settings` endpoint's allowed-keys list since it now has its own narrower-scoped route.
+
+---
+
 ## [0.7.8] - 2026-06-24
 
 ### Added

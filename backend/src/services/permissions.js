@@ -29,6 +29,7 @@ const PERMISSION_CATALOG = [
   { key: 'device_view_audit',label: 'Device View Audit',   section: 'Policies & Safety' },
   { key: 'ai_classifier',    label: 'AI Classifier',       section: 'Policies & Safety' },
   { key: 'unblock_requests', label: 'Unblock Requests',    section: 'Policies & Safety' },
+  { key: 'safety_alerts',    label: 'Safety Alerts (Keywords & Alerting)', section: 'Policies & Safety' },
   { key: 'dns_logs',         label: 'DNS Logs',            section: 'DNS & Network' },
   { key: 'dns_records',      label: 'DNS Records',         section: 'DNS & Network' },
   { key: 'radius',           label: 'RADIUS / NAC',        section: 'DNS & Network' },
