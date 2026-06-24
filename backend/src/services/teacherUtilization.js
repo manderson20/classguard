@@ -20,23 +20,52 @@ async function computeTeacherUtilization(fromDate, toDate) {
     WITH dates AS (
       SELECT generate_series($1::date, $2::date, '1 day'::interval)::date AS school_date
     ),
+    -- Which bell schedule a given student follows -- district picks
+    -- exactly one matching strategy (OU prefix vs exact grade_level),
+    -- never both at once, falling back to the default schedule. Mirrors
+    -- policyResolver.js's OU longest-prefix-match pattern.
+    match_mode AS (
+      SELECT COALESCE((SELECT value FROM settings WHERE key = 'bell_schedule_match_mode'), 'grade_level') AS mode
+    ),
+    default_schedule AS (
+      SELECT id FROM bell_schedules WHERE is_default = true LIMIT 1
+    ),
+    student_schedule AS (
+      SELECT u.id AS student_id,
+        COALESCE(
+          CASE WHEN mm.mode = 'ou' THEN (
+            SELECT ba.schedule_id FROM bell_schedule_assignments ba
+            WHERE ba.target_type = 'ou' AND u.google_ou LIKE ba.target_ou || '%'
+            ORDER BY LENGTH(ba.target_ou) DESC LIMIT 1
+          ) END,
+          CASE WHEN mm.mode = 'grade_level' THEN (
+            SELECT ba.schedule_id FROM bell_schedule_assignments ba
+            WHERE ba.target_type = 'grade_level' AND ba.target_grade_level = u.grade_level
+            LIMIT 1
+          ) END,
+          (SELECT id FROM default_schedule)
+        ) AS schedule_id
+      FROM users u, match_mode mm
+      WHERE u.role = 'student'
+    ),
+    -- Per (class, enrolled student, day) rather than per class -- two
+    -- students in the same class can be on different bell schedules (e.g.
+    -- a mixed-grade elective spanning a Middle School's two schedules),
+    -- so each student's own resolved schedule decides their period window.
     period_windows AS (
       SELECT
-        c.id AS class_id, c.teacher_id, c.period AS period_label, d.school_date,
+        c.id AS class_id, c.teacher_id, c.period AS period_label, cm.student_id, d.school_date,
         (d.school_date + bsp.start_time) AS window_start,
         (d.school_date + bsp.end_time)   AS window_end,
         EXTRACT(EPOCH FROM (bsp.end_time - bsp.start_time))::int AS period_seconds
       FROM classes c
-      JOIN bell_schedule_periods bsp ON bsp.period_label = c.period
+      JOIN class_members cm   ON cm.class_id = c.id
+      JOIN student_schedule ss ON ss.student_id = cm.student_id
+      JOIN bell_schedule_periods bsp ON bsp.schedule_id = ss.schedule_id AND bsp.period_label = c.period
       CROSS JOIN dates d
       WHERE EXTRACT(DOW FROM d.school_date)::int = ANY(bsp.days_of_week)
         AND c.is_active = true
         AND c.teacher_id IS NOT NULL
-    ),
-    enrolled AS (
-      SELECT pw.*, cm.student_id
-      FROM period_windows pw
-      JOIN class_members cm ON cm.class_id = pw.class_id
     ),
     overlap_rows AS (
       SELECT
@@ -46,7 +75,7 @@ async function computeTeacherUtilization(fromDate, toDate) {
             LEAST(COALESCE(sti.ended_at, NOW()), e.window_end) - GREATEST(sti.started_at, e.window_start)
           )))
         END AS overlap_seconds
-      FROM enrolled e
+      FROM period_windows e
       LEFT JOIN screen_time_intervals sti
         ON sti.student_id = e.student_id
         AND sti.started_at < e.window_end
@@ -59,6 +88,14 @@ async function computeTeacherUtilization(fromDate, toDate) {
       COUNT(DISTINCT student_id) AS enrolled_count,
       COUNT(DISTINCT student_id) FILTER (WHERE overlap_seconds > 0) AS active_student_count,
       COALESCE(SUM(overlap_seconds), 0)::bigint AS active_student_seconds,
+      -- This table's grain is still (class, period, day) -- if a single
+      -- class enrolls students from two different bell schedules with
+      -- different period durations (rare: schedule assignment is by OU or
+      -- grade level, which naturally clusters students who take classes
+      -- together), MAX() picks one arbitrarily as "the" duration for the
+      -- whole class rather than splitting the row per schedule. Accepted
+      -- as a known approximation for now rather than widening this table's
+      -- grain to (class, period, day, schedule) for an edge case.
       MAX(period_seconds) AS period_seconds,
       NOW()
     FROM overlap_rows
