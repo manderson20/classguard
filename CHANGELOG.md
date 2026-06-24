@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.8] - 2026-06-24
+
+### Added
+- **Basic upstream internet/DNS connectivity monitoring**, for districts without a separate NMS (Zabbix etc.) who still want a quick answer to "is it our DNS, or the internet connection itself" without digging through container logs. Built after this same session's real incident where this host's own outbound DNS to api.github.com was intermittently failing with no record of it anywhere. Every 2 minutes, checks (1) DNS resolution of a real domain through the actual configured upstream resolvers (same servers/failover order dns-engine itself uses) and (2) raw TCP connectivity to fixed public IP literals (1.1.1.1 / 8.8.8.8), deliberately bypassing DNS entirely — separating "DNS is broken" from "the whole internet connection is down." History (90-day retention) and current status surface as a small widget on the Admin Dashboard, gated by a new `internet_monitoring` permission key (unrestricted by default, same as every other admin-tier feature). Three consecutive failures (~6 min) triggers a staff-wide in-app banner + best-effort email (reusing the safety-alert SMTP pipeline); a matching recovery notice fires once the streak clears. Streak detection is derived from the persisted history rather than in-process state, so it survives the frequent API restarts this dev-style host does. New migration 064 (`internet_health_checks`).
+
+---
+
 ## [0.7.7] - 2026-06-24
 
 ### Fixed

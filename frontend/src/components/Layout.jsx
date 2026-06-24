@@ -44,7 +44,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.7';
+const VERSION = '0.7.8';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -82,6 +82,48 @@ function UrgentAlertBanner({ socket, navigate }) {
       <button
         className="text-white/80 hover:text-white text-xs"
         onClick={() => setAlerts([])}
+      >
+        Dismiss
+      </button>
+    </div>
+  );
+}
+
+// Upstream internet/DNS outage or recovery — same staff-wide socket room as
+// the safety banner above, but amber rather than red since this is an
+// infra concern, not a student-safety emergency, and it's just as relevant
+// to "is the down alert itself going to reach anyone" if email can't.
+function InternetHealthBanner({ socket, navigate }) {
+  const [alert, setAlert] = useState(null);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onAlert = (payload) => setAlert(payload);
+    socket.on('system:internet_alert', onAlert);
+    return () => socket.off('system:internet_alert', onAlert);
+  }, [socket]);
+
+  if (!alert) return null;
+
+  return (
+    <div className="bg-amber-500 text-white px-4 py-2 flex items-center gap-3 flex-wrap">
+      <span className="font-semibold text-sm">
+        {alert.kind === 'down' ? '⚠ Internet issue:' : '✓ Internet recovered:'}
+      </span>
+      <span className="text-sm">
+        {alert.kind === 'down'
+          ? `${alert.what} appears to be down.${alert.error ? ` (${alert.error})` : ''}`
+          : `${alert.what} is back up.`}
+      </span>
+      <button
+        className="ml-auto bg-white text-amber-700 text-xs font-semibold px-3 py-1 rounded hover:bg-amber-50"
+        onClick={() => { setAlert(null); navigate('/admin'); }}
+      >
+        View dashboard
+      </button>
+      <button
+        className="text-white/80 hover:text-white text-xs"
+        onClick={() => setAlert(null)}
       >
         Dismiss
       </button>
@@ -359,6 +401,7 @@ export default function Layout() {
       {/* Main content */}
       <div className="flex-1 flex flex-col overflow-hidden">
         {isStaff && <UrgentAlertBanner socket={socket} navigate={navigate} />}
+        {isStaff && <InternetHealthBanner socket={socket} navigate={navigate} />}
         <main className="flex-1 overflow-auto bg-slate-100">
           <Outlet />
         </main>
