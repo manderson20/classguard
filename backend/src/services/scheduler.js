@@ -14,6 +14,7 @@ const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
 const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 const radiusSync = require('./radiusSync');
 const ntp = require('./ntp');
+const internetHealth = require('./internetHealth');
 const teacherUtilization = require('./teacherUtilization');
 const { invalidatePolicy } = require('./policyResolver');
 const events = require('../events');
@@ -458,6 +459,19 @@ function startScheduler() {
   // combined with a separate response-shape bug, no) data indefinitely.
   cron.schedule('*/5 * * * *', () => {
     ntp.pollAll().catch(err => console.error('[scheduler] ntp-poll error:', err.message));
+  });
+
+  // Upstream internet/DNS connectivity check — every 2 minutes. Only runs on
+  // the node that can actually write to Postgres; a standby's read-only
+  // replica would reject the insert (same reasoning as every other job in
+  // this RUN_CRON_JOBS-gated section).
+  cron.schedule('*/2 * * * *', () => {
+    internetHealth.runCheck().catch(err => console.error('[scheduler] internet-health error:', err.message));
+  });
+
+  // Prune old internet-health rows — daily 5:30am.
+  cron.schedule('30 5 * * *', () => {
+    internetHealth.pruneOldChecks().catch(err => console.error('[scheduler] internet-health prune error:', err.message));
   });
 }
 

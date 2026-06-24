@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
 import api from '../../lib/api';
@@ -19,6 +19,68 @@ function StatCard({ label, value, sub, color = 'blue' }) {
   );
 }
 
+// Basic upstream internet/DNS connectivity status — for a district running
+// without a separate NMS (Zabbix etc.) to get a quick answer to "is it DNS,
+// or the internet connection itself" without digging through logs. See
+// backend/src/services/internetHealth.js for what's actually checked.
+function InternetHealthCard({ data, onCheckNow, checking }) {
+  const latest  = data?.latest;
+  const history = data?.history || [];
+
+  function StatusLine({ label, ok, detail }) {
+    return (
+      <div className="flex items-center justify-between text-sm">
+        <span className="text-slate-600">{label}</span>
+        <span className={`flex items-center gap-1.5 ${ok ? 'text-green-600' : 'text-red-600'}`}>
+          <span className={`w-2 h-2 rounded-full ${ok ? 'bg-green-500' : 'bg-red-500'}`} />
+          {ok ? 'OK' : 'Down'}
+          {detail && <span className="text-slate-400 font-normal">({detail})</span>}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="card p-5">
+      <div className="flex items-center justify-between mb-4">
+        <h2 className="text-sm font-semibold text-slate-700">Internet Health</h2>
+        <button
+          onClick={onCheckNow}
+          disabled={checking}
+          className="text-xs text-primary-600 hover:underline disabled:opacity-50"
+        >
+          {checking ? 'Checking…' : 'Check now'}
+        </button>
+      </div>
+
+      {!latest ? (
+        <div className="text-slate-400 text-sm py-4 text-center">No checks yet</div>
+      ) : (
+        <>
+          <div className="space-y-2 mb-3">
+            <StatusLine label="DNS resolution"        ok={latest.dns_ok} detail={latest.dns_ok ? `${latest.dns_latency_ms}ms via ${latest.dns_server}` : latest.dns_error} />
+            <StatusLine label="Internet connectivity"  ok={latest.ip_ok}  detail={latest.ip_ok  ? `${latest.ip_latency_ms}ms via ${latest.ip_target}`   : latest.ip_error} />
+          </div>
+          <div className="text-xs text-slate-400 mb-3">
+            Last checked {new Date(latest.checked_at).toLocaleTimeString()}
+          </div>
+          {history.length > 1 && (
+            <div className="flex gap-0.5 flex-wrap">
+              {history.slice().reverse().map(h => (
+                <span
+                  key={h.id}
+                  title={`${new Date(h.checked_at).toLocaleTimeString()} — DNS ${h.dns_ok ? 'OK' : 'down'}, Internet ${h.ip_ok ? 'OK' : 'down'}`}
+                  className={`w-2.5 h-4 rounded-sm ${h.dns_ok && h.ip_ok ? 'bg-green-400' : 'bg-red-400'}`}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function transformTrend(rows) {
   const map = {};
   rows.forEach(r => {
@@ -30,6 +92,8 @@ function transformTrend(rows) {
 }
 
 export default function AdminDashboard() {
+  const queryClient = useQueryClient();
+
   const { data: dns, isLoading: dnsLoading } = useQuery({
     queryKey:        ['dns-summary'],
     queryFn:         () => api.get('/dns/summary?hours=24'),
@@ -40,6 +104,22 @@ export default function AdminDashboard() {
     queryKey:        ['health'],
     queryFn:         () => fetch('/health').then(r => r.json()),
     refetchInterval: 30_000,
+  });
+
+  // Permission-gated (internet_monitoring) — a custom-role-restricted admin
+  // without this key gets a 403, which we treat the same as "no data yet"
+  // rather than surfacing an error on a dashboard that should mostly just
+  // load quietly.
+  const { data: internet } = useQuery({
+    queryKey:        ['internet-health'],
+    queryFn:         () => api.get('/internet-health/status'),
+    refetchInterval: 60_000,
+    retry:           false,
+  });
+
+  const checkInternetNow = useMutation({
+    mutationFn: () => api.post('/internet-health/check'),
+    onSuccess:  () => queryClient.invalidateQueries({ queryKey: ['internet-health'] }),
   });
 
   const trend = dns ? transformTrend(dns.hourly_trend || []) : [];
@@ -121,6 +201,15 @@ export default function AdminDashboard() {
             </ul>
           )}
         </div>
+      </div>
+
+      {/* Internet health */}
+      <div className="max-w-md mt-6">
+        <InternetHealthCard
+          data={internet}
+          onCheckNow={() => checkInternetNow.mutate()}
+          checking={checkInternetNow.isPending}
+        />
       </div>
 
       {/* Top active students */}

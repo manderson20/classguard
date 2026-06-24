@@ -125,6 +125,7 @@ app.use('/api/v1/phones',        require('./routes/phones'));
 app.use('/api/v1/phones',        require('./routes/phoneChanges'));
 app.use('/api/v1/chat',          require('./routes/chat'));
 app.use('/api/v1/system',        require('./routes/systemHealth'));
+app.use('/api/v1/internet-health', require('./routes/internetHealth'));
 app.use('/api/v1/live-view',     require('./routes/liveView'));
 app.use('/api/v1/vpn',           require('./routes/vpn'));
 app.use('/api/v1/ipv6',          require('./routes/ipv6'));

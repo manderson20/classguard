@@ -130,6 +130,13 @@ const setupSockets = (io) => {
     io.to('role:staff').emit('safety:urgent_alert', payload);
   });
 
+  // Upstream internet/DNS outage or recovery — same staff-wide broadcast as
+  // the safety alert above, distinct event name/banner since this is an
+  // infra concern, not a student-safety one.
+  events.on('system:internet_alert', (payload) => {
+    io.to('role:staff').emit('system:internet_alert', payload);
+  });
+
   // Teacher-initiated screenshot request: push to student's extension socket
   events.on('teacher:screenshot_request', ({ studentId }) => {
     if (studentId) {
