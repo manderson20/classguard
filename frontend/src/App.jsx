@@ -52,6 +52,7 @@ import SafetyAlertsPage    from './pages/admin/SafetyAlertsPage';
 import ChatAuditPage       from './pages/admin/ChatAuditPage';
 import DeviceViewAuditPage from './pages/admin/DeviceViewAuditPage';
 import ImpersonationAuditPage from './pages/admin/ImpersonationAuditPage';
+import BackupPage          from './pages/admin/BackupPage';
 import VpnPage             from './pages/admin/VpnPage';
 import Ipv6Page             from './pages/admin/Ipv6Page';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
@@ -134,6 +135,7 @@ export default function App() {
           <Route path="/admin/chat"                   element={<ChatAuditPage />} />
           <Route path="/admin/device-view-audit"      element={<DeviceViewAuditPage />} />
           <Route path="/admin/impersonation-audit"    element={<ImpersonationAuditPage />} />
+          <Route path="/admin/backup"                 element={<BackupPage />} />
           <Route path="/admin/settings"               element={<SettingsPage />} />
           <Route path="/admin/system-health"           element={<SystemHealthPage />} />
           <Route path="/admin/vpn"                    element={<VpnPage />} />

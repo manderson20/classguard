@@ -39,6 +39,7 @@ import {
   mdiAccountKeyOutline,
   mdiBellAlertOutline,
   mdiIncognito,
+  mdiBackupRestore,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -46,7 +47,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.30';
+const VERSION = '0.7.31';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -287,6 +288,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/ipv6',         icon: mdiTunnelOutline,      label: 'IPv6',         permissionKey: 'ipv6_config' },
       { to: '/admin/ntp',          icon: mdiClockOutline,       label: 'NTP',          permissionKey: 'ntp_monitoring' },
       { to: '/admin/system-health', icon: mdiPulse,             label: 'System Health', permissionKey: 'system_health' },
+      { to: '/admin/backup',        icon: mdiBackupRestore,     label: 'Backup & Restore', permissionKey: 'backup_export' },
       { to: '/admin/settings',     icon: mdiCogOutline,         label: 'Settings',     permissionKey: 'settings' },
       { to: '/admin/custom-roles', icon: mdiAccountKeyOutline,  label: 'Roles & Permissions', superadminOnly: true },
     ],
