@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.20] - 2026-06-24
+
+### Fixed
+- **LDAP search-then-bind (v0.7.19) failed with `stringToWrite must be a string`.** `ldapjs` v3's `SearchEntry.objectName` getter returns a `@ldapjs/dn` `DN` *object* instance, not a plain string — `searchUserDn()`'s `entry.objectName || entry.dn?.toString()` let that object through un-stringified whenever `objectName` was truthy (which it always was), and passing it on to `bind()` broke downstream. Confirmed live against a real Workspace directory with a deep, multi-level OU structure (several sub-OUs nested under the top-level Users OU) — meaning the old hardcoded-DN approach this replaced in 0.7.19 was already broken for most real accounts, not just a hypothetical edge case. Fixed by forcing `String(...)` on whatever `objectName`/`dn` returns, once, rather than relying on truthy-object short-circuiting to coerce correctly.
+
+---
+
 ## [0.7.19] - 2026-06-24
 
 ### Fixed
