@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.38] - 2026-06-25
+
+### Fixed
+- **Dashboard always showed "Degraded" regardless of actual system health.** The admin Dashboard's `System:` status fetches `/health` directly from the browser over HTTPS (port 443). nginx only proxied that path to the API on the plain-HTTP (port 80) server block — kept there on purpose for the cross-node HA liveness probe, which hits each node's bare IP and would otherwise fail TLS verification (see `frontend/nginx.conf`'s Server 2a comment). The HTTPS server block the admin UI is actually served from had no matching `/health` location at all, so the browser's request fell through to the SPA catch-all and got back `index.html` — which the Dashboard tried to parse as JSON, silently failed, and showed every node as "Degraded" all the time, independent of real backend health. Added a second `/health` proxy location to the HTTPS server block (using the cert it already has), leaving the plain-HTTP one untouched for the HA probe's sake. Confirmed live: `/ha/nodes`, both nodes' direct `/health`, and VRRP state were all healthy the entire time this was showing red.
+
+---
+
 ## [0.7.37] - 2026-06-25
 
 ### Added
