@@ -194,7 +194,7 @@ BACKEND_URL=http://api:3001
 KEA_CONTROL_AGENT_URL=http://kea:8000
 
 # HA / multi-node
-NODE_ID=node1
+NODE_ID=$(hostname)
 NODE_ROLE=primary
 RUN_CRON_JOBS=true
 
