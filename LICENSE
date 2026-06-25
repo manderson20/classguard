@@ -1,0 +1,24 @@
+ClassGuard
+Copyright (C) 2026 ClassGuard Contributors
+
+This project is licensed under the GNU Affero General Public License
+version 3 (AGPLv3) or, at your option, any later version.
+
+The GNU Affero General Public License is a free, copyleft license for
+software and other kinds of works, specifically designed to ensure
+cooperation with the community in the case of network server software.
+If you run a modified version of this program as a network service,
+you must make the complete corresponding source code of your modified
+version available to every user who interacts with it over the network.
+
+The full, authoritative license text is available at:
+https://www.gnu.org/licenses/agpl-3.0.txt
+
+A plain-language (non-legally-binding) summary is available at:
+https://choosealicense.com/licenses/agpl-3.0/
+
+This program is distributed WITHOUT ANY WARRANTY; without even the
+implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR
+PURPOSE. See the GNU Affero General Public License for the full terms.
+
+SPDX-License-Identifier: AGPL-3.0-or-later

@@ -8,6 +8,19 @@
 
 ---
 
+> **Provided as-is, with no warranty.** ClassGuard is open-source software
+> offered for free use by school IT departments and administrators. It is
+> provided "as is," without warranty of any kind — see
+> [DISCLAIMER.md](DISCLAIMER.md) and [LICENSE](LICENSE) for the full terms.
+> **Test thoroughly in a non-production environment before relying on it
+> for real students, staff, or network traffic.** ClassGuard touches
+> authentication, content filtering, and network services — review
+> [SECURITY.md](SECURITY.md) before exposing any part of it beyond your
+> internal network, and [PRIVACY.md](PRIVACY.md) for what you're
+> responsible for regarding student/staff data.
+
+---
+
 ## What ClassGuard Does
 
 | Feature | Description |
@@ -115,11 +128,17 @@ See `.env.example` for the full list.
 
 ## Contributing
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. Short version:
+
 1. Fork the repository and create a feature branch from `main`.
 2. Follow the phased build plan in the specification for implementation order.
 3. Write tests for new backend services and routes.
 4. Open a pull request — CI will run lint and tests automatically.
 5. Update `CHANGELOG.md` under `[Unreleased]` with a description of your change.
+
+Please also read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before
+participating, and never include secrets, proprietary code, or real
+student/staff data in an issue, PR, or commit.
 
 ---
 
@@ -135,3 +154,17 @@ Full release history is in [`CHANGELOG.md`](CHANGELOG.md).
 
 [AGPLv3](LICENSE) — if you deploy a modified version as a service, you must share your changes.
 This protects the open-source nature of the project for the school community.
+
+See also: [SECURITY.md](SECURITY.md) · [PRIVACY.md](PRIVACY.md) ·
+[DISCLAIMER.md](DISCLAIMER.md) · [CONTRIBUTING.md](CONTRIBUTING.md) ·
+[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+
+---
+
+## Help Keep This Free for Schools
+
+Many school districts can't afford expensive filtering and classroom-
+management software. If ClassGuard is useful to your district, consider
+sponsoring its development — sponsorship helps keep ClassGuard free and
+available to schools that couldn't otherwise afford this kind of
+tooling, and supports work on optional add-ons down the road.
