@@ -63,7 +63,7 @@ async function getOAuthAccessToken(url, clientId, clientSecret) {
     cachedOAuthToken = await fetchOAuthToken(url, clientId, clientSecret);
   } catch (err) {
     const detail = err.response ? `HTTP ${err.response.status} ${JSON.stringify(err.response.data)}` : err.message;
-    throw new Error(`Snipe-IT OAuth token exchange failed: ${detail}`);
+    throw new Error(`Snipe-IT OAuth token exchange failed: ${detail}`, { cause: err });
   }
   return cachedOAuthToken.accessToken;
 }

@@ -44,7 +44,7 @@ async function getBearerToken(cfg) {
     }, { headers: { 'Content-Type': 'application/json' }, timeout: 15_000 });
   } catch (err) {
     const detail = err.response?.data?.['error-description'] || err.response?.data?.error;
-    throw new Error(detail ? `Mosyle login failed: ${detail}` : `Mosyle login failed: ${err.message}`);
+    throw new Error(detail ? `Mosyle login failed: ${detail}` : `Mosyle login failed: ${err.message}`, { cause: err });
   }
 
   const bearer = res.headers['authorization'];
@@ -73,7 +73,7 @@ async function apiRequest(endpoint, { options = {} } = {}) {
     // the same dead token forever.
     if (err.response?.status === 401) cachedBearer = null;
     const detail = err.response?.data?.error || err.response?.data?.message || err.response?.data?.['error-description'];
-    throw new Error(detail ? `Mosyle API error: ${detail}` : err.message);
+    throw new Error(detail ? `Mosyle API error: ${detail}` : err.message, { cause: err });
   }
 
   // Only Mosyle's outer envelope is checked here — res.data.response may
