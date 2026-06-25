@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Outlet, NavLink, useNavigate } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
 import MdiIcon from '@mdi/react';
 import {
   mdiViewDashboardOutline,
@@ -44,6 +44,7 @@ import {
   mdiClipboardTextMultipleOutline,
   mdiLaptopOff,
   mdiWifiAlert,
+  mdiHelpCircleOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -51,7 +52,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.37';
+const VERSION = '0.7.38';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -214,6 +215,36 @@ function InternetHealthBanner({ socket, navigate }) {
   );
 }
 
+// Floating, page-aware help button -- resolves the current route to its
+// linked Knowledge Base article(s) (see routes/knowledgeBase.js's
+// /for-page lookup) so every page has a help link without needing one
+// wired into each individual page component. Falls back to the general
+// Help Center list if nothing's linked yet for this page, or if there's
+// more than one match.
+function ContextualHelpButton({ navigate }) {
+  const location = useLocation();
+  const { data: matches = [] } = useQuery({
+    queryKey: ['kb-for-page', location.pathname],
+    queryFn: () => api.get(`/kb/for-page?path=${encodeURIComponent(location.pathname)}`),
+    staleTime: 60_000,
+  });
+
+  const go = () => {
+    if (matches.length === 1) navigate(`/help/${matches[0].slug}`);
+    else navigate('/help');
+  };
+
+  return (
+    <button
+      onClick={go}
+      title={matches.length === 1 ? `Help: ${matches[0].title}` : 'Help Center'}
+      className="fixed bottom-5 right-5 z-40 w-11 h-11 rounded-full bg-slate-800 text-white shadow-lg flex items-center justify-center hover:bg-slate-700"
+    >
+      <MdiIcon path={mdiHelpCircleOutline} size="1.3em" />
+    </button>
+  );
+}
+
 // HA auto-promotion firing — superadmin-only room (backend/src/sockets/
 // index.js), since "a node just auto-promoted its database" is meaningless
 // noise to a teacher or building admin. Red, not amber, since unlike the
@@ -276,6 +307,7 @@ const TEACHER_NAV = [
   { to: '/classes',     icon: mdiHomeOutline, label: 'My Classes'  },
   { to: '/penalty-box', icon: mdiFlagOutline,  label: 'Penalty Box' },
   { to: '/lockdown',    icon: mdiLock,         label: 'Lockdown Tests' },
+  { to: '/help',        icon: mdiHelpCircleOutline, label: 'Help Center' },
 ];
 
 const ADMIN_SECTIONS = [
@@ -286,6 +318,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/staff-analytics', icon: mdiChartLine,              label: 'Staff Analytics', permissionKey: 'staff_analytics' },
       { to: '/admin/screen-time',     icon: mdiClockOutline,           label: 'Screen Time'     },
       { to: '/admin/users',           icon: mdiAccountMultipleOutline, label: 'Users',           permissionKey: 'users' },
+      { to: '/help',                  icon: mdiHelpCircleOutline,      label: 'Help Center'     },
     ],
   },
   {
@@ -548,6 +581,7 @@ export default function Layout() {
         <main className="flex-1 overflow-auto bg-slate-100">
           <Outlet />
         </main>
+        <ContextualHelpButton navigate={navigate} />
       </div>
     </div>
   );
