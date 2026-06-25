@@ -18,6 +18,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.39] - 2026-06-25
+
+### Added
+- **Seeded the Knowledge Base with real content for every page in the app** — 43 articles, one per top-level admin/teacher page, written from an actual analysis of each page's code rather than guessed from its name, organized into the same Overview / Policies & Safety / DNS & Network / System / Classroom categories already used in the sidebar. Sub-routes (a specific subnet, user, or class detail page) inherit their parent page's article automatically.
+
+### Fixed
+- **The floating help button could resolve to the wrong article.** `GET /kb/for-page` matched any article whose `page_paths` was a string-prefix of the current route — correct for genuine parent/child pages (e.g. `/admin/users` covering `/admin/users/:id`), but Dashboard's own path is the bare `/admin`, which is *also* a literal prefix of every other admin route. That made Dashboard's article shadow the real one on every single admin page (clicking the help button from IPAM landed on the Dashboard guide, not the IPAM one). Now orders matches most-specific-first (exact match, then longest matching prefix) and always opens the best match instead of requiring an exact 1-article match.
+- Replaced the bare "?" icon with a text label showing the actual matched article's title (e.g. "IPAM", "Backup & Restore") — the icon alone wasn't visibly a link to anything in particular.
+
+---
+
 ## [0.7.38] - 2026-06-25
 
 ### Fixed
