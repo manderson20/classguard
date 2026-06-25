@@ -17,7 +17,7 @@ async function keaCommand(command, service, args = {}) {
     });
     data = res.data;
   } catch (err) {
-    throw new Error(`Kea request failed (${command}): ${err.message}`);
+    throw new Error(`Kea request failed (${command}): ${err.message}`, { cause: err });
   }
 
   // Kea returns an array; the first element carries the result for our service

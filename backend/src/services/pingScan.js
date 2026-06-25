@@ -26,7 +26,7 @@ async function scanSubnet(subnetRow) {
     return { scanned: 0, alive: 0, skipped: 'subnet larger than /20 — skipped to avoid a runaway scan' };
   }
 
-  let stdout = '';
+  let stdout;
   try {
     const result = await execFileAsync(
       'fping', ['-a', '-q', '-r', '1', '-t', '800', '-g', subnet],

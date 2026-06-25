@@ -68,7 +68,7 @@ async function authenticate(cfg) {
       }
     );
   } catch (err) {
-    throw new Error(describeError(err));
+    throw new Error(describeError(err), { cause: err });
   }
   if (!res.data?.data?.token) throw new Error('PHPiPAM authentication failed — check App ID, username, and password');
   return res.data.data.token;
@@ -114,7 +114,7 @@ async function testConnection() {
   try {
     await http.get('/sections/');
   } catch (err) {
-    throw new Error(describeError(err));
+    throw new Error(describeError(err), { cause: err });
   }
   await revokeToken(cfg, http);
   return true;

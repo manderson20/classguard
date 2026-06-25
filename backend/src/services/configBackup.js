@@ -256,7 +256,8 @@ async function restoreBackup(buffer, passphrase) {
           throw new Error(
             `Restore stopped at "${table}" -- this server already has data referencing existing rows in it ` +
             `(foreign key violation). Restore is intended for a freshly-installed server with no existing ` +
-            `activity history; restoring onto a server that's already in use isn't supported.`
+            `activity history; restoring onto a server that's already in use isn't supported.`,
+            { cause: err }
           );
         }
         throw err;
