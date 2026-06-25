@@ -57,6 +57,7 @@ import SecurityScanPage    from './pages/admin/SecurityScanPage';
 import ReportsPage         from './pages/admin/ReportsPage';
 import LostModePage        from './pages/admin/LostModePage';
 import FilterBypassPage    from './pages/admin/FilterBypassPage';
+import HelpCenterPage      from './pages/admin/HelpCenterPage';
 import VpnPage             from './pages/admin/VpnPage';
 import Ipv6Page             from './pages/admin/Ipv6Page';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
@@ -101,6 +102,8 @@ export default function App() {
         <Route path="/classes/:classId/lesson" element={<ActiveLesson />} />
         <Route path="/penalty-box"             element={<PenaltyBox />} />
         <Route path="/lockdown"                element={<LockdownTests />} />
+        <Route path="/help"                    element={<HelpCenterPage />} />
+        <Route path="/help/:slug"              element={<HelpCenterPage />} />
 
         {/* Admin routes */}
         <Route element={<RequireAuth minRole="admin"><Outlet /></RequireAuth>}>
