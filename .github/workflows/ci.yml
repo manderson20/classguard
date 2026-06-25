@@ -163,5 +163,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # docker-compose.yml's env_file directives expect a real .env to
+      # exist -- there's no actual secrets needed just to validate that
+      # the compose file itself parses and resolves correctly, so the
+      # checked-in example file (placeholder values only) is sufficient.
+      - name: Create placeholder .env
+        run: sed 's/YOUR_SERVER_IP/10.0.0.1/g' .env.example > .env
+
       - name: Validate docker-compose.yml
         run: docker compose config --quiet
