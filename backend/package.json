@@ -33,7 +33,7 @@
     "pdfkit": "^0.19.1",
     "pg": "^8.13.3",
     "socket.io": "^4.8.1",
-    "uuid": "^11.0.3"
+    "uuid": "^14.0.1"
   },
   "optionalDependencies": {
     "@anthropic-ai/sdk": "^0.39.0"
