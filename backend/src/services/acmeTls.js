@@ -324,6 +324,30 @@ async function completeManualChallenge() {
 }
 
 // ---------------------------------------------------------------------------
+// Startup sync — write the DB cert to disk if it differs from what's there.
+// Called once on API start so every HA node picks up the cert without
+// needing to be the one that originally issued it.
+// ---------------------------------------------------------------------------
+async function syncCertFromDb() {
+  try {
+    const cfg = await getConfig();
+    if (!cfg.cert_pem || !cfg.privkey_pem) return;
+
+    const onDiskPath = path.join(CERT_DIR, 'fullchain.pem');
+    let onDisk = '';
+    try { onDisk = fs.readFileSync(onDiskPath, 'utf8'); } catch (_) {}
+
+    // Only overwrite if the DB cert differs — avoids unnecessary nginx reloads.
+    if (onDisk.trim() !== cfg.cert_pem.trim()) {
+      writeCertToDisk(cfg.cert_pem, cfg.privkey_pem);
+      console.log('[acmeTls] synced cert from DB to disk');
+    }
+  } catch (err) {
+    console.warn('[acmeTls] startup cert sync failed:', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Renewal check — call from a daily cron. Auto-renews everything except
 // "manual" (DNS-01 with no provider API) since that needs an admin to repeat
 // the DNS step by hand — we just flag it instead.
@@ -362,5 +386,5 @@ async function renewIfNeeded() {
 module.exports = {
   getConfig, saveConfig,
   issueAutomatic, startManualChallenge, completeManualChallenge,
-  renewIfNeeded, CERT_DIR, getHttp01KeyAuth,
+  renewIfNeeded, syncCertFromDb, CERT_DIR, getHttp01KeyAuth,
 };

@@ -210,6 +210,7 @@ server.listen(config.port, () => {
   console.log(`ClassGuard API  →  http://localhost:${config.port}  [${config.nodeEnv}]`);
   startScheduler();
   startHeartbeat();
+  require('./services/acmeTls').syncCertFromDb();
 });
 
 module.exports = { app, io };
