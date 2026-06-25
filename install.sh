@@ -46,7 +46,17 @@ if [[ -d .git ]]; then
   else
     section "Step 0 — Pull latest"
     BEFORE_REV=$(git rev-parse HEAD)
-    git pull --ff-only
+    # A plain fast-forward pull correctly refuses if the remote history
+    # ever gets rewritten (force-pushed) out from under this clone --
+    # there's no uncommitted local work to lose at this point (checked
+    # above), so recover by resetting to whatever origin actually has
+    # rather than leaving this node permanently stuck unable to update.
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    if ! git pull --ff-only; then
+      warn "Fast-forward pull failed (remote history diverged) -- resetting to origin/$CURRENT_BRANCH"
+      git fetch origin "$CURRENT_BRANCH"
+      git reset --hard "origin/$CURRENT_BRANCH"
+    fi
     AFTER_REV=$(git rev-parse HEAD)
     if [[ "$BEFORE_REV" == "$AFTER_REV" ]]; then
       info "Already up to date ($AFTER_REV)"
