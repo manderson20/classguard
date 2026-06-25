@@ -218,21 +218,39 @@ router.post('/google', loginLimiter, async (req, res) => {
     // google_id, and Postgres treats every NULL as distinct for a unique
     // constraint, so ON CONFLICT (google_id) would silently miss it and hit
     // the separate email-uniqueness violation on the INSERT instead.
-    const { rows } = await query(
-      `INSERT INTO users (google_id, email, full_name, given_name, photo_url, role, role_source, last_synced_at)
-       VALUES ($1, $2, $3, $4, $5, $6, 'auto', NOW())
-       ON CONFLICT (email) DO UPDATE SET
-         google_id      = EXCLUDED.google_id,
-         full_name      = EXCLUDED.full_name,
-         given_name     = EXCLUDED.given_name,
-         photo_url      = EXCLUDED.photo_url,
-         last_synced_at = NOW(),
-         updated_at     = NOW()
-       RETURNING *`,
-      [googleId, email, fullName, givenName, photoUrl, role]
-    );
+    let user;
+    try {
+      const { rows } = await query(
+        `INSERT INTO users (google_id, email, full_name, given_name, photo_url, role, role_source, last_synced_at)
+         VALUES ($1, $2, $3, $4, $5, $6, 'auto', NOW())
+         ON CONFLICT (email) DO UPDATE SET
+           google_id      = EXCLUDED.google_id,
+           full_name      = EXCLUDED.full_name,
+           given_name     = EXCLUDED.given_name,
+           photo_url      = EXCLUDED.photo_url,
+           last_synced_at = NOW(),
+           updated_at     = NOW()
+         RETURNING *`,
+        [googleId, email, fullName, givenName, photoUrl, role]
+      );
+      user = rows[0];
+    } catch (writeErr) {
+      // Standby nodes have a read-only streaming replica — writes fail with
+      // error code 25006 (ReadOnlySqlTransaction). Fall back to SELECT so
+      // existing users can still sign in; profile updates (photo, name, etc.)
+      // will catch up on the next directory sync from the primary.
+      if (writeErr.code === '25006') {
+        const { rows } = await query(
+          'SELECT * FROM users WHERE email = $1',
+          [email]
+        );
+        user = rows[0];
+        if (!user) throw writeErr;
+      } else {
+        throw writeErr;
+      }
+    }
 
-    const user = rows[0];
     if (!user.is_active) {
       return res.status(403).json({ error: 'Account is deactivated' });
     }
