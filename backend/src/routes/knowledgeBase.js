@@ -21,15 +21,20 @@ router.get('/', ...readAuth, async (req, res) => {
 });
 
 // Resolve the article(s) relevant to a given app route -- powers the
-// floating help button on each page. Matches on exact path or prefix
-// (so an article tagged '/admin/dns' also surfaces for '/admin/dns/logs').
+// floating help button on each page. Matches on exact path or prefix (so
+// an article tagged '/admin/users' also surfaces for '/admin/users/:id').
+// Ordered most-specific-first (longest matching prefix, exact match wins
+// outright) so a broad root tag -- e.g. Dashboard's bare '/admin', which
+// is a literal string-prefix of every other admin route -- never shadows
+// a more specific article like '/admin/ipam' for that page.
 router.get('/for-page', ...readAuth, async (req, res) => {
   const { path } = req.query;
   if (!path) return res.status(400).json({ error: 'path is required' });
   const { rows } = await pool.query(
-    `SELECT id, slug, title, category FROM kb_articles
-     WHERE EXISTS (SELECT 1 FROM unnest(page_paths) p WHERE $1 = p OR $1 LIKE p || '/%')
-     ORDER BY title`,
+    `SELECT id, slug, title, category, p AS matched_path
+     FROM kb_articles, unnest(page_paths) p
+     WHERE $1 = p OR $1 LIKE p || '/%'
+     ORDER BY (p = $1) DESC, length(p) DESC, title`,
     [path]
   );
   res.json(rows);

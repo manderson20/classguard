@@ -52,7 +52,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.38';
+const VERSION = '0.7.39';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -229,18 +229,29 @@ function ContextualHelpButton({ navigate }) {
     staleTime: 60_000,
   });
 
+  // The API already orders matches most-specific-first (exact path match,
+  // then longest matching prefix) -- so the first result is always the
+  // right one to jump to directly, even when a broader article (e.g.
+  // Dashboard's bare '/admin') also technically matches as a prefix.
   const go = () => {
-    if (matches.length === 1) navigate(`/help/${matches[0].slug}`);
+    if (matches.length) navigate(`/help/${matches[0].slug}`);
     else navigate('/help');
   };
+
+  // A bare icon is too easy to miss/mistake for a generic widget (chat,
+  // support bubble, etc.) — show the actual article title as a label
+  // whenever this page has a linked guide, so the link to it is
+  // unmistakable, not just discoverable if you already know to look.
+  const label = matches.length ? matches[0].title : 'Help Center';
 
   return (
     <button
       onClick={go}
-      title={matches.length === 1 ? `Help: ${matches[0].title}` : 'Help Center'}
-      className="fixed bottom-5 right-5 z-40 w-11 h-11 rounded-full bg-slate-800 text-white shadow-lg flex items-center justify-center hover:bg-slate-700"
+      title={matches.length ? `Help: ${matches[0].title}` : 'Help Center'}
+      className="fixed bottom-5 right-5 z-40 h-11 pl-3 pr-4 rounded-full bg-slate-800 text-white shadow-lg flex items-center gap-2 hover:bg-slate-700 max-w-[260px]"
     >
-      <MdiIcon path={mdiHelpCircleOutline} size="1.3em" />
+      <MdiIcon path={mdiHelpCircleOutline} size="1.3em" className="flex-shrink-0" />
+      <span className="text-sm font-medium truncate">{label}</span>
     </button>
   );
 }
