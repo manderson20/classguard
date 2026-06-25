@@ -238,14 +238,22 @@ if ! docker compose up -d --wait postgres redis; then
 fi
 info "PostgreSQL is ready"
 
-info "Running database migrations..."
-docker compose run --rm migrate
+NODE_ROLE_CURRENT=$(grep '^NODE_ROLE=' .env | cut -d= -f2-)
+
+# Standbys have a read-only streaming replica — migrations would fail with
+# "cannot execute ... on a read-only transaction". Schema is already in sync
+# via replication from the primary; skip migrations here.
+if [[ "$NODE_ROLE_CURRENT" == "standby" ]]; then
+  info "NODE_ROLE=standby — skipping migrations (replica is read-only, schema synced via replication)"
+else
+  info "Running database migrations..."
+  docker compose run --rm migrate
+fi
 
 info "Starting remaining services..."
 # A standby's Postgres (and Kea's own database, replicated along with it) is
 # read-only, so Kea would just crash-loop trying to write leases there —
 # only bring up the services that are actually safe/useful on a standby.
-NODE_ROLE_CURRENT=$(grep '^NODE_ROLE=' .env | cut -d= -f2-)
 if [[ "$NODE_ROLE_CURRENT" == "standby" ]]; then
   info "NODE_ROLE=standby — starting redis/api/dns/frontend only (skipping kea)"
   docker compose up -d redis api dns frontend
