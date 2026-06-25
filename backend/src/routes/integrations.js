@@ -7,7 +7,6 @@ const zammad  = require('../services/zammad');
 const mosyle  = require('../services/mosyle');
 const snipeit = require('../services/snipeit');
 const google  = require('../services/google');
-const phpipam = require('../services/phpipam');
 const { getUnifiedDevices } = require('../services/deviceConsolidation');
 
 const auth = [authenticate, requirePermission('integrations')];
@@ -25,7 +24,6 @@ router.get('/status', ...auth, async (req, res) => {
          'zammad_url','zammad_token',
          'mosyle_access_token','mosyle_email','mosyle_password',
          'snipeit_url','snipeit_token','snipeit_client_id','snipeit_client_secret',
-         'phpipam_url','phpipam_app_id',
          'last_mosyle_sync','last_snipeit_sync','last_zammad_sync','last_google_sync',
          'last_mosyle_error','last_snipeit_error','last_zammad_error','last_google_error',
          'last_google_devices_sync','last_google_devices_error',
@@ -54,7 +52,6 @@ router.get('/status', ...auth, async (req, res) => {
     snipeit:  { configured: !!(cfg.snipeit_url && (cfg.snipeit_token || (cfg.snipeit_client_id && cfg.snipeit_client_secret))), lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0 },
     google:   { configured: googleSyncConfigured, lastSync: cfg.last_google_sync || null, lastError: cfg.last_google_error || null },
     googleDevices: { configured: googleSyncConfigured, lastSync: cfg.last_google_devices_sync || null, lastError: cfg.last_google_devices_error || null, deviceCount: deviceCount.google_admin ?? 0 },
-    phpipam:  { configured: !!(cfg.phpipam_url && cfg.phpipam_app_id) },
   });
 });
 
@@ -258,30 +255,6 @@ router.post('/sync/tickets', ...auth, async (req, res) => {
      ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
     [new Date().toISOString()]
   ).then(() => count)));
-});
-
-// ---------------------------------------------------------------------------
-// PHPiPAM import
-// ---------------------------------------------------------------------------
-
-// POST /api/v1/integrations/phpipam/import  — async full import
-router.post('/phpipam/import', ...auth, async (req, res) => {
-  res.json({ status: 'started', message: 'PHPiPAM import running in background' });
-  phpipam.runImport(msg => console.log('[phpipam]', msg))
-    .catch(err => console.error('[phpipam] import failed:', err.message));
-});
-
-// POST /api/v1/integrations/phpipam/test  — test connection (call after saving settings)
-// Note: never respond 401 here — that status code makes the frontend's fetch
-// wrapper treat it as "your ClassGuard session expired" and force a logout/
-// redirect, masking whatever PHPiPAM-side error actually occurred.
-router.post('/phpipam/test', ...auth, async (req, res) => {
-  try {
-    await phpipam.testConnection();
-    res.json({ ok: true, message: 'PHPiPAM connection successful' });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
 });
 
 module.exports = router;

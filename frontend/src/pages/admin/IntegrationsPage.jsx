@@ -1425,79 +1425,126 @@ function SnipeitSection({ status }) {
 }
 
 // ---------------------------------------------------------------------------
-// PHPiPAM migration wizard
+// IPAM Import — one-time PHPiPAM dump import
 // ---------------------------------------------------------------------------
-function PhpipamSection() {
-  const [step, setStep]     = useState('config');
-  const [log, setLog]       = useState([]);
-  const [running, setRunning] = useState(false);
-  const [form, setForm]     = useState({
-    phpipam_url:'', phpipam_app_id:'', phpipam_username:'', phpipam_password:'',
-    phpipam_verify_ssl:'true', phpipam_auth_mode:'user_token', phpipam_app_code:'',
-  });
+function IpamImportSection() {
+  const [file, setFile]           = useState(null);
+  const [sqlText, setSqlText]     = useState(null);
+  const [preview, setPreview]     = useState(null);
+  const [busy, setBusy]           = useState(false);
+  const [error, setError]         = useState('');
+  const [committed, setCommitted] = useState(null);
 
-  const test = async () => {
+  function onFile(e) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setFile(f);
+    setPreview(null);
+    setError('');
+    setCommitted(null);
+    const reader = new FileReader();
+    reader.onload = ev => setSqlText(ev.target.result);
+    reader.readAsText(f);
+  }
+
+  async function runPreview() {
+    setBusy(true); setError('');
     try {
-      await api.put('/settings', form);
-      const res = await api.post('/integrations/phpipam/test');
-      alert(res.message || 'Connection successful');
-    } catch(e) { alert('Failed: ' + (e.message || 'unknown')); }
-  };
+      setPreview(await api.post('/ipam/import/phpipam-dump?commit=false', { sql: sqlText }));
+    } catch (e) {
+      setError(e.message || 'Preview failed');
+    } finally { setBusy(false); }
+  }
 
-  const run = async () => {
-    setRunning(true);
-    setLog(['Starting migration…']);
-    setStep('log');
-    await api.put('/settings', form);
+  async function doCommit() {
+    if (!confirm('This will create the sections, VLANs, subnets, and addresses shown in the preview. Continue?')) return;
+    setBusy(true); setError('');
     try {
-      await api.post('/integrations/phpipam/import');
-      setLog(l=>[...l, 'Migration triggered — check server logs for progress.']);
-    } catch(e) {
-      setLog(l=>[...l, 'Error: ' + e.message]);
-    }
-    setRunning(false);
-  };
+      setCommitted(await api.post('/ipam/import/phpipam-dump?commit=true', { sql: sqlText }));
+    } catch (e) {
+      setError(e.message || 'Import failed');
+    } finally { setBusy(false); }
+  }
 
-  if (step==='log') return (
-    <div>
-      <div className="bg-slate-900 text-green-400 font-mono text-xs rounded-lg p-4 h-40 overflow-y-auto">
-        {log.map((l,i)=><div key={i}>{l}</div>)}
-      </div>
-      <p className="text-xs text-slate-500 mt-2">The import runs in the background on the server. You can leave this page.</p>
-    </div>
-  );
+  const c = (committed || preview)?.counts;
 
   return (
-    <div className="flex flex-col gap-3">
-      <p className="text-sm text-slate-600">Import sections, VRFs, VLANs, subnets, and IP assignments from PHPiPAM.</p>
-      {[['PHPiPAM URL','phpipam_url','url'],['App ID','phpipam_app_id','text']].map(([l,k,t])=>(
-        <Field key={k} label={l}><input type={t} className={INPUT} value={form[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}/></Field>
-      ))}
-      <Field label="Auth Method" hint="Must match the App security mode set for this app in PHPiPAM (Administration → API)">
-        <select className={INPUT} value={form.phpipam_auth_mode}
-          onChange={e=>setForm(f=>({...f,phpipam_auth_mode:e.target.value}))}>
-          <option value="user_token">User token (username + password)</option>
-          <option value="app_code">App code (static token)</option>
-        </select>
-      </Field>
-      {form.phpipam_auth_mode === 'app_code' ? (
-        <Field label="App Code" hint="The App Code shown for this app in PHPiPAM, not your account password">
-          <input type="password" className={INPUT} value={form.phpipam_app_code}
-            onChange={e=>setForm(f=>({...f,phpipam_app_code:e.target.value}))}/>
-        </Field>
-      ) : (
-        <>
-          <Field label="Username"><input className={INPUT} value={form.phpipam_username} onChange={e=>setForm(f=>({...f,phpipam_username:e.target.value}))}/></Field>
-          <Field label="Password"><input type="password" className={INPUT} value={form.phpipam_password} onChange={e=>setForm(f=>({...f,phpipam_password:e.target.value}))}/></Field>
-        </>
+    <div className="flex flex-col gap-4 max-w-2xl">
+      <p className="text-sm text-slate-600">
+        Upload a PHPiPAM <code className="bg-slate-100 px-1 rounded font-mono text-xs">mysqldump</code> .sql export.
+        Sections, VLANs, subnets, and IP addresses are mapped directly — no manual CSV editing needed.
+        PHPiPAM "folder" subnets (organisational labels with no real CIDR) are skipped; their child subnets
+        attach to the section directly instead.
+      </p>
+      <div className="bg-amber-50 border border-amber-200 rounded-lg px-4 py-3 text-sm text-amber-800">
+        This is a one-time migration tool. Run it once on a fresh ClassGuard IPAM to seed it from your old PHPiPAM database.
+        Importing a second time may create duplicates.
+      </div>
+
+      {!committed && (
+        <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-8 cursor-pointer hover:border-primary-400 transition-colors">
+          <span className="text-sm font-medium text-slate-600">
+            {file ? file.name : 'Click to upload PHPiPAM .sql dump'}
+          </span>
+          <span className="text-xs text-slate-400 mt-1">Accepts .sql or .txt files</span>
+          <input type="file" accept=".sql,.txt" className="hidden" onChange={onFile} />
+        </label>
       )}
-      <Field label="Verify SSL certificate" hint="Turn off if your PHPiPAM uses a self-signed cert on the LAN">
-        <input type="checkbox" checked={form.phpipam_verify_ssl==='true'}
-          onChange={e=>setForm(f=>({...f,phpipam_verify_ssl: e.target.checked ? 'true' : 'false'}))}/>
-      </Field>
-      <div className="flex gap-2 mt-2">
-        <button onClick={test} className="btn-secondary text-sm">Test Connection</button>
-        <button onClick={run} disabled={running} className="btn-primary text-sm">Start Import</button>
+
+      {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-lg p-3">{error}</div>}
+
+      {c && (
+        <div className={`rounded-lg p-4 border ${committed ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
+          <p className="text-sm font-semibold text-slate-800 mb-2">
+            {committed ? 'Import complete' : 'Preview — nothing has been saved yet'}
+          </p>
+          <div className="grid grid-cols-2 gap-2 text-sm text-slate-700">
+            <div>Sections: <strong>{c.sections}</strong></div>
+            <div>VLANs: <strong>{c.vlans}</strong>{c.vlansSkippedDuplicate > 0 && <span className="text-slate-400"> ({c.vlansSkippedDuplicate} merged)</span>}</div>
+            <div>Subnets: <strong>{c.subnets}</strong>{c.subnetsSkippedFolder > 0 && <span className="text-slate-400"> ({c.subnetsSkippedFolder} folders skipped)</span>}</div>
+            <div>Addresses: <strong>{c.addresses}</strong>{c.addressesSkipped > 0 && <span className="text-slate-400"> ({c.addressesSkipped} skipped)</span>}</div>
+          </div>
+          {(preview || committed).warnings?.length > 0 && (
+            <div className="mt-3">
+              <p className="text-xs font-semibold text-amber-700 mb-1">{(preview || committed).warnings.length} note(s):</p>
+              <ul className="space-y-0.5 max-h-32 overflow-y-auto">
+                {(preview || committed).warnings.slice(0, 10).map((w, i) => (
+                  <li key={i} className="text-xs text-amber-600 font-mono">{w}</li>
+                ))}
+                {(preview || committed).warnings.length > 10 && (
+                  <li className="text-xs text-amber-400">…and {(preview || committed).warnings.length - 10} more</li>
+                )}
+              </ul>
+            </div>
+          )}
+          {!committed && preview.sample?.subnets?.length > 0 && (
+            <div className="mt-3">
+              <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Sample subnets</p>
+              <ul className="text-xs font-mono text-slate-600 space-y-0.5">
+                {preview.sample.subnets.map((s, i) => <li key={i}>{s.subnet}{s.description && ` — ${s.description}`}</li>)}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="flex gap-2">
+        {!committed && (
+          <button onClick={runPreview} disabled={!sqlText || busy} className="btn btn-secondary text-sm">
+            {busy && !preview ? 'Previewing…' : 'Preview'}
+          </button>
+        )}
+        {!committed && preview && (
+          <button onClick={doCommit} disabled={busy} className="btn btn-primary text-sm">
+            {busy ? 'Importing…' : 'Confirm Import'}
+          </button>
+        )}
+        {committed && (
+          <button onClick={() => { setFile(null); setSqlText(null); setPreview(null); setCommitted(null); }}
+            className="btn btn-secondary text-sm">
+            Import another file
+          </button>
+        )}
       </div>
     </div>
   );
@@ -1537,7 +1584,7 @@ function AllDevicesTab() {
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Overview','All Devices','Google Workspace','Mosyle','Snipe-IT','Zammad','PHPiPAM Migration'];
+const TABS = ['Overview','All Devices','Google Workspace','Mosyle','Snipe-IT','Zammad','IPAM Import'];
 
 export default function IntegrationsPage() {
   const [tab, setTab] = useState('Overview');
@@ -1604,8 +1651,8 @@ export default function IntegrationsPage() {
               </Card>
             );
           })}
-          <Card title="PHPiPAM Migration" icon="🔄" subtitle="One-time import from your existing PHPiPAM instance">
-            <p className="text-sm text-slate-600">Import IP address database, subnets, and VLANs into ClassGuard IPAM.</p>
+          <Card title="IPAM Import" icon="📥" subtitle="One-time import from PHPiPAM">
+            <p className="text-sm text-slate-600">Seed ClassGuard IPAM from a PHPiPAM mysqldump export — sections, VLANs, subnets, and IP addresses.</p>
           </Card>
         </div>
       )}
@@ -1615,7 +1662,7 @@ export default function IntegrationsPage() {
       {tab==='Mosyle'             && <MosyleSection status={status}/>}
       {tab==='Snipe-IT'           && <SnipeitSection status={status}/>}
       {tab==='Zammad'             && <ZammadSection status={status}/>}
-      {tab==='PHPiPAM Migration'  && <PhpipamSection/>}
+      {tab==='IPAM Import'        && <IpamImportSection/>}
     </div>
   );
 }

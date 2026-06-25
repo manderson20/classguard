@@ -928,134 +928,6 @@ function ImportModal({ onClose, onDone }) {
 }
 
 // ---------------------------------------------------------------------------
-// PHPiPAM mysqldump import — preview (server runs the real INSERTs in a
-// transaction and rolls back) before a separate, explicit commit step.
-// ---------------------------------------------------------------------------
-function PhpipamDumpImportModal({ onClose, onCommitted }) {
-  const [file, setFile]       = useState(null);
-  const [sqlText, setSqlText] = useState(null);
-  const [preview, setPreview] = useState(null);
-  const [busy, setBusy]       = useState(false);
-  const [error, setError]     = useState('');
-  const [committed, setCommitted] = useState(null);
-
-  function onFile(e) {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setFile(f);
-    setPreview(null);
-    setError('');
-    setCommitted(null);
-    const reader = new FileReader();
-    reader.onload = ev => setSqlText(ev.target.result);
-    reader.readAsText(f);
-  }
-
-  async function runPreview() {
-    setBusy(true);
-    setError('');
-    try {
-      const res = await api.post('/ipam/import/phpipam-dump?commit=false', { sql: sqlText });
-      setPreview(res);
-    } catch (e) {
-      setError(e.message || 'Preview failed');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function doCommit() {
-    if (!confirm('This will create the sections, VLANs, subnets, and addresses shown in the preview. Continue?')) return;
-    setBusy(true);
-    setError('');
-    try {
-      const res = await api.post('/ipam/import/phpipam-dump?commit=true', { sql: sqlText });
-      setCommitted(res);
-      onCommitted();
-    } catch (e) {
-      setError(e.message || 'Import failed');
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  const c = (committed || preview)?.counts;
-
-  return (
-    <Modal title="Import PHPiPAM Database Dump" onClose={onClose} wide>
-      <div className="flex flex-col gap-4">
-        <p className="text-sm text-slate-600">
-          Upload a PHPiPAM <code className="bg-slate-100 px-1 rounded font-mono">mysqldump</code> .sql export.
-          Sections, VLANs, subnets, and IP addresses are mapped directly from the dump's tables — no manual
-          CSV editing needed. PHPiPAM "folder" subnets (organizational labels with no real CIDR) are skipped;
-          their real child subnets attach to the section directly instead.
-        </p>
-
-        {!committed && (
-          <label className="flex flex-col items-center justify-center border-2 border-dashed border-slate-300 rounded-xl p-8 cursor-pointer hover:border-primary-400 transition-colors">
-            <span className="text-sm font-medium text-slate-600">
-              {file ? file.name : 'Click to upload PHPiPAM .sql dump'}
-            </span>
-            <input type="file" accept=".sql,.txt" className="hidden" onChange={onFile} />
-          </label>
-        )}
-
-        {error && <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded p-2">{error}</div>}
-
-        {c && (
-          <div className={`rounded-lg p-4 border ${committed ? 'bg-green-50 border-green-200' : 'bg-blue-50 border-blue-200'}`}>
-            <p className="text-sm font-semibold text-slate-800 mb-2">
-              {committed ? 'Import complete' : 'Preview — nothing has been saved yet'}
-            </p>
-            <div className="grid grid-cols-2 gap-2 text-sm text-slate-700">
-              <div>Sections: <strong>{c.sections}</strong></div>
-              <div>VLANs: <strong>{c.vlans}</strong>{c.vlansSkippedDuplicate > 0 && <span className="text-slate-400"> ({c.vlansSkippedDuplicate} merged)</span>}</div>
-              <div>Subnets: <strong>{c.subnets}</strong>{c.subnetsSkippedFolder > 0 && <span className="text-slate-400"> ({c.subnetsSkippedFolder} folders skipped)</span>}</div>
-              <div>Addresses: <strong>{c.addresses}</strong>{c.addressesSkipped > 0 && <span className="text-slate-400"> ({c.addressesSkipped} skipped)</span>}</div>
-            </div>
-            {(preview || committed).warnings?.length > 0 && (
-              <div className="mt-3">
-                <p className="text-xs font-semibold text-amber-700 mb-1">{(preview || committed).warnings.length} note(s):</p>
-                <ul className="space-y-0.5 max-h-32 overflow-y-auto">
-                  {(preview || committed).warnings.slice(0, 10).map((w, i) => (
-                    <li key={i} className="text-xs text-amber-600 font-mono">{w}</li>
-                  ))}
-                  {(preview || committed).warnings.length > 10 && (
-                    <li className="text-xs text-amber-400">…and {(preview || committed).warnings.length - 10} more</li>
-                  )}
-                </ul>
-              </div>
-            )}
-            {!committed && preview.sample.subnets.length > 0 && (
-              <div className="mt-3">
-                <p className="text-xs font-semibold text-slate-500 uppercase mb-1">Sample subnets</p>
-                <ul className="text-xs font-mono text-slate-600 space-y-0.5">
-                  {preview.sample.subnets.map((s, i) => <li key={i}>{s.subnet} {s.description && `— ${s.description}`}</li>)}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-
-      <div className="flex justify-end gap-2 mt-4">
-        <button onClick={onClose} className="btn-secondary text-sm">{committed ? 'Close' : 'Cancel'}</button>
-        {!committed && (
-          <button onClick={runPreview} disabled={!sqlText || busy} className="btn-secondary text-sm">
-            {busy ? 'Previewing…' : 'Preview'}
-          </button>
-        )}
-        {!committed && preview && (
-          <button onClick={doCommit} disabled={busy} className="btn-primary text-sm">
-            {busy ? 'Importing…' : 'Confirm Import'}
-          </button>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Tree building helpers
 // ---------------------------------------------------------------------------
 function buildTree(flat) {
@@ -1228,7 +1100,6 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
   const [form, setForm]             = useState(EMPTY_SUBNET);
   const [ipvFilter, setIpv]         = useState('');
   const [importOpen, setImport]     = useState(false);
-  const [dumpImportOpen, setDumpImportOpen] = useState(false);
   const [splitTarget, setSplit]     = useState(null);
   const [collapsed, setCollapsed]   = useState(new Set()); // nodes NOT in set are expanded
   const [syncResult, setSyncResult] = useState(null);
@@ -1302,7 +1173,6 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
         <div className="flex gap-2 ml-auto flex-wrap">
           <button className="btn-secondary text-sm" onClick={exportSubnets}>Export CSV</button>
           <button className="btn-secondary text-sm" onClick={() => setImport(true)}>Import CSV</button>
-          <button className="btn-secondary text-sm" onClick={() => setDumpImportOpen(true)}>Import PHPiPAM Dump</button>
           <button
             className="btn-secondary text-sm"
             onClick={() => syncControllers.mutate()}
@@ -1536,16 +1406,6 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
         <AuditModal subnet={auditTarget} onClose={() => setAuditTarget(null)} />
       )}
 
-      {dumpImportOpen && (
-        <PhpipamDumpImportModal
-          onClose={() => setDumpImportOpen(false)}
-          onCommitted={() => {
-            qc.invalidateQueries({ queryKey: ['ipam-subnets'] });
-            qc.invalidateQueries({ queryKey: ['vlans'] });
-            qc.invalidateQueries({ queryKey: ['ipam-sections'] });
-          }}
-        />
-      )}
     </>
   );
 }
