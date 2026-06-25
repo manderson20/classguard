@@ -873,7 +873,7 @@ function GoogleLdapSection() {
             <div className="flex items-end gap-2 flex-wrap">
               <Field label="Email">
                 <input className={INPUT} value={testUser} onChange={e=>setTestUser(e.target.value)}
-                  placeholder="student@students.brookfieldr3.org" style={{minWidth: 260}}/>
+                  placeholder="student@students.yourdistrict.org" style={{minWidth: 260}}/>
               </Field>
               <Field label="Password">
                 <input type="password" className={INPUT} value={testPass} onChange={e=>setTestPass(e.target.value)} style={{minWidth: 160}}/>
