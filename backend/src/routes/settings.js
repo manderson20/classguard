@@ -131,6 +131,39 @@ router.put('/safety-alert-recipients', ...safetyAlertsAuth, async (req, res) => 
   res.json({ saved: ['safety_alert_emails'] });
 });
 
+// Active-hours window for Filter Bypass detection (services/
+// filterBypassDetection.js) — same permission as the recipients above,
+// same reasoning: this gates a safety-alerting behavior, not core server
+// config, so it shouldn't ride on the blanket 'settings' permission.
+const FILTER_BYPASS_KEYS = ['filter_bypass_active_start', 'filter_bypass_active_end', 'filter_bypass_active_days'];
+
+router.get('/filter-bypass-hours', ...safetyAlertsAuth, async (req, res) => {
+  const { rows } = await pool.query(`SELECT key, value FROM settings WHERE key = ANY($1)`, [FILTER_BYPASS_KEYS]);
+  const cfg = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  res.json({
+    start: cfg.filter_bypass_active_start || '07:00',
+    end:   cfg.filter_bypass_active_end   || '16:00',
+    days:  cfg.filter_bypass_active_days  || '1,2,3,4,5',
+  });
+});
+
+router.put('/filter-bypass-hours', ...safetyAlertsAuth, async (req, res) => {
+  const { start, end, days } = req.body;
+  if (!start || !end || !days) return res.status(400).json({ error: 'start, end, and days are all required' });
+  for (const [key, value] of [
+    ['filter_bypass_active_start', start],
+    ['filter_bypass_active_end', end],
+    ['filter_bypass_active_days', days],
+  ]) {
+    await pool.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+      [key, String(value)]
+    );
+  }
+  res.json({ saved: FILTER_BYPASS_KEYS });
+});
+
 // POST /api/v1/settings/smtp/test — sends a real test email to an address
 // the admin types in, so the mail relay itself can be verified right after
 // configuring it, independent of any feature's recipient list (Safety

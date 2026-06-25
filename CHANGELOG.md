@@ -18,6 +18,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.37] - 2026-06-25
+
+### Added
+- **Filter Bypass Alerts.** Detects a Chromebook connected to school WiFi (confirmed via the existing UniFi network-controller integration, independent of the Chrome extension) that's generating zero DNS queries through ClassGuard's own resolver — the signature of a student having switched DNS servers, tunneled, or otherwise routed around the content filter entirely. DNS attribution is by source IP (`dns-engine/src/resolver.js`), not anything the extension reports, so this still works even if the extension itself has been disabled. Requires two consecutive detections (~15 min apart) before actually alerting, to rule out a device that just connected. New "Filter Bypass Alerts" page + red staff-wide banner + email (same `safety_alert_emails` audience as other safety alerts, since a circumvented filter is a student-safety concern, not infra) + scheduled check every 15 minutes.
+- Scoped down significantly after testing against real data surfaced two false-positive sources, both now excluded automatically: (1) **shared/kiosk/cart accounts** — verified live that one enrollment account was "assigned" 1,729 devices; any assigned-email mapping to more than one device is excluded, since a real student always has exactly one Chromebook and kiosks never generate normal browsing traffic to begin with; (2) **staff devices and non-WiFi devices** — only flags accounts with `role = 'student'`, and a device that isn't currently on school WiFi at all is never checked (there's no way to observe a bypass on a network we never see traffic from). Also added a configurable **active-hours window** (default weekdays 7am–4pm, editable from the page) so a Chromebook idle overnight or over a weekend doesn't get flagged — there's no per-student bell-schedule period awareness yet since no real period data exists yet to drive that, this is a simple global window instead.
+
+### Notes
+- An earlier draft of this feature briefly (and accidentally) disabled its own active-hours safety gate on the live system while being tested — caught and reverted immediately, no alerts fired during the window it was open. No production data was lost or corrupted.
+
+---
+
 ## [0.7.36] - 2026-06-24
 
 ### Added

@@ -47,4 +47,20 @@ async function sendSafetyAlert({ studentName, category, riskScore, url, screensh
   return sendMail({ to: recipients.join(','), subject, text });
 }
 
-module.exports = { sendMail, sendSafetyAlert, getSmtpSettings };
+async function sendFilterBypassAlert({ studentName, deviceName, ipAddress }) {
+  const cfg = await getSmtpSettings();
+  const recipients = (cfg.safety_alert_emails || '')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  if (!recipients.length || !cfg.smtp_host) return { sent: false, reason: 'no recipients or SMTP not configured' };
+
+  const subject = `[ClassGuard] Possible filter bypass — ${studentName || 'a student'}`;
+  const text =
+    `${studentName || 'A student'}'s Chromebook has been connected to school WiFi for several minutes ` +
+    `but has generated no web traffic through ClassGuard's filter (IP ${ipAddress}, device ${deviceName || 'unknown'}).\n\n` +
+    `This usually means the filter has been circumvented — a different DNS server, a VPN, or similar. ` +
+    `Review it now in ClassGuard under Filter Bypass Alerts.`;
+
+  return sendMail({ to: recipients.join(','), subject, text });
+}
+
+module.exports = { sendMail, sendSafetyAlert, sendFilterBypassAlert, getSmtpSettings };

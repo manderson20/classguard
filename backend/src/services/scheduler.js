@@ -8,6 +8,7 @@ const { syncNetworkClientsToIpam } = require('./ipamSync');
 const { syncAll: syncCategories, classifyRecentDomains } = require('./categoryImport');
 const acmeTls   = require('./acmeTls');
 const securityScan = require('./securityScan');
+const filterBypassDetection = require('./filterBypassDetection');
 const pingScan  = require('./pingScan');
 const dhcpDnsAutoRegister = require('./dhcpDnsAutoRegister');
 const dhcpKeaSync = require('./dhcpKeaSync');
@@ -414,6 +415,11 @@ function startScheduler() {
   // cross-reference, see services/securityScan.js)
   cron.schedule('30 5 * * *', () => {
     securityScan.runScan().catch(err => console.error('[scheduler] security scan error:', err.message));
+  });
+
+  // Filter bypass detection — every 15 minutes, see services/filterBypassDetection.js
+  cron.schedule('*/15 * * * *', () => {
+    filterBypassDetection.runDetection().catch(err => console.error('[scheduler] filter-bypass detection error:', err.message));
   });
 
   // Presence (ping) scan — every 10 minutes, subnets with scan_enabled=true
