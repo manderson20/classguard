@@ -18,6 +18,19 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.44] - 2026-06-25
+
+### Added
+- **HA join encryption (ECDH)** — joining node generates an ephemeral P-256 keypair and sends its public key with the join request; primary encrypts `JWT_SECRET`, `EXTENSION_SIGNING_KEY`, and replication credentials with AES-256-GCM before responding. Passive network capture of the join exchange cannot recover credentials.
+- **Postgres SSL replication** — `install.sh` generates a self-signed TLS certificate for the Postgres container on first run and sets `ssl = on`; existing standby connections upgrade automatically via `sslmode=prefer`; new standby joins use `PGSSLMODE=require` so the initial pg_basebackup and ongoing streaming replication are always encrypted (TLSv1.3).
+- **pg_hba auto-management** — `infrastructure/postgres/pg_hba.conf` is now a bind-mounted, version-controlled file managed by the API. When a standby joins requesting replication, the API appends its `hostssl replication` entry and reloads Postgres config automatically. When a node is removed from the cluster, the entry is cleaned up. No more manual pg_hba edits for new standbys.
+
+### Fixed
+- **Google SSO (`ERR_STREAM_PREMATURE_CLOSE`)** — gaxios 6.x passes its full options object to the native `fetch()` call, triggering a premature-close error on the Google OAuth token exchange. The `/google` auth route now performs the token exchange with a direct `fetch()` call; `OAuth2Client` is retained only for `verifyIdToken()`.
+- **`NODE_ID` default** — `install.sh`'s generated `.env` now uses `NODE_ID=$(hostname)` instead of hardcoded `node1`, so every fresh install gets a unique cluster identity without manual patching.
+
+---
+
 ## [0.7.43] - 2026-06-25
 
 ### Added

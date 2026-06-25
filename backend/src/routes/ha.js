@@ -2,6 +2,8 @@ const express  = require('express');
 const router   = express.Router();
 const axios    = require('axios');
 const crypto   = require('crypto');
+const fs       = require('fs');
+const path     = require('path');
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
@@ -55,6 +57,73 @@ function ecdhDecrypt(enc, myEcdh) {
   decipher.setAuthTag(Buffer.from(enc.tag, 'base64'));
   const pt = Buffer.concat([decipher.update(Buffer.from(enc.data, 'base64')), decipher.final()]);
   return JSON.parse(pt.toString('utf8'));
+}
+
+// ---------------------------------------------------------------------------
+// pg_hba replication entry management — called by the join and delete
+// handlers so standby IPs are always reflected in pg_hba.conf and Postgres
+// is reloaded automatically.  No manual pg_hba edits ever needed.
+//
+// The file has two logical sections separated by the CLASSGUARD marker:
+//   1. Static base rules (auth for localhost, app connections) — never touched
+//   2. Dynamic replication entries — one hostssl line per standby IP
+//
+// The API rewrites only the replication section; the base never changes.
+// PostgreSQL 15 doesn't support include_if_exists in pg_hba.conf (added in
+// 16), so both sections live in one file managed here.
+// ---------------------------------------------------------------------------
+const PG_HBA_FILE   = '/app/pg_hba.conf';
+const PG_HBA_MARKER = '# --- CLASSGUARD REPLICATION ENTRIES (auto-managed, do not edit below) ---';
+
+const PG_HBA_BASE = `# ClassGuard PostgreSQL client authentication
+# Managed by ClassGuard — the replication entries at the bottom are
+# updated automatically by the API on node join/delete.
+
+# Unix socket — trust for local tools (pg_isready, psql from containers)
+local   all             all                                     trust
+
+# IPv4/IPv6 localhost — trust (same-host API and migration containers)
+host    all             all             127.0.0.1/32            trust
+host    all             all             ::1/128                 trust
+
+# Local replication — trust (pg_basebackup running on the same host)
+local   replication     all                                     trust
+host    replication     all             127.0.0.1/32            trust
+host    replication     all             ::1/128                 trust
+
+# All other TCP connections require scram-sha-256
+host    all             all             all                     scram-sha-256
+
+${PG_HBA_MARKER}
+`;
+
+function pgHbaUpdateReplication(ip, action) {
+  // Read the current replication lines (below the marker)
+  let existingEntries = [];
+  try {
+    const content  = fs.readFileSync(PG_HBA_FILE, 'utf8');
+    const markerIdx = content.indexOf(PG_HBA_MARKER);
+    if (markerIdx !== -1) {
+      existingEntries = content.slice(markerIdx + PG_HBA_MARKER.length)
+        .split('\n')
+        .filter(l => l.match(/^hostssl\s+replication\s+replicator\s+/));
+    }
+  } catch (_) {}
+
+  // Apply add/remove
+  const entry    = `hostssl replication replicator ${ip}/32 scram-sha-256`;
+  const filtered = existingEntries.filter(l => !l.includes(`replicator ${ip}/32`));
+  const updated  = action === 'add' ? [...filtered, entry] : filtered;
+
+  fs.writeFileSync(PG_HBA_FILE, PG_HBA_BASE + updated.join('\n') + (updated.length ? '\n' : ''));
+}
+
+async function pgHbaReload() {
+  try {
+    await pool.query('SELECT pg_reload_conf()');
+  } catch (err) {
+    console.warn('[ha] pg_reload_conf failed:', err.message);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -636,9 +705,21 @@ router.delete('/nodes/:nodeId', ...auth, async (req, res) => {
   }
   try {
     const { rows } = await pool.query(
-      'DELETE FROM nodes WHERE node_id = $1 RETURNING node_id', [req.params.nodeId]
+      'DELETE FROM nodes WHERE node_id = $1 RETURNING node_id, api_url', [req.params.nodeId]
     );
     if (!rows.length) return res.status(404).json({ error: 'Node not found' });
+
+    // Remove the standby's pg_hba replication entry so it can no longer
+    // connect for replication after being removed from the cluster.
+    const deletedApiUrl = rows[0].api_url;
+    if (deletedApiUrl) {
+      try {
+        const ip = new URL(deletedApiUrl).hostname;
+        pgHbaUpdateReplication(ip, 'remove');
+        await pgHbaReload();
+      } catch (_) {}
+    }
+
     res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -805,9 +886,23 @@ router.post('/join', async (req, res) => {
         host: primaryHost, port: 5432, user: 'replicator', password, slot: slotName,
         appDbPassword: process.env.DB_PASSWORD,
       };
+
+      // Add pg_hba entry for this standby so pg_basebackup and ongoing
+      // streaming replication are allowed through.
+      let joiningIp = null;
+      try { joiningIp = new URL(api_url).hostname; } catch (_) {}
+      if (joiningIp) {
+        pgHbaUpdateReplication(joiningIp, 'add');
+        // Reload happens after COMMIT so the role/slot exist before any
+        // connection attempt from the joining node.
+      }
     }
 
     await client.query('COMMIT');
+
+    // Reload pg_hba outside the transaction — the replicator role and slot
+    // must be committed before Postgres evaluates the new hba rule.
+    if (replication) await pgHbaReload();
     // Every node independently generates its own JWT_SECRET at install time
     // (see install.sh) — with no sync step, a session minted on this primary
     // was never actually valid on the joining node, so the moment VRRP fails
