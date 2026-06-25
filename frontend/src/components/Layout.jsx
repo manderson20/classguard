@@ -45,6 +45,7 @@ import {
   mdiLaptopOff,
   mdiWifiAlert,
   mdiHelpCircleOutline,
+  mdiNetworkOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -52,7 +53,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.39';
+const VERSION = '0.7.40';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -361,6 +362,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/ipam',      icon: mdiIpNetworkOutline,         label: 'IPAM',          permissionKey: 'ipam' },
       { to: '/admin/dhcp',      icon: mdiServerOutline,            label: 'DHCP',          permissionKey: 'dhcp' },
       { to: '/admin/network',   icon: mdiSitemap,                  label: 'Network Infra', permissionKey: 'network' },
+      { to: '/admin/network-tools', icon: mdiNetworkOutline,       label: 'Network Tools', permissionKey: 'network' },
       { to: '/admin/phones',    icon: mdiPhoneOutline,             label: 'Phone System',  permissionKey: 'phones' },
     ],
   },

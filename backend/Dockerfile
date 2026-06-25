@@ -2,7 +2,7 @@
 # whatever's newest in the 20.x line on every rebuild with no diff to review.
 FROM node:20.20.2-alpine
 
-RUN apk add --no-cache fping
+RUN apk add --no-cache fping iputils traceroute
 
 WORKDIR /app
 

@@ -43,6 +43,7 @@ import HaPage          from './pages/admin/HaPage';
 import NtpPage         from './pages/admin/NtpPage';
 import AiPage          from './pages/admin/AiPage';
 import NetworkPage     from './pages/admin/NetworkPage';
+import NetworkToolsPage from './pages/admin/NetworkToolsPage';
 import NetworkDeviceDetail from './pages/admin/NetworkDeviceDetail';
 import SystemHealthPage from './pages/admin/SystemHealthPage';
 import RosterPage          from './pages/admin/RosterPage';
@@ -135,6 +136,7 @@ export default function App() {
           <Route path="/admin/ai"                     element={<AiPage />} />
           <Route path="/admin/network"                element={<NetworkPage />} />
           <Route path="/admin/network/device/:mac"    element={<NetworkDeviceDetail />} />
+          <Route path="/admin/network-tools"           element={<NetworkToolsPage />} />
           <Route path="/admin/roster"                 element={<RosterPage />} />
           <Route path="/admin/radius"                 element={<RadiusPage />} />
           <Route path="/admin/screenshots"            element={<ScreenshotsPage />} />
