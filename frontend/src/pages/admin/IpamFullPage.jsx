@@ -304,13 +304,19 @@ function LocationsTab() {
 }
 
 const DEVICE_TYPES = ['server','workstation','laptop','printer','ap','switch','router','camera','voip','student','staff','tv','other'];
-const EMPTY_IP = { ip: '', hostname: '', mac_address: '', owner: '', device_type: 'other', status: 'used', description: '', notes: '', is_gateway: false, tags: [] };
+const EMPTY_IP = { ip: '', hostname: '', mac_address: '', owner: '', device_type: 'other', status: 'used', description: '', notes: '', is_gateway: false, tags: [], nat_public_ip: '' };
 
 // ---------------------------------------------------------------------------
 // IP form (shared between add + edit)
 // ---------------------------------------------------------------------------
-function IpForm({ form, setForm, isNew, subnetId, error }) {
+function IpForm({ form, setForm, isNew, subnetId, subnetIsPublic, error }) {
   const f = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const { data: publicIps = [] } = useQuery({
+    queryKey: ['ipam-public-ips'],
+    queryFn:  () => api.get('/ipam/public-ips'),
+    enabled:  !isNew && !subnetIsPublic,
+  });
 
   const getNextFree = useCallback(async () => {
     try {
@@ -385,6 +391,37 @@ function IpForm({ form, setForm, isNew, subnetId, error }) {
         <TagInput value={form.tags || []} onChange={v => f('tags', v)} />
       </Field>
 
+      {!isNew && !subnetIsPublic && (
+        <div className="border-t border-slate-200 pt-3 mt-1">
+          <div className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">NAT Mapping</div>
+          {publicIps.length === 0 ? (
+            <p className="text-xs text-slate-400">
+              No public IPs available — mark a subnet as "Public IP space" in its settings first.
+            </p>
+          ) : (
+            <Field label="Paired public IP" hint="auto-creates a static NAT rule in the NAT tab">
+              <select
+                className={SELECT}
+                value={form.nat_public_ip || ''}
+                onChange={e => f('nat_public_ip', e.target.value)}
+              >
+                <option value="">None</option>
+                {publicIps.map(ip => (
+                  <option key={ip.id} value={ip.ip}>
+                    {ip.ip}{ip.hostname ? ` — ${ip.hostname}` : ''}{ip.subnet_name ? ` (${ip.subnet_name})` : ''}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
+          {form.nat_public_ip && (
+            <p className="text-xs text-slate-400 mt-1">
+              A static NAT rule for <span className="font-mono">{form.ip} → {form.nat_public_ip}</span> will be saved automatically.
+            </p>
+          )}
+        </div>
+      )}
+
       {error && (
         <p className="text-red-500 text-xs bg-red-50 border border-red-200 rounded-lg px-3 py-2">
           {error.message || 'Error saving IP'}
@@ -430,15 +467,16 @@ function SubnetIpView({ subnet, onBack }) {
 
   const editIp = useMutation({
     mutationFn: () => api.put(`/ipam/ipam-subnets/${subnet.id}/addresses/${modal.id}`, {
-      hostname:    form.hostname    || null,
-      mac_address: form.mac_address || null,
-      owner:       form.owner       || null,
-      device_type: form.device_type || null,
-      status:      form.status,
-      description: form.description || null,
-      notes:       form.notes       || null,
-      is_gateway:  form.is_gateway,
-      tags:        form.tags        || [],
+      hostname:      form.hostname    || null,
+      mac_address:   form.mac_address || null,
+      owner:         form.owner       || null,
+      device_type:   form.device_type || null,
+      status:        form.status,
+      description:   form.description || null,
+      notes:         form.notes       || null,
+      is_gateway:    form.is_gateway,
+      tags:          form.tags        || [],
+      nat_public_ip: form.nat_public_ip || null,
     }),
     onSuccess: () => { invalidate(); setModal(null); },
   });
@@ -473,7 +511,7 @@ function SubnetIpView({ subnet, onBack }) {
   const usedPct = util.total ? Math.min(100, Math.round((util.used / util.total) * 100)) : 0;
 
   const openAdd  = () => { setForm(EMPTY_IP); setModal('add'); };
-  const openEdit = row => { setForm({ ...row, mac_address: row.mac_address || '', hostname: row.hostname || '', owner: row.owner || '', description: row.description || '', notes: row.notes || '' }); setModal(row); };
+  const openEdit = row => { setForm({ ...row, mac_address: row.mac_address || '', hostname: row.hostname || '', owner: row.owner || '', description: row.description || '', notes: row.notes || '', nat_public_ip: row.nat_public_ip ? String(row.nat_public_ip).split('/')[0] : '' }); setModal(row); };
 
   const counts = {
     all:      data.addresses.length,
@@ -682,6 +720,7 @@ function SubnetIpView({ subnet, onBack }) {
             setForm={setForm}
             isNew={modal === 'add'}
             subnetId={subnet.id}
+            subnetIsPublic={!!subnet.is_public}
             error={addIp.error || editIp.error}
           />
           <div className="flex justify-end gap-2 mt-4">
@@ -1134,7 +1173,7 @@ function SplitModal({ subnet, onClose, onDone }) {
 // ---------------------------------------------------------------------------
 // Subnets tab
 // ---------------------------------------------------------------------------
-const EMPTY_SUBNET = { subnet: '', ip_version: 4, name: '', description: '', gateway: '', notes: '', parent_id: null, dhcp_enabled: false, dhcp_pool_start: '', dhcp_pool_end: '', tags: [], location_id: null };
+const EMPTY_SUBNET = { subnet: '', ip_version: 4, name: '', description: '', gateway: '', notes: '', parent_id: null, is_public: false, dhcp_enabled: false, dhcp_pool_start: '', dhcp_pool_end: '', tags: [], location_id: null };
 
 // ---------------------------------------------------------------------------
 // Audit history modal (per subnet)
@@ -1317,6 +1356,9 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
                         className="font-mono font-semibold text-primary-700 hover:underline text-left">
                         {s.subnet}
                       </button>
+                      {s.is_public && (
+                        <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-semibold ml-1">Public</span>
+                      )}
                       {hasKids && (
                         <span className="text-xs text-slate-400 ml-1 font-normal">({s._children.length})</span>
                       )}
@@ -1427,6 +1469,16 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
           <Field label="Notes">
             <textarea className={INPUT + ' resize-none mt-3'} rows={2} value={form.notes || ''} onChange={e => setF('notes', e.target.value)}/>
           </Field>
+
+          {/* Public IP space flag */}
+          <div className="mt-4 pt-4 border-t border-slate-200">
+            <label className="flex items-center gap-2 cursor-pointer select-none mb-3">
+              <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                checked={!!form.is_public} onChange={e => setF('is_public', e.target.checked)}/>
+              <span className="text-sm font-semibold text-slate-700">Public IP space</span>
+              <span className="text-xs text-slate-400">IPs in this subnet appear in the NAT pairing picker for private IPs</span>
+            </label>
+          </div>
 
           {/* DHCP Scope */}
           <div className="mt-4 pt-4 border-t border-slate-200">
@@ -1773,7 +1825,7 @@ function NatTab() {
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-            <tr>{['Name', 'Type', 'Source', 'Destination', 'Translated Src', 'Translated Dst', 'Proto', 'Active', ''].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+            <tr>{['Name', 'Type', 'Source', 'Destination', 'Translated Src', 'Translated Dst', 'Proto', 'Active', 'IPAM', ''].map(h => <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {rules.map(r => (
@@ -1788,13 +1840,20 @@ function NatTab() {
                 <td className="px-3 py-2">
                   <span className={`w-2 h-2 rounded-full inline-block ${r.is_active ? 'bg-green-400' : 'bg-slate-300'}`} />
                 </td>
+                <td className="px-3 py-2 text-xs text-slate-500">
+                  {r.private_ip ? (
+                    <span title={r.private_ip} className="font-mono">
+                      {r.private_hostname || r.private_ip}
+                    </span>
+                  ) : '—'}
+                </td>
                 <td className="px-3 py-2 text-right space-x-3">
                   <button onClick={() => { setForm(r); setModal(r); }} className="text-xs text-primary-600 hover:underline">Edit</button>
                   <button onClick={() => del.mutate(r.id)} className="text-xs text-red-500 hover:underline">Del</button>
                 </td>
               </tr>
             ))}
-            {!rules.length && <tr><td colSpan={9} className="text-center text-slate-400 py-8">No NAT rules</td></tr>}
+            {!rules.length && <tr><td colSpan={10} className="text-center text-slate-400 py-8">No NAT rules</td></tr>}
           </tbody>
         </table>
       </div>

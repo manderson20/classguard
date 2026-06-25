@@ -747,7 +747,7 @@ router.post('/ipam-subnets', async (req, res) => {
 router.put('/ipam-subnets/:id', async (req, res) => {
   const allowed = ['name','description','section_id','vrf_id','vlan_id','location_id',
                    'parent_id','gateway','dns_servers','tags','notes','is_full','allow_requests',
-                   'dhcp_enabled','dhcp_pool_start','dhcp_pool_end','alert_threshold_pct','scan_enabled'];
+                   'is_public','dhcp_enabled','dhcp_pool_start','dhcp_pool_end','alert_threshold_pct','scan_enabled'];
   const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
   if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
 
@@ -840,7 +840,23 @@ router.get('/nat', async (req, res) => {
   if (is_active !== undefined) { conds.push(`is_active=$${vals.length+1}`); vals.push(is_active === 'true'); }
   const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const { rows } = await query(
-    `SELECT * FROM nat_rules ${where} ORDER BY name`, vals
+    `SELECT nr.*, ia.ip AS private_ip, ia.hostname AS private_hostname
+     FROM nat_rules nr
+     LEFT JOIN ip_addresses ia ON ia.nat_rule_id = nr.id
+     ${where} ORDER BY nr.name`, vals
+  );
+  res.json(rows);
+});
+
+// GET /ipam/public-ips — IPs that belong to subnets marked is_public=true, used
+// by the NAT pairing picker in the IP edit modal.
+router.get('/public-ips', async (req, res) => {
+  const { rows } = await query(
+    `SELECT ia.id, ia.ip, ia.hostname, ia.description, s.subnet, s.name AS subnet_name
+     FROM ip_addresses ia
+     JOIN ipam_subnets s ON s.id = ia.ipam_subnet_id
+     WHERE s.is_public = true
+     ORDER BY ia.ip`
   );
   res.json(rows);
 });
@@ -907,7 +923,10 @@ router.get('/ipam-subnets/:id/addresses', async (req, res) => {
 
   const [{ rows: addresses }, { rows: sub }] = await Promise.all([
     query(
-      `SELECT ia.* FROM ip_addresses ia WHERE ${conds.join(' AND ')} ORDER BY ia.ip`,
+      `SELECT ia.*, nr.translated_src AS nat_public_ip
+       FROM ip_addresses ia
+       LEFT JOIN nat_rules nr ON nr.id = ia.nat_rule_id
+       WHERE ${conds.join(' AND ')} ORDER BY ia.ip`,
       vals
     ),
     query('SELECT subnet, ip_version FROM ipam_subnets WHERE id = $1', [req.params.id]),
@@ -948,8 +967,45 @@ router.post('/ipam-subnets/:id/addresses', async (req, res) => {
 router.put('/ipam-subnets/:id/addresses/:ipId', async (req, res) => {
   const allowed = ['hostname','mac_address','owner','device_type','status','description','notes','is_gateway','ping_status','last_seen','tags'];
   const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
-  if (!fields.length) return res.status(400).json({ error: 'Nothing to update' });
+  const hasNatChange = 'nat_public_ip' in req.body;
+  if (!fields.length && !hasNatChange) return res.status(400).json({ error: 'Nothing to update' });
+
   const { rows: [before] } = await query('SELECT * FROM ip_addresses WHERE id=$1', [req.params.ipId]);
+  if (!before) return res.status(404).json({ error: 'IP not found' });
+
+  let natRuleId = before.nat_rule_id;
+  if (hasNatChange) {
+    const publicIp = req.body.nat_public_ip;
+    if (publicIp) {
+      const privateHost = `${before.ip}/32`;
+      const publicHost  = publicIp.includes('/') ? publicIp : `${publicIp}/32`;
+      const ruleName    = before.hostname ? `${before.hostname} (NAT)` : `${before.ip} → ${publicIp}`;
+      if (natRuleId) {
+        const { rows: [existing] } = await query(
+          `UPDATE nat_rules SET src_prefix=$1, translated_src=$2, name=$3, updated_at=NOW()
+           WHERE id=$4 RETURNING id`,
+          [privateHost, publicHost, ruleName, natRuleId]
+        );
+        if (!existing) natRuleId = null; // rule was deleted manually, fall through to create
+      }
+      if (!natRuleId) {
+        const { rows: [newRule] } = await query(
+          `INSERT INTO nat_rules (name, nat_type, src_prefix, translated_src, is_active, description, created_by)
+           VALUES ($1, 'static', $2, $3, true, 'Auto-created from IPAM pairing', $4) RETURNING id`,
+          [ruleName, privateHost, publicHost, req.user.userId]
+        );
+        natRuleId = newRule.id;
+      }
+    } else {
+      natRuleId = null; // clearing the pairing; keep the NAT rule itself intact
+    }
+    fields.push('nat_rule_id');
+  }
+
+  const allVals = hasNatChange
+    ? [...fields.slice(0, -1).map(f => req.body[f]), natRuleId]
+    : fields.map(f => req.body[f]);
+
   const sets = fields.map((f, i) => `${f}=$${i+3}`).join(', ');
   // Reaching this route means an admin used the Edit modal — claim the row
   // away from the lease-sync job (services/dhcpLeaseIpamSync.js) so a later
@@ -957,7 +1013,7 @@ router.put('/ipam-subnets/:id/addresses/:ipId', async (req, res) => {
   const { rows } = await query(
     `UPDATE ip_addresses SET ${sets}, lease_managed=false, updated_at=NOW()
      WHERE id=$1 AND ipam_subnet_id=$2 RETURNING *`,
-    [req.params.ipId, req.params.id, ...fields.map(f => req.body[f])]
+    [req.params.ipId, req.params.id, ...allVals]
   );
   if (!rows[0]) return res.status(404).json({ error: 'IP not found' });
   audit('ip_addresses', req.params.ipId, 'UPDATE', `Updated ${rows[0].ip}`, before, rows[0], req.user.userId);

@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.43] - 2026-06-25
+
+### Added
+- **IPAM → NAT pairing** — subnets can now be flagged as "Public IP space" (subnet edit modal), causing their IPs to appear in a new "NAT Mapping" picker on any private IP's edit dialog. Selecting a public IP auto-creates a static NAT rule in the NAT tab and keeps it updated as the private IP's hostname changes. The NAT tab gains an "IPAM" column showing which private host each rule is linked to. Public subnets show a green "Public" badge in the Subnets table.
+
+---
+
 ## [0.7.42] - 2026-06-25
 
 ### Added
