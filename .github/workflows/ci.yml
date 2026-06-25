@@ -14,7 +14,10 @@ jobs:
 
     services:
       postgres:
-        image: postgres:15-alpine
+        # Must match docker-compose.yml's actual postgres image -- migration
+        # 003 enables the timescaledb extension (for dns_logs), which plain
+        # postgres:15-alpine doesn't have.
+        image: timescale/timescaledb:2.27.2-pg15
         env:
           POSTGRES_DB: classguard_test
           POSTGRES_USER: classguard
