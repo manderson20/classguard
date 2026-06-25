@@ -18,6 +18,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.40] - 2026-06-25
+
+### Added
+- **Network Tools page** (DNS & Network) — Ping and Traceroute, run with the real binaries directly on whichever node serves the request, plus a "Public IP Address (per node)" card showing what each HA node's own outbound traffic shows up as on the public internet (queried via api.ipify.org). Two nodes behind different upstream NAT can legitimately show different addresses; this also confirms what to allowlist on a vendor's end, or that a failover didn't silently change the apparent source IP.
+- Both tools run via `execFile` (no shell) against a strict hostname/IPv4/IPv6 allowlist, the same pattern already used by the IPAM presence-scanner's `fping` calls — arbitrary input is rejected outright before it ever reaches the `ping`/`traceroute` binaries, not just shell-escaped. Verified live with real injection attempts (`; cat /etc/passwd`, `$(whoami)`, oversized strings) — all rejected with a clear "Invalid host" error rather than reaching a shell.
+- Added `iputils` and `traceroute` to the backend image (Alpine packages); reused the existing `NET_RAW` capability already granted to the API container for `fping`.
+
+---
+
 ## [0.7.39] - 2026-06-25
 
 ### Added
