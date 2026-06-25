@@ -1,6 +1,28 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@theme {
+  /* Primary blue — matches the ClassGuard logo shield/wordmark blue */
+  --color-primary-50:  #eff6ff;
+  --color-primary-100: #dbeafe;
+  --color-primary-200: #bfdbfe;
+  --color-primary-300: #93c5fd;
+  --color-primary-400: #60a5fa;
+  --color-primary-500: #3b82f6;
+  --color-primary-600: #2563eb; /* logo blue */
+  --color-primary-700: #1d4ed8;
+  --color-primary-800: #1e40af;
+  --color-primary-900: #1e3a8a;
+  --color-primary-950: #172554;
+
+  /* Sidebar surface — dark navy, distinct from generic slate */
+  --color-sidebar-bg:          #0f172a; /* main sidebar background */
+  --color-sidebar-hover:       #1e293b; /* hover state */
+  --color-sidebar-active:      #2563eb; /* active/selected (logo blue) */
+  --color-sidebar-border:      #1e293b; /* section dividers */
+  --color-sidebar-text:        #94a3b8; /* default nav text */
+  --color-sidebar-text-hover:  #f1f5f9; /* hover nav text */
+  --color-sidebar-heading:     #475569; /* section label */
+}
 
 @layer base {
   body {
@@ -8,11 +30,16 @@
   }
 }
 
+@utility btn {
+  @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm
+         transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
+}
+
+@utility badge {
+  @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
+}
+
 @layer components {
-  .btn {
-    @apply inline-flex items-center gap-2 px-4 py-2 rounded-lg font-semibold text-sm
-           transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2;
-  }
   .btn-primary {
     @apply btn bg-primary-600 text-white hover:bg-primary-700 focus:ring-primary-500;
   }
@@ -43,9 +70,6 @@
     @apply block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1.5;
   }
 
-  .badge {
-    @apply inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold;
-  }
   .badge-blue   { @apply badge bg-blue-100 text-blue-800; }
   .badge-green  { @apply badge bg-green-100 text-green-800; }
   .badge-yellow { @apply badge bg-yellow-100 text-yellow-800; }
