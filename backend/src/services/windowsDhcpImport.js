@@ -33,7 +33,7 @@ function parseTabFile(text) {
   });
 }
 
-// "Reservations" header line, then "[10.10.1.6] EPSONF5C705.yourdistrict.org"
+// "Reservations" header line, then "[10.10.1.6] PRINTER01.yourdistrict.org"
 function parseReservationsFile(text) {
   const out = [];
   for (const line of text.split(/\r?\n/).map(l => l.trim()).filter(Boolean)) {
