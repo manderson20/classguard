@@ -1,4 +1,4 @@
-import { Routes, Route, Navigate, Outlet } from 'react-router-dom';
+import { Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from './contexts/AuthContext';
 
 // Layout
@@ -8,6 +8,7 @@ import Layout from './components/Layout';
 import Login        from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
 import Setup        from './pages/Setup';
+import SetupWizard  from './pages/SetupWizard';
 
 // Teacher pages
 import Classes      from './pages/Classes';
@@ -69,6 +70,7 @@ const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function RequireAuth({ children, minRole = 'teacher' }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
 
   if (loading) {
     return (
@@ -83,6 +85,11 @@ function RequireAuth({ children, minRole = 'teacher' }) {
     return <Navigate to="/login?error=insufficient_role" replace />;
   }
 
+  // Redirect superadmins through the setup wizard on first login
+  if (user.role === 'superadmin' && !user.wizardComplete && location.pathname !== '/wizard') {
+    return <Navigate to="/wizard" replace />;
+  }
+
   return children;
 }
 
@@ -92,6 +99,9 @@ export default function App() {
       <Route path="/setup"          element={<Setup />} />
       <Route path="/login"         element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
+
+      {/* First-time setup wizard — requires auth but bypasses Layout */}
+      <Route path="/wizard" element={<RequireAuth minRole="superadmin"><SetupWizard /></RequireAuth>} />
 
       {/* Teacher + Admin shared layout */}
       <Route element={<RequireAuth minRole="teacher"><Layout /></RequireAuth>}>

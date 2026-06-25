@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
@@ -380,6 +381,7 @@ const TABS = ['Branding', 'DNS & Retention', 'Monitoring', 'Communications', 'Ab
 
 export default function SettingsPage() {
   const qc = useQueryClient();
+  const navigate = useNavigate();
   const [tab, setTab] = useState('Branding');
 
   const { data: dnsSettings = {}, isLoading: dnsLoading } = useQuery({
@@ -674,6 +676,16 @@ export default function SettingsPage() {
         </Field>
         <Field label="Support">
           <div className="text-sm text-slate-500">Open an issue on GitHub</div>
+        </Field>
+      </Section>
+      <Section title="General">
+        <Field label="Setup Wizard" hint="Re-run the initial configuration wizard to update school info, Google SSO, HTTPS, or safety alert settings.">
+          <button className="btn btn-secondary btn-sm" onClick={async () => {
+            await api.post('/settings', { setup_wizard_complete: 'false' });
+            navigate('/wizard');
+          }}>
+            Re-run Setup Wizard
+          </button>
         </Field>
       </Section>
       </>

@@ -290,8 +290,14 @@ router.get('/me', authenticate, async (req, res) => {
       [req.user.userId]
     );
     if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+
+    const { rows: [wizardRow] } = await query(
+      `SELECT value FROM settings WHERE key = 'setup_wizard_complete'`
+    );
+
     res.json({
       ...rows[0],
+      wizardComplete: wizardRow?.value === 'true',
       // Present only when this token came from POST /impersonation/:id/start
       // (routes/impersonation.js) -- the frontend uses this to show the
       // "viewing as" banner and to know whether there's an admin session to

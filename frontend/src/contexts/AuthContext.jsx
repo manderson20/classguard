@@ -44,6 +44,12 @@ export function AuthProvider({ children }) {
     return profile;
   }, []);
 
+  const refreshUser = useCallback(async () => {
+    const profile = await api.get('/auth/me');
+    setUser(profile);
+    return profile;
+  }, []);
+
   const logout = useCallback(async () => {
     await api.delete('/auth/logout').catch(() => {});
     localStorage.removeItem('cg_token');
@@ -81,7 +87,7 @@ export function AuthProvider({ children }) {
   }, []);
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, startImpersonation, endImpersonation }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, refreshUser, startImpersonation, endImpersonation }}>
       {children}
     </AuthContext.Provider>
   );

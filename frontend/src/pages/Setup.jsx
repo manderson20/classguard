@@ -32,7 +32,7 @@ export default function Setup() {
         fullName: form.fullName,
       });
       await login(token);
-      navigate('/admin/settings', { replace: true });
+      navigate('/wizard', { replace: true });
     } catch (err) {
       setError(err.message || 'Setup failed — check server logs.');
     } finally {
@@ -114,7 +114,7 @@ export default function Setup() {
         </form>
 
         <p className="text-center text-xs text-slate-400 mt-6">
-          After setup you can configure Google Workspace login in Settings.
+          After creating your account you'll be guided through initial configuration.
         </p>
       </div>
     </div>

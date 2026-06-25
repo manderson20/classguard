@@ -61,6 +61,9 @@ const ALLOWED_KEYS = new Set([
   // a safety alert (safety_alert_emails) is a separate, narrower-permissioned
   // concern — see /safety-alert-recipients below.
   'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_password', 'smtp_from',
+  // First-time setup wizard — tracks whether the guided onboarding flow has
+  // been completed so superadmins aren't redirected to it on every login.
+  'setup_wizard_complete',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object
