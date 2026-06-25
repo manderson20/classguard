@@ -51,11 +51,14 @@ if [[ -d .git ]]; then
     # there's no uncommitted local work to lose at this point (checked
     # above), so recover by resetting to whatever origin actually has
     # rather than leaving this node permanently stuck unable to update.
-    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    # Use the upstream tracking ref (not the local branch name) so this
+    # works even when a fresh git-init defaulted to 'master' locally but
+    # the remote uses 'main'.
+    UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "origin/main")
     if ! git pull --ff-only; then
-      warn "Fast-forward pull failed (remote history diverged) -- resetting to origin/$CURRENT_BRANCH"
-      git fetch origin "$CURRENT_BRANCH"
-      git reset --hard "origin/$CURRENT_BRANCH"
+      warn "Fast-forward pull failed (remote history diverged) -- resetting to $UPSTREAM"
+      git fetch origin
+      git reset --hard "$UPSTREAM"
     fi
     AFTER_REV=$(git rev-parse HEAD)
     if [[ "$BEFORE_REV" == "$AFTER_REV" ]]; then
