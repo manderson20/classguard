@@ -171,9 +171,26 @@ router.post('/google', loginLimiter, async (req, res) => {
       });
     }
 
-    const oauthClient = new OAuth2Client(goog.clientId, goog.clientSecret, goog.redirectUri);
-    const { tokens }  = await oauthClient.getToken(code);
-    oauthClient.setCredentials(tokens);
+    // Exchange the authorization code for tokens using fetch directly.
+    // gaxios 6.x (used by google-auth-library's getToken()) passes its full
+    // options object to the native fetch, which triggers ERR_STREAM_PREMATURE_CLOSE
+    // on the response body read. Native fetch to the same endpoint works fine.
+    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        code,
+        client_id:     goog.clientId,
+        client_secret: goog.clientSecret,
+        redirect_uri:  goog.redirectUri,
+        grant_type:    'authorization_code',
+      }),
+    });
+    const tokens = await tokenRes.json();
+    if (tokens.error) throw new Error(tokens.error_description || tokens.error);
+
+    // Use OAuth2Client only for verifyIdToken (fetches Google's public keys via GET — unaffected by the gaxios bug)
+    const oauthClient = new OAuth2Client(goog.clientId);
 
     const ticket = await oauthClient.verifyIdToken({
       idToken:  tokens.id_token,
