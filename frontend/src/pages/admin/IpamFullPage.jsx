@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
@@ -438,18 +438,23 @@ function SubnetIpView({ subnet, onBack }) {
   const qc = useQueryClient();
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch]             = useState('');
+  const [page, setPage]                 = useState(1);
   const [modal, setModal]               = useState(null); // null | 'add' | {ip record}
   const [form, setForm]                 = useState(EMPTY_IP);
 
-  const { data = { addresses: [], utilization: {} }, isLoading } = useQuery({
-    queryKey: ['ipam-addresses', subnet.id, statusFilter, search],
+  // Reset to page 1 whenever the filter or search changes
+  useEffect(() => { setPage(1); }, [statusFilter, search]);
+
+  const { data = { addresses: [], utilization: {}, pagination: {} }, isLoading } = useQuery({
+    queryKey: ['ipam-addresses', subnet.id, statusFilter, search, page],
     queryFn: () => {
-      const p = new URLSearchParams();
+      const p = new URLSearchParams({ page, page_size: 50 });
       if (statusFilter) p.set('status', statusFilter);
       if (search)       p.set('search', search);
       return api.get(`/ipam/ipam-subnets/${subnet.id}/addresses?${p}`);
     },
     refetchInterval: 30_000,
+    keepPreviousData: true,
   });
 
   const invalidate = () => {
@@ -507,19 +512,12 @@ function SubnetIpView({ subnet, onBack }) {
   const dhcpLinked = subnet.dhcp_enabled && subnet.dhcp_subnet_id;
 
   const util    = data.utilization || {};
+  const pag     = data.pagination  || {};
   const total   = hostsInCidr(subnet.subnet, subnet.ip_version);
-  const usedPct = util.total ? Math.min(100, Math.round((util.used / util.total) * 100)) : 0;
+  const usedPct = util.total ? Math.min(100, Math.round(((util.used + (util.reserved||0) + (util.offline||0)) / util.total) * 100)) : 0;
 
-  const openAdd  = () => { setForm(EMPTY_IP); setModal('add'); };
+  const openAdd  = (prefillIp) => { setForm({ ...EMPTY_IP, ip: prefillIp || '' }); setModal('add'); };
   const openEdit = row => { setForm({ ...row, mac_address: row.mac_address || '', hostname: row.hostname || '', owner: row.owner || '', description: row.description || '', notes: row.notes || '', nat_public_ip: row.nat_public_ip ? String(row.nat_public_ip).split('/')[0] : '' }); setModal(row); };
-
-  const counts = {
-    all:      data.addresses.length,
-    used:     data.addresses.filter(a => a.status === 'used').length,
-    reserved: data.addresses.filter(a => a.status === 'reserved').length,
-    offline:  data.addresses.filter(a => a.status === 'offline').length,
-    free:     data.addresses.filter(a => a.status === 'free').length,
-  };
 
   return (
     <div className="space-y-5">
@@ -578,11 +576,11 @@ function SubnetIpView({ subnet, onBack }) {
           <UtilBar used={util.used || 0} total={util.total || total} threshold={subnet.alert_threshold_pct || 90} />
           <div className="flex gap-5 mt-3 text-xs">
             {[
-              { label: 'Used',     value: counts.used,     color: 'text-green-700'  },
-              { label: 'Reserved', value: counts.reserved, color: 'text-blue-700'   },
-              { label: 'Offline',  value: counts.offline,  color: 'text-amber-700'  },
-              { label: 'Free',     value: util.free ?? 0,  color: 'text-slate-500'  },
-              { label: 'Total',    value: util.total ?? total, color: 'text-slate-700' },
+              { label: 'Used',     value: util.used     ?? 0,        color: 'text-green-700'  },
+              { label: 'Reserved', value: util.reserved ?? 0,        color: 'text-blue-700'   },
+              { label: 'Offline',  value: util.offline  ?? 0,        color: 'text-amber-700'  },
+              { label: 'Free',     value: util.free     ?? 0,        color: 'text-emerald-600' },
+              { label: 'Total',    value: util.total    ?? total,    color: 'text-slate-700'  },
             ].map(s => (
               <div key={s.label} className="text-center">
                 <div className={`font-bold text-base ${s.color}`}>{s.value}</div>
@@ -596,11 +594,11 @@ function SubnetIpView({ subnet, onBack }) {
       {/* Status filters + search */}
       <div className="flex gap-2 flex-wrap items-center">
         {[
-          ['', `All (${counts.all})`],
-          ['used', `Used (${counts.used})`],
-          ['reserved', `Reserved (${counts.reserved})`],
-          ['offline', `Offline (${counts.offline})`],
-          ['free', `Free (${counts.free})`],
+          ['', `All (${util.total ?? total ?? 0})`],
+          ['used',     `Used (${util.used     ?? 0})`],
+          ['reserved', `Reserved (${util.reserved ?? 0})`],
+          ['offline',  `Offline (${util.offline  ?? 0})`],
+          ['free',     `Free (${util.free     ?? 0})`],
         ].map(([v, l]) => (
           <button key={v} onClick={() => setStatusFilter(v)}
             className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors
@@ -631,7 +629,28 @@ function SubnetIpView({ subnet, onBack }) {
             {isLoading && (
               <tr><td colSpan={10} className="px-3 py-8 text-center text-sm text-slate-400">Loading…</td></tr>
             )}
-            {!isLoading && data.addresses.map(addr => (
+            {!isLoading && data.addresses.map(addr => addr._synthetic ? (
+              // Free / available IP — not yet documented
+              <tr key={addr.ip} className="hover:bg-emerald-50/40">
+                <td className="px-3 py-2">
+                  <span className="font-mono text-slate-400">{addr.ip}</span>
+                </td>
+                <td className="px-3 py-2 text-slate-300 text-xs">—</td>
+                <td className="px-3 py-2 text-slate-300 text-xs">—</td>
+                <td className="px-3 py-2 text-slate-300 text-xs">—</td>
+                <td className="px-3 py-2 text-slate-300 text-xs">—</td>
+                <td className="px-3 py-2 text-slate-300 text-xs">—</td>
+                <td className="px-3 py-2">
+                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700">Available</span>
+                </td>
+                <td className="px-3 py-2 text-slate-300 text-xs">—</td>
+                <td className="px-3 py-2 text-slate-300 text-xs">—</td>
+                <td className="px-3 py-2 text-right whitespace-nowrap">
+                  <button onClick={() => openAdd(addr.ip)} className="text-xs text-primary-600 hover:underline">+ Add</button>
+                </td>
+              </tr>
+            ) : (
+              // Documented IP
               <tr key={addr.id}
                 className={`hover:bg-slate-50 ${addr.is_gateway ? 'bg-blue-50/30' : ''}`}>
                 <td className="px-3 py-2">
@@ -707,6 +726,28 @@ function SubnetIpView({ subnet, onBack }) {
           </tbody>
         </table>
       </div>
+
+      {/* Pagination */}
+      {pag.total_pages > 1 && (
+        <div className="flex items-center justify-between text-xs text-slate-500 px-1">
+          <span>
+            Showing {((pag.page - 1) * pag.page_size + 1).toLocaleString()}–{Math.min(pag.page * pag.page_size, pag.total_rows).toLocaleString()} of {pag.total_rows.toLocaleString()}
+            {pag.showing_free_ips && !statusFilter && ' (all IPs including available)'}
+          </span>
+          <div className="flex items-center gap-1">
+            <button onClick={() => setPage(p => p - 1)} disabled={page <= 1}
+              className="btn btn-secondary btn-sm disabled:opacity-40">← Prev</button>
+            <span className="px-3 py-1 text-slate-500">Page {pag.page} of {pag.total_pages}</span>
+            <button onClick={() => setPage(p => p + 1)} disabled={page >= pag.total_pages}
+              className="btn btn-secondary btn-sm disabled:opacity-40">Next →</button>
+          </div>
+        </div>
+      )}
+      {pag.showing_free_ips === false && !search && (
+        <p className="text-xs text-slate-400 text-center">
+          This subnet is too large for automatic free-IP enumeration. Use the <strong>Free ({util.free ?? 0})</strong> count above as a reference.
+        </p>
+      )}
 
       {/* Add / Edit modal */}
       {modal !== null && (

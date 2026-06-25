@@ -908,35 +908,95 @@ router.delete('/nat/:id', async (req, res) => {
 // IP Addresses — scoped to an IPAM subnet
 // ---------------------------------------------------------------------------
 
-// GET /ipam/ipam-subnets/:id/addresses?status=&search=
+// GET /ipam/ipam-subnets/:id/addresses?status=&search=&page=1&page_size=50
+// When the subnet is IPv4 and fits within 65534 hosts (≤ /16) and no text
+// search is active, free IPs are enumerated inline so the list is a complete
+// picture of the subnet — every row is either documented or "Available".
+// For larger subnets or when a search term is present, only documented IPs
+// are returned (free-IP enumeration is skipped for performance).
 router.get('/ipam-subnets/:id/addresses', async (req, res) => {
   const { status, search } = req.query;
-  const conds = ['ia.ipam_subnet_id = $1'];
-  const vals  = [req.params.id];
+  const page      = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const page_size = Math.min(200, Math.max(10, parseInt(req.query.page_size, 10) || 50));
+  const MAX_ENUMERATE = 65534; // /16 — beyond this, skip free-IP enumeration
 
-  if (status) { conds.push(`ia.status = $${vals.length+1}`); vals.push(status); }
-  if (search) {
-    const idx = vals.length + 1;
-    conds.push(`(ia.ip::text ILIKE $${idx} OR ia.hostname ILIKE $${idx} OR ia.owner ILIKE $${idx} OR ia.mac_address::text ILIKE $${idx} OR ia.description ILIKE $${idx} OR array_to_string(ia.tags, ',') ILIKE $${idx})`);
-    vals.push(`%${search}%`);
-  }
-
-  const [{ rows: addresses }, { rows: sub }] = await Promise.all([
+  const [{ rows: allAddresses }, { rows: sub }] = await Promise.all([
     query(
       `SELECT ia.*, nr.translated_src AS nat_public_ip
        FROM ip_addresses ia
        LEFT JOIN nat_rules nr ON nr.id = ia.nat_rule_id
-       WHERE ${conds.join(' AND ')} ORDER BY ia.ip`,
-      vals
+       WHERE ia.ipam_subnet_id = $1 ORDER BY ia.ip`,
+      [req.params.id]
     ),
     query('SELECT subnet, ip_version FROM ipam_subnets WHERE id = $1', [req.params.id]),
   ]);
 
-  const total    = sub[0] ? hostCount(sub[0].subnet, sub[0].ip_version) : 0;
-  const used     = addresses.filter(a => a.status !== 'free').length;
-  const withVendor = addresses.map(a => ({ ...a, mac_vendor: lookupVendor(a.mac_address) }));
+  const subnetInfo = sub[0];
+  const total = subnetInfo ? hostCount(subnetInfo.subnet, subnetInfo.ip_version) : 0;
 
-  res.json({ addresses: withVendor, utilization: { total, used, free: Math.max(0, total - used) } });
+  // Per-status counts from documented IPs (used for filter tab labels)
+  const util = {
+    total,
+    used:     allAddresses.filter(a => a.status === 'used').length,
+    reserved: allAddresses.filter(a => a.status === 'reserved').length,
+    offline:  allAddresses.filter(a => a.status === 'offline').length,
+    free:     Math.max(0, total - allAddresses.filter(a => a.status !== 'free').length),
+  };
+
+  const withVendor = allAddresses.map(a => ({ ...a, mac_vendor: lookupVendor(a.mac_address) }));
+
+  const canEnumerate = !search &&
+    subnetInfo?.ip_version !== 6 &&
+    total > 0 &&
+    total <= MAX_ENUMERATE;
+
+  let rows;
+
+  if (canEnumerate) {
+    // Build the complete per-IP map from documented addresses
+    const documentedMap = new Map(withVendor.map(a => [a.ip.toString(), a]));
+
+    // Enumerate every host IP in the CIDR
+    const [networkStr, prefixStr] = subnetInfo.subnet.split('/');
+    const prefix      = parseInt(prefixStr, 10);
+    const networkInt  = ipToInt(networkStr);
+    const hostMask    = (1 << (32 - prefix)) - 1;
+    const networkBase = (networkInt & ~hostMask) >>> 0;
+    const firstHost   = prefix >= 31 ? networkBase : networkBase + 1;
+    const lastHost    = prefix >= 31 ? networkBase + hostMask : (networkBase + hostMask - 1) >>> 0;
+
+    rows = [];
+    for (let n = firstHost; n <= lastHost; n++) {
+      const ip = intToIp(n);
+      rows.push(documentedMap.has(ip) ? documentedMap.get(ip) : { ip, status: 'free', _synthetic: true });
+    }
+
+    if (status) rows = rows.filter(r => r.status === status);
+  } else {
+    rows = withVendor;
+    if (search) {
+      const s = search.toLowerCase();
+      rows = rows.filter(a =>
+        (a.ip && String(a.ip).includes(s)) ||
+        (a.hostname    && a.hostname.toLowerCase().includes(s)) ||
+        (a.owner       && a.owner.toLowerCase().includes(s)) ||
+        (a.mac_address && String(a.mac_address).toLowerCase().includes(s)) ||
+        (a.description && a.description.toLowerCase().includes(s)) ||
+        (a.tags        && a.tags.some(t => t.toLowerCase().includes(s)))
+      );
+    }
+    if (status) rows = rows.filter(r => r.status === status);
+  }
+
+  const total_rows  = rows.length;
+  const total_pages = Math.ceil(total_rows / page_size) || 1;
+  const start = (page - 1) * page_size;
+
+  res.json({
+    addresses: rows.slice(start, start + page_size),
+    utilization: util,
+    pagination: { page, page_size, total_rows, total_pages, showing_free_ips: canEnumerate },
+  });
 });
 
 // POST /ipam/ipam-subnets/:id/addresses
@@ -1372,6 +1432,10 @@ function hostCount(cidr, ipVersion = 4) {
 
 function ipToInt(ip) {
   return ip.split('.').reduce((acc, oct) => (acc << 8) | parseInt(oct, 10), 0) >>> 0;
+}
+
+function intToIp(n) {
+  return [(n >>> 24) & 0xff, (n >>> 16) & 0xff, (n >>> 8) & 0xff, n & 0xff].join('.');
 }
 
 function ipInRange(ip, start, end) {
