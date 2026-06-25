@@ -18,6 +18,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.41] - 2026-06-25
+
+### Changed
+- **Dependency maintenance sweep** — triaged all 24 open Dependabot PRs by actually testing each one (not just trusting a green CI checkmark): 23 merged, 1 dropped as redundant. Notably includes Node 20→26 across the backend, frontend build, and DNS engine images; React 18→19 (with the `react-dom`/`@types/react-dom` companion bump the original PR was missing); Tailwind CSS 3→4 (new `@tailwindcss/postcss` plugin, CSS-first `@theme`/`@utility` config replacing `tailwind.config.js`); `react-router-dom` 6→7; `recharts` 2→3; `eslint` 9→10 (plus two new lint rules — `preserve-caught-error`, `no-useless-assignment` — that caught real, if minor, issues: a few catch blocks were discarding the original error instead of attaching it via `cause`); and routine patch/minor bumps across both `package.json`s and GitHub Actions.
+- Found a real, build-passing-but-runtime-breaking regression: Vite 8's new default bundler (Rolldown) renders every page blank (React error #130) despite a clean `npm run build` and lint. Caught only by actually logging in and crawling every admin/teacher route in a browser, not by CI. **Vite and `@vitejs/plugin-react` are intentionally held back** (5.x / 4.x) until this resolves upstream — the two dependabot PRs proposing those bumps were closed with an explanation rather than merged.
+
+### Fixed
+- Removed the real school district's domain name, which had been hardcoded as placeholder/example text in three places (a DHCP-import code comment, a DNS zone-name hint, an Integrations test-email placeholder) — not account data, but still real-world identifying information that didn't belong in a public repo's example text.
+
+---
+
 ## [0.7.40] - 2026-06-25
 
 ### Added
