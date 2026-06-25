@@ -11,6 +11,7 @@ const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { requirePermission } = require('../middleware/permissions');
 const ca = require('../services/ca');
+const { resolveProfileForCn } = require('../services/vpnProfiles');
 
 const auth      = [authenticate, requirePermission('vpn_config')];
 const superauth = [authenticate, requireMinRole('superadmin')];
@@ -37,7 +38,7 @@ router.get('/config', ...auth, async (req, res) => {
 // here — that's POST /generate-ca only — this is for the VPN's own network
 // config plus toggling the SCEP service on/off once a CA exists.
 router.put('/config', ...superauth, async (req, res) => {
-  const { enabled, scep_enabled, client_subnet, dns_servers, restrict_to_subnets } = req.body;
+  const { enabled, scep_enabled, client_subnet, dns_servers } = req.body;
   try {
     const { rows } = await pool.query(
       `UPDATE vpn_config SET
@@ -45,7 +46,6 @@ router.put('/config', ...superauth, async (req, res) => {
          scep_enabled        = COALESCE($2, scep_enabled),
          client_subnet       = COALESCE($3, client_subnet),
          dns_servers         = COALESCE($4, dns_servers),
-         restrict_to_subnets = COALESCE($5, restrict_to_subnets),
          updated_at          = NOW()
        RETURNING *`,
       [
@@ -53,11 +53,149 @@ router.put('/config', ...superauth, async (req, res) => {
         scep_enabled ?? null,
         client_subnet ?? null,
         dns_servers ?? null,
-        restrict_to_subnets ?? null,
       ]
     );
     const { ca_private_key_pem, ...cfg } = rows[0];
     res.json(cfg);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// VPN Profiles — each with its own subnet restriction, assignable to a user
+// or group. Resolved per-session by resolveProfileForCn (services/
+// vpnProfiles.js) from the connecting cert's CN. Exactly one profile is
+// always is_default (migration 076 guarantees one exists at all times).
+// ---------------------------------------------------------------------------
+
+router.get('/profiles', ...auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT p.*,
+         (SELECT count(*) FROM vpn_profile_assignments a WHERE a.profile_id = p.id) AS assignment_count
+       FROM vpn_profiles p
+       ORDER BY p.is_default DESC, p.name`
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/profiles', ...auth, async (req, res) => {
+  const { name, restrict_to_subnets } = req.body;
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  try {
+    const { rows: [profile] } = await pool.query(
+      `INSERT INTO vpn_profiles (name, restrict_to_subnets, created_by) VALUES ($1, $2, $3) RETURNING *`,
+      [name, restrict_to_subnets || [], req.user.userId]
+    );
+    res.status(201).json(profile);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/profiles/:id', ...auth, async (req, res) => {
+  const { name, restrict_to_subnets } = req.body;
+  try {
+    const { rows } = await pool.query(
+      `UPDATE vpn_profiles SET
+         name                = COALESCE($1, name),
+         restrict_to_subnets = COALESCE($2, restrict_to_subnets),
+         updated_at          = NOW()
+       WHERE id = $3 RETURNING *`,
+      [name ?? null, restrict_to_subnets ?? null, req.params.id]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Profile not found' });
+    res.json(rows[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /profiles/:id/make-default — atomically moves the is_default flag.
+router.post('/profiles/:id/make-default', ...auth, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('UPDATE vpn_profiles SET is_default = false WHERE is_default');
+    const { rows } = await client.query(
+      'UPDATE vpn_profiles SET is_default = true, updated_at = NOW() WHERE id = $1 RETURNING *',
+      [req.params.id]
+    );
+    if (!rows.length) throw new Error('Profile not found');
+    await client.query('COMMIT');
+    res.json(rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(err.message === 'Profile not found' ? 404 : 500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
+});
+
+router.delete('/profiles/:id', ...auth, async (req, res) => {
+  try {
+    const { rows: [profile] } = await pool.query('SELECT is_default FROM vpn_profiles WHERE id = $1', [req.params.id]);
+    if (!profile) return res.status(404).json({ error: 'Profile not found' });
+    if (profile.is_default) return res.status(400).json({ error: 'Cannot delete the default profile — make another profile the default first.' });
+    await pool.query('DELETE FROM vpn_profiles WHERE id = $1', [req.params.id]);
+    res.json({ deleted: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /profiles/:id/assignments — joined with user email / group name for display.
+router.get('/profiles/:id/assignments', ...auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT a.*, u.email AS user_email, u.full_name AS user_name, g.name AS group_name
+       FROM vpn_profile_assignments a
+       LEFT JOIN users  u ON u.id = a.user_id
+       LEFT JOIN groups g ON g.id = a.group_id
+       WHERE a.profile_id = $1
+       ORDER BY a.created_at DESC`,
+      [req.params.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /profiles/:id/assignments — assigns a user or group to this profile.
+// A user/group can only carry one direct assignment at a time (migration
+// 076's partial unique indexes) -- assigning them elsewhere moves the row.
+router.post('/profiles/:id/assignments', ...auth, async (req, res) => {
+  const { user_id, group_id } = req.body;
+  if (!user_id && !group_id) return res.status(400).json({ error: 'user_id or group_id is required' });
+  if (user_id && group_id) return res.status(400).json({ error: 'Provide user_id or group_id, not both' });
+  try {
+    const onConflict = user_id
+      ? 'ON CONFLICT (user_id) WHERE user_id IS NOT NULL'
+      : 'ON CONFLICT (group_id) WHERE group_id IS NOT NULL';
+    const { rows: [assignment] } = await pool.query(
+      `INSERT INTO vpn_profile_assignments (profile_id, user_id, group_id, created_by)
+       VALUES ($1, $2, $3, $4)
+       ${onConflict}
+       DO UPDATE SET profile_id = EXCLUDED.profile_id, created_by = EXCLUDED.created_by, created_at = NOW()
+       RETURNING *`,
+      [req.params.id, user_id || null, group_id || null, req.user.userId]
+    );
+    res.status(201).json(assignment);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/assignments/:id', ...auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('DELETE FROM vpn_profile_assignments WHERE id = $1 RETURNING id', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Assignment not found' });
+    res.json({ deleted: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -127,8 +265,18 @@ router.post('/internal/sessions', authenticate, requireMinRole('superadmin'), as
   try {
     const activeCns = sessions.map(s => s.cert_cn).filter(Boolean);
 
+    // Per-assigned-ip restriction list the agent applies as iptables rules
+    // -- the tunnel itself stays full-reachability (local_ts = 0.0.0.0/0 in
+    // swanctl.conf); this is the actual per-profile enforcement point.
+    const restrictions = {};
+
     for (const s of sessions) {
       if (!s.cert_cn) continue;
+      const profile = await resolveProfileForCn(s.cert_cn);
+      if (s.assigned_ip && profile) {
+        restrictions[s.assigned_ip] = profile.restrict_to_subnets || [];
+      }
+
       const connectedAt = new Date(Date.now() - (Number(s.established_seconds) || 0) * 1000);
       const { rows: [existing] } = await pool.query(
         `SELECT id FROM vpn_clients WHERE cert_cn = $1 AND disconnected_at IS NULL`,
@@ -136,15 +284,16 @@ router.post('/internal/sessions', authenticate, requireMinRole('superadmin'), as
       );
       if (existing) {
         await pool.query(
-          `UPDATE vpn_clients SET assigned_ip = $1, real_ip = $2, bytes_in = $3, bytes_out = $4, updated_at = NOW()
-           WHERE id = $5`,
-          [s.assigned_ip || null, s.real_ip || null, s.bytes_in || 0, s.bytes_out || 0, existing.id]
+          `UPDATE vpn_clients SET assigned_ip = $1, real_ip = $2, bytes_in = $3, bytes_out = $4,
+             profile_id = $5, updated_at = NOW()
+           WHERE id = $6`,
+          [s.assigned_ip || null, s.real_ip || null, s.bytes_in || 0, s.bytes_out || 0, profile?.id || null, existing.id]
         );
       } else {
         await pool.query(
-          `INSERT INTO vpn_clients (cert_cn, assigned_ip, real_ip, bytes_in, bytes_out, connected_at)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [s.cert_cn, s.assigned_ip || null, s.real_ip || null, s.bytes_in || 0, s.bytes_out || 0, connectedAt]
+          `INSERT INTO vpn_clients (cert_cn, assigned_ip, real_ip, bytes_in, bytes_out, profile_id, connected_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [s.cert_cn, s.assigned_ip || null, s.real_ip || null, s.bytes_in || 0, s.bytes_out || 0, profile?.id || null, connectedAt]
         );
       }
     }
@@ -163,7 +312,7 @@ router.post('/internal/sessions', authenticate, requireMinRole('superadmin'), as
       );
     }
 
-    res.json({ status: 'ok' });
+    res.json({ status: 'ok', restrictions });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -173,7 +322,10 @@ router.post('/internal/sessions', authenticate, requireMinRole('superadmin'), as
 router.get('/sessions', ...auth, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT * FROM vpn_clients ORDER BY (disconnected_at IS NULL) DESC, connected_at DESC LIMIT 200`
+      `SELECT c.*, p.name AS profile_name
+       FROM vpn_clients c
+       LEFT JOIN vpn_profiles p ON p.id = c.profile_id
+       ORDER BY (c.disconnected_at IS NULL) DESC, c.connected_at DESC LIMIT 200`
     );
     res.json(rows);
   } catch (err) {

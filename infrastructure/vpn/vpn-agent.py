@@ -45,8 +45,12 @@ def api_request(path, method="GET", body=None):
 def render_swanctl_conf(cfg):
     pool_cidr = cfg.get("client_subnet") or "10.99.99.0/24"
     dns_servers = ",".join(cfg.get("dns_servers") or [])
-    restrict = cfg.get("restrict_to_subnets") or []
-    local_ts = ",".join(restrict) if restrict else "0.0.0.0/0"
+    # Tunnel-level traffic selector stays full-reachability for every client
+    # regardless of profile -- ClassGuard now resolves a per-user profile
+    # *after* connecting (see apply_client_restrictions below) and narrows
+    # access per assigned IP via iptables instead, since a single IKEv2
+    # connection definition can't vary local_ts by which cert connected.
+    local_ts = "0.0.0.0/0"
 
     dns_line = f"\n        dns = {dns_servers}" if dns_servers else ""
 
@@ -107,6 +111,38 @@ def ensure_routing(client_subnet):
             ["iptables", "-t", "nat", "-A", "POSTROUTING", "-s", client_subnet, "-j", "MASQUERADE"],
             check=False,
         )
+
+
+RESTRICT_CHAIN = "VPN_PROFILE_RESTRICT"
+
+
+def ensure_restrict_chain():
+    """Idempotent: a dedicated chain, jumped to from FORWARD, that ONLY ever
+    contains rules this function manages -- safe to fully flush and rebuild
+    every poll cycle without touching anything else in FORWARD."""
+    subprocess.run(["iptables", "-N", RESTRICT_CHAIN], stderr=subprocess.DEVNULL, check=False)
+    check = subprocess.run(
+        ["iptables", "-C", "FORWARD", "-j", RESTRICT_CHAIN], stderr=subprocess.DEVNULL,
+    )
+    if check.returncode != 0:
+        subprocess.run(["iptables", "-I", "FORWARD", "1", "-j", RESTRICT_CHAIN], check=False)
+
+
+def apply_client_restrictions(restrictions):
+    """restrictions: {assigned_ip: [allowed CIDR, ...]} from the backend's
+    /internal/sessions response -- the per-profile enforcement point. The
+    IKEv2 tunnel itself stays full-reachability (see render_swanctl_conf);
+    a client with a non-empty list may only reach those subnets, anyone
+    with an empty list (a full-access profile) gets no rule at all here and
+    falls through to the normal FORWARD ACCEPT policy."""
+    ensure_restrict_chain()
+    subprocess.run(["iptables", "-F", RESTRICT_CHAIN], check=False)
+    for ip, subnets in restrictions.items():
+        if not subnets:
+            continue
+        for subnet in subnets:
+            subprocess.run(["iptables", "-A", RESTRICT_CHAIN, "-s", ip, "-d", subnet, "-j", "ACCEPT"], check=False)
+        subprocess.run(["iptables", "-A", RESTRICT_CHAIN, "-s", ip, "-j", "DROP"], check=False)
 
 
 def apply_config(cfg):
@@ -189,7 +225,8 @@ def poll_loop():
             sessions = parse_sas()
             with _lock:
                 _last_sessions = sessions
-            api_request("/internal/sessions", method="POST", body={"sessions": sessions})
+            resp = api_request("/internal/sessions", method="POST", body={"sessions": sessions})
+            apply_client_restrictions(resp.get("restrictions") or {})
         except Exception as e:
             print(f"[vpn-agent] session list/push failed: {e}", flush=True)
 

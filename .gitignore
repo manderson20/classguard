@@ -5,6 +5,8 @@ node_modules/
 .npm
 .yarn/cache
 .pnp.*
+__pycache__/
+*.pyc
 
 # Local-only browser tooling for UI verification — never deployed, not
 # part of the app, just a Playwright install used to drive/screenshot

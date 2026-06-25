@@ -2,8 +2,32 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
-const INPUT = 'border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full';
-const MONO  = 'font-mono text-xs';
+const INPUT  = 'border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full';
+const SELECT = INPUT + ' bg-white';
+const MONO   = 'font-mono text-xs';
+
+function Field({ label, hint, children }) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-medium text-slate-600">
+      <span>{label}{hint && <span className="font-normal text-slate-400 ml-1">— {hint}</span>}</span>
+      {children}
+    </label>
+  );
+}
+
+function Modal({ title, onClose, children }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <h2 className="font-bold text-slate-900">{title}</h2>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl leading-none">×</button>
+        </div>
+        <div className="px-6 py-4">{children}</div>
+      </div>
+    </div>
+  );
+}
 
 function ListEditor({ label, hint, values, onChange, placeholder }) {
   const [text, setText] = useState((values || []).join(', '));
@@ -316,6 +340,239 @@ function CaSection({ cfg }) {
   );
 }
 
+// ---------------------------------------------------------------------------
+// VPN Profiles — each carries its own subnet restriction and is assignable
+// to a user or group. The connecting cert's CN is matched against a real
+// ClassGuard user by email (every platform panel above already sets the
+// cert's identity to the user's email), so assignment reuses the same
+// Groups feature already used for RADIUS/content policies elsewhere.
+// ---------------------------------------------------------------------------
+
+function ProfileModal({ initial, onSave, onCancel, isPending }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [subnetsText, setSubnetsText] = useState((initial?.restrict_to_subnets || []).join(', '));
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Field label="Name">
+        <input className={INPUT} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. IT Team" />
+      </Field>
+      <Field label="Restrict access to subnets" hint="comma-separated CIDRs — leave empty for full network access">
+        <input className={INPUT} value={subnetsText} onChange={e => setSubnetsText(e.target.value)}
+          placeholder="172.16.1.0/24, 10.0.5.0/24" />
+      </Field>
+      <div className="flex justify-end gap-2 mt-2">
+        <button onClick={onCancel} className="btn-secondary text-sm">Cancel</button>
+        <button
+          onClick={() => onSave({
+            name,
+            restrict_to_subnets: subnetsText.split(',').map(s => s.trim()).filter(Boolean),
+          })}
+          disabled={isPending || !name.trim()}
+          className="btn-primary text-sm"
+        >
+          {isPending ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AssignmentsModal({ profile, onClose }) {
+  const qc = useQueryClient();
+  const [target, setTarget] = useState('user');
+  const [userSearch, setUserSearch] = useState('');
+  const [userId, setUserId] = useState('');
+  const [groupId, setGroupId] = useState('');
+
+  const { data: assignments = [] } = useQuery({
+    queryKey: ['vpn-profile-assignments', profile.id],
+    queryFn:  () => api.get(`/vpn/profiles/${profile.id}/assignments`),
+  });
+  const { data: users = [] } = useQuery({
+    queryKey: ['vpn-assignment-user-search', userSearch],
+    queryFn:  () => api.get(`/users?search=${encodeURIComponent(userSearch)}&limit=20`).then(r => r.users),
+    enabled:  target === 'user' && userSearch.length > 1,
+  });
+  const { data: groups = [] } = useQuery({
+    queryKey: ['groups'],
+    queryFn:  () => api.get('/groups'),
+    enabled:  target === 'group',
+  });
+
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ['vpn-profile-assignments', profile.id] });
+    qc.invalidateQueries({ queryKey: ['vpn-profiles'] }); // assignment_count badge lives there
+  };
+
+  const add = useMutation({
+    mutationFn: () => api.post(`/vpn/profiles/${profile.id}/assignments`, {
+      user_id:  target === 'user'  ? userId  || null : null,
+      group_id: target === 'group' ? groupId || null : null,
+    }),
+    onSuccess: () => { invalidate(); setUserId(''); setGroupId(''); setUserSearch(''); },
+  });
+  const remove = useMutation({
+    mutationFn: id => api.delete(`/vpn/assignments/${id}`),
+    onSuccess:  invalidate,
+  });
+
+  return (
+    <Modal title={`Assignments — ${profile.name}`} onClose={onClose}>
+      <p className="text-xs text-slate-500 mb-3">
+        Anyone connecting whose certificate identity (email) matches a user assigned here, directly or via
+        a group, gets this profile. Everyone else falls back to the default profile.
+      </p>
+
+      <div className="bg-slate-50 rounded-lg p-3 mb-4">
+        <div className="flex gap-2 mb-2">
+          <select className={SELECT + ' w-32'} value={target} onChange={e => setTarget(e.target.value)}>
+            <option value="user">User</option>
+            <option value="group">Group</option>
+          </select>
+          {target === 'user' ? (
+            <input className={INPUT} value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search by name or email…" />
+          ) : (
+            <select className={SELECT} value={groupId} onChange={e => setGroupId(e.target.value)}>
+              <option value="">Select a group…</option>
+              {groups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+            </select>
+          )}
+        </div>
+        {target === 'user' && users.length > 0 && (
+          <select className={SELECT + ' mb-2'} value={userId} onChange={e => setUserId(e.target.value)}>
+            <option value="">Select a user…</option>
+            {users.map(u => <option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
+          </select>
+        )}
+        <div className="flex justify-end">
+          <button
+            onClick={() => add.mutate()}
+            disabled={add.isPending || (target === 'user' ? !userId : !groupId)}
+            className="btn-primary text-xs"
+          >
+            {add.isPending ? 'Adding…' : 'Add'}
+          </button>
+        </div>
+      </div>
+
+      <div className="divide-y divide-slate-100">
+        {assignments.map(a => (
+          <div key={a.id} className="flex items-center justify-between py-2 text-sm">
+            <span className="text-slate-700">
+              {a.user_id ? `${a.user_name} (${a.user_email})` : `Group: ${a.group_name}`}
+            </span>
+            <button onClick={() => remove.mutate(a.id)} className="text-xs text-red-600 hover:underline">Remove</button>
+          </div>
+        ))}
+        {!assignments.length && <p className="text-sm text-slate-400 py-4 text-center">No one assigned yet — this profile is unused.</p>}
+      </div>
+    </Modal>
+  );
+}
+
+function ProfilesSection() {
+  const qc = useQueryClient();
+  const [modal, setModal] = useState(null); // { mode: 'create'|'edit', profile? } | null
+  const [assignProfile, setAssignProfile] = useState(null);
+
+  const { data: profiles = [] } = useQuery({
+    queryKey: ['vpn-profiles'],
+    queryFn:  () => api.get('/vpn/profiles'),
+  });
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['vpn-profiles'] });
+
+  const create = useMutation({
+    mutationFn: form => api.post('/vpn/profiles', form),
+    onSuccess:  () => { invalidate(); setModal(null); },
+  });
+  const update = useMutation({
+    mutationFn: ({ id, ...form }) => api.put(`/vpn/profiles/${id}`, form),
+    onSuccess:  () => { invalidate(); setModal(null); },
+  });
+  const makeDefault = useMutation({
+    mutationFn: id => api.post(`/vpn/profiles/${id}/make-default`),
+    onSuccess:  invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: id => api.delete(`/vpn/profiles/${id}`),
+    onSuccess:  invalidate,
+    onError:    err => alert(err?.response?.data?.error || 'Failed to delete profile'),
+  });
+
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden mb-4">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+        <div>
+          <h3 className="font-semibold text-slate-900">VPN Profiles</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Different subnet access for different people — e.g. a broader "IT Team" profile alongside a
+            more restricted default for everyone else. Resolved from the connecting cert's email identity.
+          </p>
+        </div>
+        <button onClick={() => setModal({ mode: 'create' })} className="btn-primary text-xs flex-shrink-0">+ New Profile</button>
+      </div>
+      <table className="w-full text-sm">
+        <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+          <tr>
+            {['Name', 'Restricted Subnets', 'Assigned', '', ''].map(h => (
+              <th key={h} className="px-4 py-2 text-left">{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-slate-100">
+          {profiles.map(p => (
+            <tr key={p.id} className="hover:bg-slate-50">
+              <td className="px-4 py-3 text-slate-800 font-medium">
+                {p.name}
+                {p.is_default && <span className="ml-2 px-2 py-0.5 rounded-full text-xs font-medium bg-primary-100 text-primary-700">Default</span>}
+              </td>
+              <td className={`px-4 py-3 ${MONO} text-slate-600`}>
+                {p.restrict_to_subnets?.length ? p.restrict_to_subnets.join(', ') : <span className="text-slate-400">Full network access</span>}
+              </td>
+              <td className="px-4 py-3 text-slate-600">
+                {p.is_default ? <span className="text-slate-400">Everyone else</span> : `${p.assignment_count} ${p.assignment_count === '1' ? 'assignment' : 'assignments'}`}
+              </td>
+              <td className="px-4 py-3 text-right whitespace-nowrap">
+                {!p.is_default && (
+                  <button onClick={() => setAssignProfile(p)} className="text-xs text-primary-600 hover:underline mr-3">Assignments</button>
+                )}
+                <button onClick={() => setModal({ mode: 'edit', profile: p })} className="text-xs text-slate-600 hover:underline mr-3">Edit</button>
+                {!p.is_default && (
+                  <button onClick={() => makeDefault.mutate(p.id)} className="text-xs text-slate-600 hover:underline mr-3">Make Default</button>
+                )}
+              </td>
+              <td className="px-4 py-3 text-right">
+                {!p.is_default && (
+                  <button
+                    onClick={() => { if (confirm(`Delete "${p.name}"? Anyone assigned to it falls back to the default profile.`)) remove.mutate(p.id); }}
+                    className="text-xs text-red-600 hover:underline"
+                  >
+                    Delete
+                  </button>
+                )}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      {modal && (
+        <Modal title={modal.mode === 'create' ? 'New VPN Profile' : `Edit ${modal.profile.name}`} onClose={() => setModal(null)}>
+          <ProfileModal
+            initial={modal.profile}
+            isPending={create.isPending || update.isPending}
+            onCancel={() => setModal(null)}
+            onSave={form => modal.mode === 'create' ? create.mutate(form) : update.mutate({ id: modal.profile.id, ...form })}
+          />
+        </Modal>
+      )}
+      {assignProfile && <AssignmentsModal profile={assignProfile} onClose={() => setAssignProfile(null)} />}
+    </div>
+  );
+}
+
 export default function VpnPage() {
   const qc = useQueryClient();
   const [form, setForm] = useState(null);
@@ -351,11 +608,12 @@ export default function VpnPage() {
           itself, each one's "SCEP profile" is just a pointer at this server, so any platform that speaks
           SCEP can enroll (deployment instructions below cover macOS/iOS via Mosyle, ChromeOS, and Windows).
           This is a traditional perimeter VPN, not ZTNA — a connected client is a network member, subject
-          only to the optional subnet restriction below.
+          only to the optional subnet restriction set by their assigned profile below.
         </p>
       </div>
 
       <CaSection cfg={cfg} />
+      <ProfilesSection />
       <DeploymentInstructions cfg={cfg} />
 
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm mb-4">
@@ -392,14 +650,6 @@ export default function VpnPage() {
           />
         </div>
 
-        <ListEditor
-          label="Restrict access to subnets (optional)"
-          hint="comma-separated CIDRs — leave empty for full network access. Set this to limit a connected client to specific internal subnets instead of the whole LAN, without building a full per-resource ZTNA layer."
-          values={cfg.restrict_to_subnets}
-          placeholder="172.16.1.0/24, 10.0.5.0/24"
-          onChange={v => set('restrict_to_subnets', v)}
-        />
-
         <div className="flex justify-end mt-4">
           <button onClick={() => save.mutate()} disabled={save.isPending} className="btn-primary text-sm">
             {save.isPending ? 'Saving…' : 'Save VPN Config'}
@@ -415,7 +665,7 @@ export default function VpnPage() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
             <tr>
-              {['Identity', 'IP', 'Status', 'Connected', 'Bytes In/Out'].map(h => (
+              {['Identity', 'Profile', 'IP', 'Status', 'Connected', 'Bytes In/Out'].map(h => (
                 <th key={h} className="px-4 py-2 text-left">{h}</th>
               ))}
             </tr>
@@ -424,6 +674,7 @@ export default function VpnPage() {
             {sessions.map(s => (
               <tr key={s.id} className="hover:bg-slate-50">
                 <td className={`px-4 py-3 ${MONO} text-slate-800`}>{s.cert_cn}</td>
+                <td className="px-4 py-3 text-slate-600">{s.profile_name || '—'}</td>
                 <td className={`px-4 py-3 ${MONO} text-slate-600`}>{s.assigned_ip || '—'} <span className="text-slate-400">({s.real_ip || '—'})</span></td>
                 <td className="px-4 py-3">
                   {!s.disconnected_at
@@ -435,7 +686,7 @@ export default function VpnPage() {
               </tr>
             ))}
             {!sessions.length && (
-              <tr><td colSpan={5} className="text-center text-slate-400 py-8 text-sm">No sessions yet.</td></tr>
+              <tr><td colSpan={6} className="text-center text-slate-400 py-8 text-sm">No sessions yet.</td></tr>
             )}
           </tbody>
         </table>

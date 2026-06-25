@@ -18,6 +18,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.7.42] - 2026-06-25
+
+### Added
+- **Multiple VPN profiles** (VPN page) — different subnet access for different people, e.g. a broader "IT Team" profile alongside a more restricted default for everyone else. Assigned to a user or group, same shape as RADIUS Wi-Fi policies' user/group precedence, and resolved from the connecting cert's email identity — every documented enrollment path on this page already sets the cert's CN to the user's real email (Mosyle's `CN=%Email%`, Intune's `CN={{UserPrincipalName}}`, the manual Windows script's `$env:USERNAME@$env:USERDNSDOMAIN`), so no MDM-side change is required. Enforced per connected client via dynamic iptables rules in the VPN container (the IKEv2 tunnel itself stays full-reachability; profile restriction happens at the firewall layer, rebuilt every poll cycle from the agent's session report).
+
+---
+
 ## [0.7.41] - 2026-06-25
 
 ### Changed
