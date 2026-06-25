@@ -111,8 +111,8 @@ function ImportWindowsZoneModal({ onClose }) {
               <span className="text-sm font-medium text-slate-600">{file ? file.name : 'Click to upload the exported .txt file'}</span>
               <input type="file" accept=".txt,.csv" className="hidden" onChange={onFile} />
             </label>
-            <Field label="Zone name" hint="find-or-create — e.g. brookfieldr3.org">
-              <input className={INPUT} value={zoneName} onChange={e => setZoneName(e.target.value)} placeholder="brookfieldr3.org" />
+            <Field label="Zone name" hint="find-or-create — e.g. yourdistrict.org">
+              <input className={INPUT} value={zoneName} onChange={e => setZoneName(e.target.value)} placeholder="yourdistrict.org" />
             </Field>
           </>
         )}
