@@ -144,6 +144,13 @@ const setupSockets = (io) => {
     io.to('role:staff').emit('system:internet_alert', payload);
   });
 
+  // Filter bypass detection -- a student-safety event (the filter has
+  // stopped applying to this device, same audience as urgent_alert above),
+  // not an infra one.
+  events.on('safety:filter_bypass', (payload) => {
+    io.to('role:staff').emit('safety:filter_bypass', payload);
+  });
+
   // HA auto-promotion firing is an infra/ops event, not a student-safety or
   // general-staff one — superadmins only (see sockets join logic above).
   events.on('system:ha_auto_promote', (payload) => {

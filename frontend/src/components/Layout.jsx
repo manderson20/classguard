@@ -43,6 +43,7 @@ import {
   mdiShieldAlertOutline,
   mdiClipboardTextMultipleOutline,
   mdiLaptopOff,
+  mdiWifiAlert,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -50,7 +51,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.7.36';
+const VERSION = '0.7.37';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -128,6 +129,44 @@ function ImpersonationBanner({ user, navigate }) {
         disabled={ending}
       >
         {ending ? 'Exiting…' : 'Exit impersonation'}
+      </button>
+    </div>
+  );
+}
+
+// Confirmed filter bypass (services/filterBypassDetection.js) -- a
+// student-safety event like the urgent banner above, not infra, since the
+// whole point is the content filter has stopped applying to this device.
+function FilterBypassBanner({ socket, navigate }) {
+  const [alerts, setAlerts] = useState([]);
+
+  useEffect(() => {
+    if (!socket) return;
+    const onAlert = (payload) => setAlerts(a => [...a, payload]);
+    socket.on('safety:filter_bypass', onAlert);
+    return () => socket.off('safety:filter_bypass', onAlert);
+  }, [socket]);
+
+  if (!alerts.length) return null;
+  const latest = alerts[alerts.length - 1];
+
+  return (
+    <div className="bg-red-600 text-white px-4 py-2 flex items-center gap-3 flex-wrap">
+      <span className="font-semibold text-sm">⚠ Possible filter bypass{alerts.length > 1 ? `s (${alerts.length})` : ''}:</span>
+      <span className="text-sm">
+        {latest.studentName}'s device ({latest.ipAddress}) has generated no web traffic through the filter for several minutes.
+      </span>
+      <button
+        className="ml-auto bg-white text-red-700 text-xs font-semibold px-3 py-1 rounded hover:bg-red-50"
+        onClick={() => { setAlerts([]); navigate('/admin/filter-bypass'); }}
+      >
+        Review now
+      </button>
+      <button
+        className="text-white/80 hover:text-white text-xs"
+        onClick={() => setAlerts([])}
+      >
+        Dismiss
       </button>
     </div>
   );
@@ -264,6 +303,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/impersonation-audit', icon: mdiIncognito,   label: 'Impersonation Audit', permissionKey: 'impersonate_users' },
       { to: '/admin/ai',                icon: mdiRobotOutline,   label: 'AI Classifier',     permissionKey: 'ai_classifier' },
       { to: '/admin/safety-alerts',     icon: mdiBellAlertOutline, label: 'Safety Alerts',   permissionKey: 'safety_alerts' },
+      { to: '/admin/filter-bypass',     icon: mdiWifiAlert,     label: 'Filter Bypass Alerts', permissionKey: 'safety_alerts' },
       { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true, permissionKey: 'unblock_requests' },
     ],
   },
@@ -502,6 +542,7 @@ export default function Layout() {
       <div className="flex-1 flex flex-col overflow-hidden">
         <ImpersonationBanner user={user} navigate={navigate} />
         {isStaff && <UrgentAlertBanner socket={socket} navigate={navigate} />}
+        {isStaff && <FilterBypassBanner socket={socket} navigate={navigate} />}
         {isStaff && <InternetHealthBanner socket={socket} navigate={navigate} />}
         {isSuperAdmin && <HaAutoPromoteBanner socket={socket} navigate={navigate} />}
         <main className="flex-1 overflow-auto bg-slate-100">

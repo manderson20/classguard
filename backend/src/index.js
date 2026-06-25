@@ -143,6 +143,7 @@ app.use('/api/v1/security',      require('./routes/security'));
 app.use('/api/v1/parent-report', require('./routes/parentReport'));
 app.use('/api/v1/reports',       require('./routes/reports'));
 app.use('/api/v1/lost-mode',     require('./routes/lostMode'));
+app.use('/api/v1/filter-bypass', require('./routes/filterBypass'));
 app.use('/metrics',              require('./routes/metrics'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
