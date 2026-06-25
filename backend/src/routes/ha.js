@@ -15,6 +15,49 @@ const auth      = [authenticate, requirePermission('ha_monitoring')];
 const superauth = [authenticate, requireMinRole('superadmin')];
 
 // ---------------------------------------------------------------------------
+// ECDH helpers — encrypt/decrypt the sensitive join-response payload so
+// JWT_SECRET, EXTENSION_SIGNING_KEY, and replication credentials never
+// travel plaintext over the wire, even on a private LAN.
+//
+// Protocol (one round-trip):
+//   1. Joining node generates an ephemeral P-256 keypair, sends its public key
+//      with the /join request.
+//   2. Primary generates its own ephemeral P-256 keypair, computes the ECDH
+//      shared secret, derives a 256-bit AES-GCM key via HKDF-SHA-256, and
+//      encrypts the secret payload.  Returns its public key + ciphertext.
+//   3. Joining node computes the same shared secret from its private key +
+//      the primary's public key, derives the same AES-GCM key, decrypts.
+//
+// A passive sniffer sees both public keys and the ciphertext — none of that
+// is sufficient to decrypt without one of the ephemeral private keys, which
+// never leave their respective processes.
+// ---------------------------------------------------------------------------
+function ecdhEncrypt(payload, peerPubkeyB64) {
+  const ecdh = crypto.createECDH('prime256v1');
+  ecdh.generateKeys();
+  const shared = ecdh.computeSecret(Buffer.from(peerPubkeyB64, 'base64'));
+  const key    = crypto.hkdfSync('sha256', shared, Buffer.alloc(0), 'classguard-ha-join-v1', 32);
+  const iv     = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const ct     = Buffer.concat([cipher.update(JSON.stringify(payload), 'utf8'), cipher.final()]);
+  return {
+    data:        ct.toString('base64'),
+    iv:          iv.toString('base64'),
+    tag:         cipher.getAuthTag().toString('base64'),
+    senderPubkey: ecdh.getPublicKey('base64'),
+  };
+}
+
+function ecdhDecrypt(enc, myEcdh) {
+  const shared   = myEcdh.computeSecret(Buffer.from(enc.senderPubkey, 'base64'));
+  const key      = crypto.hkdfSync('sha256', shared, Buffer.alloc(0), 'classguard-ha-join-v1', 32);
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(enc.iv, 'base64'));
+  decipher.setAuthTag(Buffer.from(enc.tag, 'base64'));
+  const pt = Buffer.concat([decipher.update(Buffer.from(enc.data, 'base64')), decipher.final()]);
+  return JSON.parse(pt.toString('utf8'));
+}
+
+// ---------------------------------------------------------------------------
 // Self-registration — upserts this node on startup using node_id as the key
 // ---------------------------------------------------------------------------
 
@@ -779,11 +822,21 @@ router.post('/join', async (req, res) => {
     // extension-builder would mint a different extension ID on that node,
     // silently forking the auto-update story between nodes the moment
     // anyone built the extension there.
-    res.status(201).json({
-      joined: true, node: nodeRows[0], replication,
-      jwtSecret: process.env.JWT_SECRET,
+    const secrets = {
+      jwtSecret:           process.env.JWT_SECRET,
       extensionSigningKey: process.env.EXTENSION_SIGNING_KEY || null,
-    });
+      replication,
+    };
+
+    // If the joining node sent an ephemeral ECDH public key, encrypt the
+    // secrets payload so credentials never travel plaintext.  Fall back to
+    // plaintext only for older nodes that don't send a pubkey.
+    if (req.body.pubkey) {
+      const encrypted = ecdhEncrypt(secrets, req.body.pubkey);
+      res.status(201).json({ joined: true, node: nodeRows[0], encrypted });
+    } else {
+      res.status(201).json({ joined: true, node: nodeRows[0], ...secrets });
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -811,6 +864,13 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
     // hostname (hardcoded in docker-compose.yml), so a second node's join
     // would otherwise collide with the primary's own row on nodes'
     // hostname unique constraint, regardless of node_id differing.
+
+    // Generate an ephemeral ECDH keypair so the primary can encrypt its
+    // response — secrets never travel plaintext over the wire.
+    const joinEcdh  = crypto.createECDH('prime256v1');
+    joinEcdh.generateKeys();
+    const joinPubkey = joinEcdh.getPublicKey('base64');
+
     const { data } = await axios.post(`${cleanUrl}/api/v1/ha/join`, {
       token,
       node_id:  config.node.id,
@@ -818,7 +878,15 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
       api_url:  config.appUrl,
       version:  config.version,
       request_replica: !!request_replica,
+      pubkey:   joinPubkey,
     }, { timeout: 8000 });
+
+    // Decrypt the secrets payload if the primary used ECDH encryption.
+    // Fall back to reading plaintext fields for older primaries.
+    const secrets = data?.encrypted
+      ? ecdhDecrypt(data.encrypted, joinEcdh)
+      : { jwtSecret: data?.jwtSecret, extensionSigningKey: data?.extensionSigningKey, replication: data?.replication };
+    const { jwtSecret, extensionSigningKey, replication: repConfig } = secrets;
 
     // Reflect the role the invite assigned us locally too, so this node's
     // own self-registration heartbeat (registerSelf) stays consistent with
@@ -852,21 +920,21 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
     // Patched in regardless of whether DB replication was requested — a
     // mismatched JWT_SECRET breaks session continuity on failover even for
     // a node that isn't a DB replica.
-    if (data?.jwtSecret) {
-      lines.push(`sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${data.jwtSecret}/" .env`);
+    if (jwtSecret) {
+      lines.push(`sed -i "s/^JWT_SECRET=.*/JWT_SECRET=${jwtSecret}/" .env`);
       restartServices.add('api');
     }
     // Full base64 (unfiltered RSA key, unlike the alphanumeric-only
     // JWT_SECRET/DB_PASSWORD) — can contain '/', so this needs a delimiter
     // sed won't confuse with the substitution syntax. '#' never appears in
     // base64 output.
-    if (data?.extensionSigningKey) {
-      lines.push(`sed -i "s#^EXTENSION_SIGNING_KEY=.*#EXTENSION_SIGNING_KEY=${data.extensionSigningKey}#" .env`);
+    if (extensionSigningKey) {
+      lines.push(`sed -i "s#^EXTENSION_SIGNING_KEY=.*#EXTENSION_SIGNING_KEY=${extensionSigningKey}#" .env`);
       restartServices.add('extension-builder');
     }
 
-    if (data?.replication) {
-      const { host, port, user, password, slot, appDbPassword } = data.replication;
+    if (repConfig) {
+      const { host, port, user, password, slot, appDbPassword } = repConfig;
       lines.push(
         'docker compose down',
         'docker volume rm classguard_postgres-data',
@@ -874,6 +942,7 @@ router.post('/join-cluster', ...superauth, async (req, res) => {
         'docker run --rm \\',
         '  -v classguard_postgres-data:/var/lib/postgresql/data \\',
         `  -e PGPASSWORD='${password}' \\`,
+        '  -e PGSSLMODE=require \\',
         '  timescale/timescaledb:latest-pg15 \\',
         `  pg_basebackup -h ${host} -p ${port} -U ${user} -D /var/lib/postgresql/data -Fp -Xs -P -R${slot ? ` -S ${slot}` : ''}`,
       );

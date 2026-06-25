@@ -238,6 +238,40 @@ if ! docker compose up -d --wait postgres redis; then
 fi
 info "PostgreSQL is ready"
 
+# ---------------------------------------------------------------------------
+# Ensure Postgres SSL is enabled so replication and join credential exchange
+# are always encrypted.  ssl=on is a postmaster parameter — needs a full
+# restart to take effect, done here once, transparently.
+# ---------------------------------------------------------------------------
+SSL_STATUS=$(docker exec classguard-postgres psql -U classguard classguard -tAc "SHOW ssl;" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+if [[ "$SSL_STATUS" != "on" ]]; then
+  info "Enabling Postgres SSL (one-time setup — requires a brief restart)..."
+  # Generate cert on the host (the Postgres image doesn't include openssl)
+  # and copy into the data volume.
+  openssl req -new -x509 -days 3650 -nodes \
+    -subj '/CN=classguard-postgres' \
+    -keyout /tmp/pg-server.key \
+    -out /tmp/pg-server.crt >/dev/null 2>&1
+  docker cp /tmp/pg-server.key classguard-postgres:/var/lib/postgresql/data/server.key
+  docker cp /tmp/pg-server.crt classguard-postgres:/var/lib/postgresql/data/server.crt
+  rm -f /tmp/pg-server.key /tmp/pg-server.crt
+  docker exec classguard-postgres bash -c "
+    chown postgres:postgres /var/lib/postgresql/data/server.key /var/lib/postgresql/data/server.crt
+    chmod 600 /var/lib/postgresql/data/server.key /var/lib/postgresql/data/server.crt
+    if grep -q '^#ssl = off' /var/lib/postgresql/data/postgresql.conf 2>/dev/null; then
+      sed -i 's/^#ssl = off/ssl = on/' /var/lib/postgresql/data/postgresql.conf
+    elif ! grep -q '^ssl ' /var/lib/postgresql/data/postgresql.conf 2>/dev/null; then
+      echo 'ssl = on' >> /var/lib/postgresql/data/postgresql.conf
+    fi
+  "
+  docker compose restart postgres
+  info "Waiting for Postgres to restart with SSL..."
+  until docker exec classguard-postgres pg_isready -U classguard >/dev/null 2>&1; do
+    sleep 1
+  done
+  info "Postgres SSL enabled"
+fi
+
 NODE_ROLE_CURRENT=$(grep '^NODE_ROLE=' .env | cut -d= -f2-)
 
 # Standbys have a read-only streaming replica — migrations would fail with
