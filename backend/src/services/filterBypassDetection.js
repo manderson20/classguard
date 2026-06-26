@@ -39,7 +39,8 @@
 const { pool, query } = require('../db');
 const { getUnifiedDevices } = require('./deviceConsolidation');
 const { sendFilterBypassAlert } = require('./mailer');
-const events = require('../events');
+const events  = require('../events');
+const zammad  = require('./zammad');
 
 const DNS_TRAFFIC_WINDOW_MINUTES = 20;
 
@@ -122,11 +123,17 @@ async function runDetection() {
         newAlerts++;
 
         const { rows: [student] } = await pool.query(`SELECT full_name FROM users WHERE email = $1`, [device.assignedEmail]);
+        const bypassStudentName = student?.full_name || device.assignedEmail || 'Unknown';
         sendFilterBypassAlert({
-          studentName: student?.full_name || device.assignedEmail,
+          studentName: bypassStudentName,
           deviceName: device.deviceModel || device.serialNumber,
           ipAddress: device.network.ip,
         }).catch(err => console.error('[filter-bypass/email]', err.message));
+        zammad.createTicketForEvent('filter_bypass', {
+          title: `Filter Bypass Detected — ${bypassStudentName}`,
+          body:  `A device was detected bypassing the content filter.\n\nStudent: ${bypassStudentName}\nDevice: ${device.deviceModel || device.serialNumber}\nIP: ${device.network.ip}`,
+          customerEmail: device.assignedEmail || '',
+        }).catch(err => console.error('[zammad/filter-bypass]', err.message));
 
         events.emit('safety:filter_bypass', {
           studentName: student?.full_name || device.assignedEmail,

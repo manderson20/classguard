@@ -62,6 +62,8 @@ const ALLOWED_KEYS = new Set([
   // First-time setup wizard — tracks whether the guided onboarding flow has
   // been completed so superadmins aren't redirected to it on every login.
   'setup_wizard_complete',
+  // Zammad ticket routing — JSON map of event type → { group, priority, auto_create }
+  'zammad_routing_rules',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object

@@ -23,7 +23,7 @@ function client(url, token) {
 async function getClient() {
   const cfg = await getConfig();
   if (!cfg.url || !cfg.token) {
-    throw new Error('Zammad is not configured. Add the URL and API token in Settings → Integrations.');
+    throw new Error('Zammad is not configured. Add the URL and API token in Integrations → Zammad.');
   }
   return client(cfg.url, cfg.token);
 }
@@ -39,12 +39,19 @@ async function testConnection() {
     login: u.login,
     name:  [u.firstname, u.lastname].filter(Boolean).join(' '),
     email: u.email,
-    role:  u.role_ids?.length ? 'agent/admin' : 'user',
   };
 }
 
 // ---------------------------------------------------------------------------
-// Tickets — uses expand=true so state/priority come back as strings
+// Routing rules — maps ClassGuard event types to Zammad group + priority
+// ---------------------------------------------------------------------------
+async function getRoutingRules() {
+  const { rows } = await pool.query(`SELECT value FROM settings WHERE key = 'zammad_routing_rules'`);
+  try { return JSON.parse(rows[0]?.value || '{}'); } catch { return {}; }
+}
+
+// ---------------------------------------------------------------------------
+// Tickets
 // ---------------------------------------------------------------------------
 async function listTickets({ page = 1, perPage = 50 } = {}) {
   const http = await getClient();
@@ -71,7 +78,7 @@ async function createTicket({ title, body, customerEmail, group = 'Users', prior
   const res  = await http.post('/tickets', {
     title,
     group,
-    customer: customerEmail,
+    customer: customerEmail || 'classguard-system@classguard.local',
     article: { subject: title, body, type: 'note', internal: false },
     priority,
     tags,
@@ -91,11 +98,85 @@ async function addTicketNote(ticketId, body, internal = true) {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-ticket creation from ClassGuard events
+// Checks routing rules — only creates if auto_create is enabled for the type
+// ---------------------------------------------------------------------------
+async function createTicketForEvent(eventType, { title, body, customerEmail = '' } = {}) {
+  const rules = await getRoutingRules();
+  const rule  = rules[eventType];
+  if (!rule?.auto_create || !rule?.group) return null;
+
+  try {
+    const ticket = await createTicket({
+      title,
+      body,
+      customerEmail: customerEmail || 'classguard-system@classguard.local',
+      group:    rule.group,
+      priority: rule.priority || '2 normal',
+      tags:     ['classguard', eventType.replace(/_/g, '-')],
+    });
+    console.log(`[zammad] Auto-created ticket #${ticket.number} for event=${eventType}`);
+    return ticket;
+  } catch (err) {
+    console.error(`[zammad] Failed to create ticket for event=${eventType}:`, err.message);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Agent statistics — aggregate from ticket list + time accounting
+// ---------------------------------------------------------------------------
+async function getAgentStats() {
+  const http = await getClient();
+
+  // Fetch up to 500 tickets with expanded owner/time fields
+  const res = await http.get('/tickets', {
+    params: { expand: true, page: 1, per_page: 500, sort_by: 'updated_at', order_by: 'desc' },
+  });
+  const tickets = Array.isArray(res.data) ? res.data : [];
+
+  // Try to get time accounting entries (requires time accounting feature in Zammad)
+  let timeEntries = [];
+  try {
+    const timeRes = await http.get('/time_accountings', { params: { per_page: 1000 } });
+    timeEntries = Array.isArray(timeRes.data) ? timeRes.data : [];
+  } catch { /* time accounting may not be enabled */ }
+
+  // Aggregate per-agent from ticket ownership
+  const agentMap = {};
+  for (const t of tickets) {
+    const owner = t.owner || 'Unassigned';
+    if (!agentMap[owner]) {
+      agentMap[owner] = { name: owner, open: 0, pending: 0, closed: 0, total: 0, minutes: 0 };
+    }
+    agentMap[owner].total++;
+    const state = (t.state || '').toLowerCase();
+    if (state === 'closed' || state === 'merged') agentMap[owner].closed++;
+    else if (state.startsWith('pending'))          agentMap[owner].pending++;
+    else                                           agentMap[owner].open++;
+    // Some Zammad setups put time on the ticket directly
+    if (t.time_unit) agentMap[owner].minutes += parseFloat(t.time_unit) || 0;
+  }
+
+  // Also aggregate time accounting entries by created_by (agent who logged time)
+  // time_accounting entries have: time_unit (minutes), ticket_id, created_by (login/name)
+  for (const entry of timeEntries) {
+    const agent = entry.created_by || entry.created_by_id;
+    if (!agent || typeof agent !== 'string') continue;
+    if (!agentMap[agent]) agentMap[agent] = { name: agent, open: 0, pending: 0, closed: 0, total: 0, minutes: 0 };
+    agentMap[agent].minutes += parseFloat(entry.time_unit) || 0;
+  }
+
+  return Object.values(agentMap)
+    .filter(a => a.name !== 'Unassigned' || a.total > 0)
+    .sort((a, b) => b.total - a.total);
+}
+
+// ---------------------------------------------------------------------------
 // Sync into local cache
 // ---------------------------------------------------------------------------
 async function syncTickets() {
   const http = await getClient();
-  // Fetch up to 200 most-recently-updated tickets with expanded fields
   const res = await http.get('/tickets', {
     params: { expand: true, page: 1, per_page: 200, sort_by: 'updated_at', order_by: 'desc' },
   });
@@ -119,4 +200,9 @@ async function syncTickets() {
   return tickets.length;
 }
 
-module.exports = { getConfig, testConnection, getGroups, listTickets, getTicket, createTicket, addTicketNote, syncTickets };
+module.exports = {
+  getConfig, testConnection, getRoutingRules,
+  getGroups, listTickets, getTicket,
+  createTicket, createTicketForEvent,
+  addTicketNote, getAgentStats, syncTickets,
+};

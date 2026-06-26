@@ -18,6 +18,7 @@ const { getCategoryForDomain } = require('../services/categoryLookup');
 const { computeRiskScore } = require('../services/riskScoring');
 const { sendSafetyAlert } = require('../services/mailer');
 const events              = require('../events');
+const zammad              = require('../services/zammad');
 
 // Categories worth a proactive look even with no flagged text on the page
 // (e.g. an image-heavy page, or a slur/keyword the page renders as an image
@@ -690,10 +691,17 @@ router.post('/screenshot', authenticate, async (req, res) => {
 
   if (riskScore >= 85) {
     query(`UPDATE screenshots SET alerted_at = NOW() WHERE id = $1`, [screenshot.id]).catch(() => {});
-    query(`SELECT full_name FROM users WHERE id = $1`, [req.user.userId]).then(({ rows: u }) => {
+    query(`SELECT full_name, email FROM users WHERE id = $1`, [req.user.userId]).then(({ rows: u }) => {
+      const studentName = u[0]?.full_name || 'Unknown student';
+      const studentEmail = u[0]?.email || '';
       sendSafetyAlert({
-        studentName: u[0]?.full_name, category: riskCategory, riskScore, url, screenshotId: screenshot.id,
+        studentName, category: riskCategory, riskScore, url, screenshotId: screenshot.id,
       }).catch(err => console.error('[safety-alert/email]', err.message));
+      zammad.createTicketForEvent('safety_alert', {
+        title: `Safety Alert — ${riskCategory} (Score: ${riskScore}) — ${studentName}`,
+        body:  `A student safety alert was triggered in ClassGuard.\n\nStudent: ${studentName}\nCategory: ${riskCategory}\nRisk Score: ${riskScore}\nURL: ${url}\nScreenshot ID: ${screenshot.id}`,
+        customerEmail: studentEmail,
+      }).catch(err => console.error('[zammad/safety-alert]', err.message));
     }).catch(() => {});
     events.emit('safety:urgent_alert', {
       screenshotId: screenshot.id, studentId: req.user.userId, category: riskCategory, riskScore, url,

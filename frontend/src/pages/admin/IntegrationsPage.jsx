@@ -93,82 +93,55 @@ function SyncButton({ label, endpoint }) {
 // ---------------------------------------------------------------------------
 // Zammad tab
 // ---------------------------------------------------------------------------
-const STATE_COLOR = {
-  new:               'bg-blue-100 text-blue-700',
-  open:              'bg-green-100 text-green-700',
-  'pending reminder':'bg-amber-100 text-amber-700',
-  'pending close':   'bg-amber-100 text-amber-700',
-  closed:            'bg-slate-100 text-slate-500',
-  merged:            'bg-purple-100 text-purple-700',
-};
-
 const PRIORITY_COLOR = {
   '1 low':    'text-slate-400',
   '2 normal': 'text-slate-600',
   '3 high':   'text-orange-600 font-semibold',
 };
 
-// Ticket templates — pre-fill title/body/priority based on ticket type
-const TICKET_TEMPLATES = [
+// ClassGuard event types that can be routed to Zammad groups
+const ROUTING_EVENT_TYPES = [
   {
-    id: 'general',
-    label: 'General IT Support',
-    title: '',
-    body: '',
-    priority: '2 normal',
+    id: 'safety_alert',
+    label: 'Safety Alert',
+    description: 'Student risk score exceeds the alert threshold (self-harm, violence, etc.)',
+    defaultPriority: '3 high',
+    sensitive: true,
   },
   {
-    id: 'device',
-    label: 'Device Issue',
-    title: 'Device issue — ',
-    body: 'Device:\nSerial / Asset tag:\nIssue description:\nSteps already tried:',
-    priority: '2 normal',
+    id: 'filter_bypass',
+    label: 'Filter Bypass',
+    description: 'A device is detected circumventing the content filter',
+    defaultPriority: '2 normal',
   },
   {
-    id: 'network',
-    label: 'Network / Connectivity',
-    title: 'Network issue — ',
-    body: 'Location / room:\nAffected devices:\nSymptoms:\nWhen did it start:',
-    priority: '3 high',
-  },
-  {
-    id: 'account',
-    label: 'Account / Access',
-    title: 'Account access — ',
-    body: 'User:\nSystem / application:\nIssue (locked out, password reset, permissions, etc.):',
-    priority: '2 normal',
-  },
-  {
-    id: 'safety',
-    label: 'Student Safety Incident',
-    title: 'Safety incident — ',
-    body: 'Student:\nDate/time observed:\nDescription:\nAction taken:',
-    priority: '3 high',
+    id: 'unblock_request',
+    label: 'Unblock Request',
+    description: 'A student submits a site unblock/allow request',
+    defaultPriority: '1 low',
   },
 ];
 
 function ZammadSection({ status }) {
   const qc = useQueryClient();
-  const [modal, setModal]         = useState(null);
-  const [selectedTicket, setSelectedTicket] = useState(null);
-  const [stateFilter, setStateFilter]       = useState('');
-  const [templateId, setTemplateId]         = useState('general');
-  const [form, setForm]           = useState({ title:'', customer:'', body:'', group:'', priority:'2 normal' });
-  const [settings, setSettings]   = useState({ zammad_url:'', zammad_token:'' });
-  const [testResult, setTestResult] = useState(null);
-  const [testing, setTesting]     = useState(false);
-  const [saving, setSaving]       = useState(false);
-  const [saveError, setSaveError] = useState(null);
-  const [note, setNote]           = useState('');
-  const [addingNote, setAddingNote] = useState(false);
+  const [tab, setTab]           = useState('routing');
+  const [modal, setModal]       = useState(null);
+  const [form, setForm]         = useState({ title:'', customer:'', body:'', group:'', priority:'2 normal' });
+  const [connSettings, setConnSettings] = useState({ zammad_url:'', zammad_token:'' });
+  const [testResult, setTestResult]     = useState(null);
+  const [testing, setTesting]   = useState(false);
+  const [connSaving, setConnSaving]     = useState(false);
+  const [connSaveError, setConnSaveError] = useState(null);
+  const [rules, setRules]       = useState({});  // local edit state for routing tab
+  const [rulesSaving, setRulesSaving]   = useState(false);
+  const [rulesSaved, setRulesSaved]     = useState(false);
   const configured = status?.zammad?.configured;
-  const fmtDate = d => d ? new Date(d).toLocaleString() : '—';
-
-  const { data: allTickets = [], isFetching: ticketsFetching } = useQuery({
-    queryKey: ['zammad-tickets'],
-    queryFn:  () => api.get('/integrations/tickets'),
-    enabled:  !!configured,
-  });
+  const fmtDate  = d => d ? new Date(d).toLocaleString() : '—';
+  const fmtMins  = m => {
+    if (!m) return '—';
+    const h = Math.floor(m / 60), min = Math.round(m % 60);
+    return h > 0 ? `${h}h ${min}m` : `${min}m`;
+  };
 
   const { data: groups = [] } = useQuery({
     queryKey: ['zammad-groups'],
@@ -178,21 +151,28 @@ function ZammadSection({ status }) {
 
   const { data: savedSettings } = useQuery({
     queryKey: ['zammad-saved-settings'],
-    queryFn:  () => api.get('/settings').then(s => ({ zammad_url: s.zammad_url || '', zammad_token: s.zammad_token || '' })),
+    queryFn:  () => api.get('/settings').then(s => ({
+      zammad_url:           s.zammad_url || '',
+      zammad_token:         s.zammad_token || '',
+      zammad_routing_rules: s.zammad_routing_rules || '{}',
+    })),
   });
 
-  // Filtered ticket list
-  const tickets = stateFilter
-    ? allTickets.filter(t => t.state?.toLowerCase() === stateFilter)
-    : allTickets;
+  const { data: agentStats = [], isFetching: statsFetching } = useQuery({
+    queryKey: ['zammad-agent-stats'],
+    queryFn:  () => api.get('/integrations/zammad/agent-stats'),
+    enabled:  !!configured && tab === 'stats',
+  });
 
-  // State counts for filter tabs
-  const counts = allTickets.reduce((acc, t) => {
-    const s = t.state?.toLowerCase() || 'unknown';
-    acc[s] = (acc[s] || 0) + 1;
-    return acc;
-  }, {});
+  // Initialise routing rules from DB when settings load
+  useEffect(() => {
+    if (!savedSettings) return;
+    try { setRules(JSON.parse(savedSettings.zammad_routing_rules || '{}')); } catch { setRules({}); }
+  }, [savedSettings]);
 
+  // ---------------------------------------------------------------------------
+  // Manual ticket creation
+  // ---------------------------------------------------------------------------
   const create = useMutation({
     mutationFn: () => api.post('/integrations/tickets', {
       title:         form.title,
@@ -201,77 +181,76 @@ function ZammadSection({ status }) {
       group:         form.group || groups[0]?.name || 'Users',
       priority:      form.priority,
     }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['zammad-tickets'] }); setModal(null); },
+    onSuccess: () => setModal(null),
   });
 
-  function applyTemplate(id) {
-    setTemplateId(id);
-    const tpl = TICKET_TEMPLATES.find(t => t.id === id);
-    if (tpl) setForm(f => ({ ...f, title: tpl.title, body: tpl.body, priority: tpl.priority }));
-  }
-
   function openCreate() {
-    const tpl = TICKET_TEMPLATES[0];
-    setTemplateId('general');
-    setForm({ title: tpl.title, customer: '', body: tpl.body, group: groups[0]?.name || '', priority: tpl.priority });
+    setForm({ title: '', customer: '', body: '', group: groups[0]?.name || '', priority: '2 normal' });
     setModal('create');
   }
 
-  function openSettings() {
-    setSettings(savedSettings || { zammad_url: '', zammad_token: '' });
+  // ---------------------------------------------------------------------------
+  // Connection settings
+  // ---------------------------------------------------------------------------
+  function openConnSettings() {
+    setConnSettings({
+      zammad_url:   savedSettings?.zammad_url   || '',
+      zammad_token: savedSettings?.zammad_token || '',
+    });
     setTestResult(null);
+    setConnSaveError(null);
     setModal('settings');
   }
 
   async function testConnection() {
-    setTesting(true);
-    setTestResult(null);
+    setTesting(true); setTestResult(null);
     try {
-      await api.put('/settings', settings);
+      await api.put('/settings', connSettings);
       const result = await api.get('/integrations/zammad/test');
       setTestResult({ ok: true, message: `Connected as ${result.name} (${result.email})` });
       qc.invalidateQueries({ queryKey: ['integrations-status'] });
       qc.invalidateQueries({ queryKey: ['zammad-saved-settings'] });
     } catch (e) {
       setTestResult({ ok: false, message: e.response?.data?.error || e.message || 'Connection failed' });
-    } finally {
-      setTesting(false);
-    }
+    } finally { setTesting(false); }
   }
 
-  async function saveSettings() {
-    setSaving(true); setSaveError(null);
+  async function saveConnSettings() {
+    setConnSaving(true); setConnSaveError(null);
     try {
-      await api.put('/settings', settings);
+      await api.put('/settings', connSettings);
       qc.invalidateQueries({ queryKey: ['integrations-status'] });
       qc.invalidateQueries({ queryKey: ['zammad-saved-settings'] });
       setModal(null);
     } catch (e) {
-      setSaveError(e.message || 'Save failed');
-    } finally { setSaving(false); }
+      setConnSaveError(e.message || 'Save failed');
+    } finally { setConnSaving(false); }
   }
 
-  async function submitNote() {
-    if (!note.trim() || !selectedTicket) return;
-    setAddingNote(true);
+  // ---------------------------------------------------------------------------
+  // Routing rules
+  // ---------------------------------------------------------------------------
+  function setRule(eventId, field, value) {
+    setRules(r => ({ ...r, [eventId]: { ...(r[eventId] || {}), [field]: value } }));
+    setRulesSaved(false);
+  }
+
+  async function saveRules() {
+    setRulesSaving(true);
     try {
-      await api.post(`/integrations/tickets/${selectedTicket.id}/note`, { body: note, internal: true });
-      setNote('');
-      qc.invalidateQueries({ queryKey: ['zammad-tickets'] });
+      await api.put('/settings', { zammad_routing_rules: JSON.stringify(rules) });
+      qc.invalidateQueries({ queryKey: ['zammad-saved-settings'] });
+      setRulesSaved(true);
     } catch (e) {
-      alert('Failed to add note: ' + (e.message || 'unknown error'));
-    } finally { setAddingNote(false); }
+      alert('Failed to save routing rules: ' + e.message);
+    } finally { setRulesSaving(false); }
   }
 
-  const zammadBase = savedSettings?.zammad_url?.replace(/\/$/, '') || '';
-  const ticketUrl  = t => zammadBase ? `${zammadBase}/#ticket/zoom/${t.id}` : null;
-
-  const STATE_TABS = [
-    { label: 'All', value: '' },
-    { label: 'New', value: 'new' },
-    { label: 'Open', value: 'open' },
-    { label: 'Pending', value: 'pending reminder' },
-    { label: 'Closed', value: 'closed' },
+  const zammadBase = (savedSettings?.zammad_url || '').replace(/\/$/, '');
+  const SECTION_TABS = [
+    { id: 'routing', label: 'Alert Routing' },
+    { id: 'stats',   label: 'Agent Stats' },
+    { id: 'conn',    label: 'Connection' },
   ];
 
   return (
@@ -283,216 +262,274 @@ function ZammadSection({ status }) {
         {configured && status?.zammad?.lastSync && (
           <span className="text-xs text-slate-400">Last sync: {fmtDate(status.zammad.lastSync)}</span>
         )}
-        <div className="ml-auto flex gap-2 flex-wrap">
-          <button onClick={openSettings} className="btn-secondary text-xs">Settings</button>
-          {configured && <SyncButton label="Sync tickets" endpoint="/integrations/sync/tickets"/>}
-          {configured && <button onClick={openCreate} className="btn-primary text-xs">+ New Ticket</button>}
+        <div className="ml-auto flex gap-2">
+          {configured && <button onClick={openCreate} className="btn-primary text-xs">+ Manual Ticket</button>}
         </div>
       </div>
 
       <ErrorBanner message={status?.zammad?.lastError}/>
 
-      {/* Setup guide (shown when not connected) */}
-      {!configured && (
-        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 space-y-4">
-          <div>
-            <p className="font-semibold text-slate-800 text-sm mb-1">How to connect Zammad</p>
-            <ol className="list-decimal list-inside space-y-1.5 text-xs text-slate-600">
-              <li>Log in to Zammad as an <strong>Admin</strong> or <strong>Agent</strong></li>
-              <li>Click your avatar (top-right) → <strong>Profile</strong></li>
-              <li>Scroll to <strong>Token Access</strong> → enable it if not already on → click <strong>Create</strong></li>
-              <li>Give the token a name (e.g. "ClassGuard"), click <strong>Create</strong> — copy the token immediately, it won't be shown again</li>
-              <li>Click <strong>Settings</strong> above, paste your Zammad URL and token, then click <strong>Test Connection</strong></li>
-            </ol>
+      {/* Sub-tabs */}
+      <div className="flex gap-1 border-b border-slate-200">
+        {SECTION_TABS.map(t => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            className={`px-4 py-2 text-xs font-medium transition-colors rounded-t
+              ${tab === t.id
+                ? 'bg-white border border-b-white border-slate-200 text-primary-700 -mb-px'
+                : 'text-slate-500 hover:text-slate-700'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* ROUTING TAB                                                          */}
+      {/* ------------------------------------------------------------------ */}
+      {tab === 'routing' && (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            When ClassGuard fires an alarm, it automatically creates a Zammad ticket in the group you configure here.
+            Each alarm type can go to a different group — for example, sensitive safety alerts can go to a private
+            admin-only group while routine IT issues go to your general helpdesk group.
+          </p>
+
+          {!configured && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+              Connect Zammad first (Connection tab) to load available groups.
+            </div>
+          )}
+
+          <div className="space-y-3">
+            {ROUTING_EVENT_TYPES.map(evt => {
+              const rule = rules[evt.id] || {};
+              return (
+                <div key={evt.id}
+                  className="rounded-xl border border-slate-200 bg-white p-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-6">
+                  {/* Event info */}
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <p className="text-sm font-semibold text-slate-800">{evt.label}</p>
+                      {evt.sensitive && (
+                        <span className="px-1.5 py-0.5 rounded text-xs bg-red-50 text-red-600 border border-red-100 font-medium">
+                          sensitive
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400 mt-0.5">{evt.description}</p>
+                  </div>
+
+                  {/* Controls */}
+                  <div className="flex flex-wrap items-end gap-3 sm:shrink-0">
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Zammad group</label>
+                      <select className={INPUT + ' w-44'} value={rule.group || ''}
+                        disabled={!configured}
+                        onChange={e => setRule(evt.id, 'group', e.target.value)}>
+                        <option value="">{configured ? '— select group —' : '— not connected —'}</option>
+                        {groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs text-slate-500 mb-1">Priority</label>
+                      <select className={INPUT + ' w-32'} value={rule.priority || evt.defaultPriority}
+                        onChange={e => setRule(evt.id, 'priority', e.target.value)}>
+                        <option value="1 low">Low</option>
+                        <option value="2 normal">Normal</option>
+                        <option value="3 high">High</option>
+                      </select>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer pb-1">
+                      <input type="checkbox" className="w-4 h-4 rounded"
+                        checked={!!rule.auto_create}
+                        onChange={e => setRule(evt.id, 'auto_create', e.target.checked)}/>
+                      <span className="text-xs text-slate-600">Auto-create ticket</span>
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
           </div>
 
-          <div>
-            <p className="font-semibold text-slate-800 text-sm mb-2">Required permissions for the Zammad account</p>
-            <p className="text-xs text-slate-500 mb-2">
-              The account whose token you use must have these permissions. The simplest option is to use an Admin account,
-              or create a dedicated "ClassGuard" agent with the role below.
-            </p>
-            <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white">
-              <table className="w-full text-xs">
-                <thead className="bg-slate-100 text-slate-500 uppercase font-semibold">
-                  <tr>
-                    <th className="px-3 py-2 text-left">Module</th>
-                    <th className="px-3 py-2 text-left">Access level</th>
-                    <th className="px-3 py-2 text-left">What ClassGuard uses it for</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {[
-                    ['Ticket', 'Create + Read + Update', 'View, create, and add notes to tickets'],
-                    ['User',   'Read',                   'Resolve customer email from ticket data'],
-                    ['Group',  'Read',                   'Populate the group picker when creating tickets'],
-                    ['Admin',  'Optional — recommended', 'See all tickets across all groups (agents only see their own groups)'],
-                  ].map(([mod, access, use]) => (
-                    <tr key={mod}>
-                      <td className="px-3 py-2 font-medium text-slate-700">{mod}</td>
-                      <td className="px-3 py-2 text-slate-600">{access}</td>
-                      <td className="px-3 py-2 text-slate-400">{use}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <p className="text-xs text-slate-400 mt-2">
-              In Zammad: <strong>Admin → Roles</strong> → edit a role → expand each module to set read/write/create access.
-              Alternatively, grant the user the built-in <strong>Admin</strong> role for full access.
-            </p>
+          <div className="flex items-center justify-end gap-3 pt-1">
+            {rulesSaved && <span className="text-xs text-green-600">Saved</span>}
+            <button onClick={saveRules} disabled={rulesSaving || !configured} className="btn-primary text-sm disabled:opacity-40">
+              {rulesSaving ? 'Saving…' : 'Save Routing Rules'}
+            </button>
           </div>
         </div>
       )}
 
-      {/* Ticket list */}
-      {configured && (
-        <>
-          {/* State filter tabs */}
-          <div className="flex gap-1 border-b border-slate-200">
-            {STATE_TABS.map(({ label, value }) => (
-              <button key={value} onClick={() => setStateFilter(value)}
-                className={`px-3 py-1.5 text-xs font-medium rounded-t transition-colors
-                  ${stateFilter === value
-                    ? 'bg-white border border-b-white border-slate-200 text-primary-700 -mb-px'
-                    : 'text-slate-500 hover:text-slate-700'}`}>
-                {label}
-                {value === '' ? (
-                  <span className="ml-1 text-slate-400">({allTickets.length})</span>
-                ) : counts[value] ? (
-                  <span className="ml-1 text-slate-400">({counts[value]})</span>
-                ) : null}
-              </button>
-            ))}
+      {/* ------------------------------------------------------------------ */}
+      {/* AGENT STATS TAB                                                      */}
+      {/* ------------------------------------------------------------------ */}
+      {tab === 'stats' && (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-slate-500">
+              Ticket counts and time logged per agent, pulled live from Zammad.
+              Time tracking requires the <strong>Time Accounting</strong> feature to be enabled in your Zammad instance
+              (Admin → Settings → Ticket → Time Accounting).
+            </p>
+            <button onClick={() => qc.invalidateQueries({ queryKey: ['zammad-agent-stats'] })}
+              className="btn-secondary text-xs shrink-0 ml-4">Refresh</button>
           </div>
 
-          <div className="overflow-x-auto rounded-lg border border-slate-200">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-                <tr>{['#','Title','Group','State','Priority','Customer','Updated',''].map(h =>
-                  <th key={h} className="px-3 py-2 text-left">{h}</th>)}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {ticketsFetching && !allTickets.length && (
-                  <tr><td colSpan={8} className="text-center text-slate-400 py-6 text-xs">Loading…</td></tr>
-                )}
-                {tickets.map(t => (
-                  <tr key={t.id} className="hover:bg-slate-50 cursor-pointer" onClick={() => setSelectedTicket(t)}>
-                    <td className="px-3 py-2 text-slate-400 text-xs font-mono">{t.number}</td>
-                    <td className="px-3 py-2 font-medium text-slate-800 text-xs max-w-xs truncate">{t.title}</td>
-                    <td className="px-3 py-2 text-xs text-slate-500">{t.group || '—'}</td>
-                    <td className="px-3 py-2 text-xs">
-                      <span className={`px-2 py-0.5 rounded-full font-medium text-xs ${STATE_COLOR[t.state?.toLowerCase()] || 'bg-slate-100 text-slate-600'}`}>
-                        {t.state || '—'}
-                      </span>
-                    </td>
-                    <td className={`px-3 py-2 text-xs ${PRIORITY_COLOR[t.priority] || 'text-slate-500'}`}>{t.priority || '—'}</td>
-                    <td className="px-3 py-2 text-xs text-slate-500">{t.customer || '—'}</td>
-                    <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{fmtDate(t.updated_at)}</td>
-                    <td className="px-3 py-2 text-right" onClick={e => e.stopPropagation()}>
-                      {ticketUrl(t) && (
-                        <a href={ticketUrl(t)} target="_blank" rel="noopener noreferrer"
-                          className="text-xs text-primary-600 hover:underline whitespace-nowrap">
-                          Open ↗
-                        </a>
-                      )}
-                    </td>
+          {!configured && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 text-xs text-amber-700">
+              Connect Zammad first (Connection tab) to view agent statistics.
+            </div>
+          )}
+
+          {configured && (
+            <div className="overflow-x-auto rounded-lg border border-slate-200">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+                  <tr>
+                    {['Agent','Open','Pending','Closed','Total','Time logged'].map(h =>
+                      <th key={h} className="px-3 py-2 text-left">{h}</th>)}
                   </tr>
-                ))}
-                {!ticketsFetching && !tickets.length && (
-                  <tr><td colSpan={8} className="text-center text-slate-400 py-6 text-xs">
-                    {stateFilter ? `No ${stateFilter} tickets` : 'No tickets — click Sync tickets to load'}
-                  </td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {statsFetching && !agentStats.length && (
+                    <tr><td colSpan={6} className="text-center text-slate-400 py-6 text-xs">Loading…</td></tr>
+                  )}
+                  {agentStats.map((a, i) => (
+                    <tr key={i} className="hover:bg-slate-50">
+                      <td className="px-3 py-2 font-medium text-slate-800 text-xs">{a.name}</td>
+                      <td className="px-3 py-2 text-xs text-green-700">{a.open}</td>
+                      <td className="px-3 py-2 text-xs text-amber-600">{a.pending}</td>
+                      <td className="px-3 py-2 text-xs text-slate-400">{a.closed}</td>
+                      <td className="px-3 py-2 text-xs font-medium text-slate-700">{a.total}</td>
+                      <td className="px-3 py-2 text-xs font-mono text-slate-600">{fmtMins(a.minutes)}</td>
+                    </tr>
+                  ))}
+                  {!statsFetching && !agentStats.length && (
+                    <tr><td colSpan={6} className="text-center text-slate-400 py-6 text-xs">
+                      No agent data — make sure the API token has Admin access so all tickets are visible
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {zammadBase && (
+            <p className="text-xs text-slate-400">
+              Full reports available in Zammad:{' '}
+              <a href={`${zammadBase}/#reports`} target="_blank" rel="noopener noreferrer"
+                className="text-primary-600 hover:underline">
+                Open Reports ↗
+              </a>
+            </p>
+          )}
+        </div>
       )}
 
-      {/* Ticket detail drawer */}
-      {selectedTicket && (
-        <Modal title={`Ticket #${selectedTicket.number}`} onClose={() => { setSelectedTicket(null); setNote(''); }}>
-          <div className="space-y-4">
-            <div>
-              <p className="font-semibold text-slate-900">{selectedTicket.title}</p>
-              <div className="flex flex-wrap gap-3 mt-2 text-xs text-slate-500">
-                <span>State: <span className={`px-2 py-0.5 rounded-full font-medium ${STATE_COLOR[selectedTicket.state?.toLowerCase()] || 'bg-slate-100 text-slate-600'}`}>{selectedTicket.state}</span></span>
-                <span>Priority: <strong className={PRIORITY_COLOR[selectedTicket.priority] || ''}>{selectedTicket.priority}</strong></span>
-                <span>Group: <strong className="text-slate-700">{selectedTicket.group || '—'}</strong></span>
-                <span>Customer: <strong className="text-slate-700">{selectedTicket.customer || '—'}</strong></span>
-              </div>
-              <div className="flex gap-4 mt-1 text-xs text-slate-400">
-                <span>Created: {fmtDate(selectedTicket.created_at)}</span>
-                <span>Updated: {fmtDate(selectedTicket.updated_at)}</span>
-              </div>
-            </div>
-
-            <div className="border-t border-slate-100 pt-4">
-              <p className="text-xs font-semibold text-slate-600 mb-2">Add internal note</p>
-              <textarea rows={3} className={INPUT} value={note} onChange={e => setNote(e.target.value)}
-                placeholder="Add a note visible to agents only…"/>
-              <div className="flex items-center justify-between mt-2">
-                <span className="text-xs text-slate-400">Note will be marked internal (not visible to customer)</span>
-                <button onClick={submitNote} disabled={addingNote || !note.trim()}
-                  className="btn-secondary text-xs disabled:opacity-40">
-                  {addingNote ? 'Adding…' : 'Add Note'}
-                </button>
-              </div>
-            </div>
-
-            {ticketUrl(selectedTicket) && (
-              <div className="border-t border-slate-100 pt-3 text-right">
-                <a href={ticketUrl(selectedTicket)} target="_blank" rel="noopener noreferrer"
-                  className="text-sm text-primary-600 hover:underline font-medium">
-                  Open full ticket in Zammad ↗
-                </a>
-              </div>
-            )}
+      {/* ------------------------------------------------------------------ */}
+      {/* CONNECTION TAB                                                       */}
+      {/* ------------------------------------------------------------------ */}
+      {tab === 'conn' && (
+        <div className="space-y-4 max-w-lg">
+          <div className="flex flex-col gap-3">
+            <Field label="Zammad URL" hint="Your Zammad instance base URL">
+              <input className={INPUT} value={connSettings.zammad_url}
+                onChange={e => { setConnSettings(s => ({...s, zammad_url: e.target.value})); setTestResult(null); }}
+                placeholder="https://helpdesk.example.com"/>
+            </Field>
+            <Field label="API Token" hint="Profile → Token Access → Create token">
+              <input type="password" className={INPUT} value={connSettings.zammad_token}
+                onChange={e => { setConnSettings(s => ({...s, zammad_token: e.target.value})); setTestResult(null); }}
+                placeholder="Paste token here — only shown once in Zammad"/>
+            </Field>
           </div>
-        </Modal>
+
+          {!configured && (
+            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-3">
+              <p className="text-xs font-semibold text-slate-700">How to generate a token</p>
+              <ol className="list-decimal list-inside space-y-1.5 text-xs text-slate-600">
+                <li>Log in to Zammad as an <strong>Admin</strong></li>
+                <li>Click your avatar (top-right) → <strong>Profile</strong></li>
+                <li>Scroll to <strong>Token Access</strong>, enable it, then click <strong>Create</strong></li>
+                <li>Name it "ClassGuard" — copy the token immediately, it won't be shown again</li>
+              </ol>
+              <p className="text-xs font-semibold text-slate-700 pt-1">Required account permissions</p>
+              <div className="overflow-x-auto rounded border border-slate-200">
+                <table className="w-full text-xs">
+                  <thead className="bg-slate-100 text-slate-500 font-semibold uppercase">
+                    <tr>
+                      <th className="px-2 py-1.5 text-left">Module</th>
+                      <th className="px-2 py-1.5 text-left">Access</th>
+                      <th className="px-2 py-1.5 text-left">Used for</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {[
+                      ['Ticket', 'Create + Read + Update', 'Create and view tickets'],
+                      ['User',   'Read',                   'Resolve customer email'],
+                      ['Group',  'Read',                   'Populate group picker'],
+                      ['Admin',  'Recommended',            'See all tickets across all groups'],
+                    ].map(([m, a, u]) => (
+                      <tr key={m}>
+                        <td className="px-2 py-1.5 font-medium text-slate-700">{m}</td>
+                        <td className="px-2 py-1.5 text-slate-600">{a}</td>
+                        <td className="px-2 py-1.5 text-slate-400">{u}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <p className="text-xs text-slate-400">
+                Zammad Admin → Roles → edit role → expand each module to set access level.
+              </p>
+            </div>
+          )}
+
+          {testResult && (
+            <div className={`px-3 py-2 rounded-lg text-xs border ${testResult.ok
+              ? 'bg-green-50 border-green-200 text-green-700'
+              : 'bg-red-50 border-red-200 text-red-600'}`}>
+              {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
+            </div>
+          )}
+          {connSaveError && <p className="text-red-500 text-xs">{connSaveError}</p>}
+
+          <div className="flex items-center gap-3">
+            <button onClick={testConnection}
+              disabled={testing || !connSettings.zammad_url || !connSettings.zammad_token}
+              className="btn-secondary text-sm disabled:opacity-40">
+              {testing ? 'Testing…' : 'Test Connection'}
+            </button>
+            <button onClick={saveConnSettings} disabled={connSaving} className="btn-primary text-sm">
+              {connSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </div>
       )}
 
-      {/* Create ticket modal */}
+      {/* Manual ticket modal */}
       {modal === 'create' && (
-        <Modal title="New Ticket" onClose={() => setModal(null)}>
-          {/* Template selector */}
-          <div className="mb-4">
-            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Ticket type</p>
-            <div className="flex flex-wrap gap-2">
-              {TICKET_TEMPLATES.map(tpl => (
-                <button key={tpl.id} onClick={() => applyTemplate(tpl.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium border transition-colors
-                    ${templateId === tpl.id
-                      ? 'bg-primary-600 text-white border-primary-600'
-                      : 'bg-white text-slate-600 border-slate-200 hover:border-primary-300'}`}>
-                  {tpl.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
+        <Modal title="Manual Ticket" onClose={() => setModal(null)}>
           <div className="flex flex-col gap-3">
             <Field label="Title">
               <input className={INPUT} value={form.title} autoFocus
                 onChange={e => setForm(f => ({...f, title: e.target.value}))}
-                placeholder="Brief description of the issue"/>
+                placeholder="Brief description"/>
             </Field>
-            <Field label="Customer email" hint="The end-user this ticket is for">
+            <Field label="Customer email" hint="Person this ticket is about or for">
               <input type="email" className={INPUT} value={form.customer}
                 onChange={e => setForm(f => ({...f, customer: e.target.value}))}
-                placeholder="student@district.org or teacher@district.org"/>
+                placeholder="user@district.org"/>
             </Field>
             <div className="grid grid-cols-2 gap-3">
-              <Field label="Group" hint="Which team handles this">
-                <select className={INPUT} value={form.group} onChange={e => setForm(f => ({...f, group: e.target.value}))}>
-                  {groups.length ? groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)
-                    : <option value="Users">Users</option>}
+              <Field label="Group">
+                <select className={INPUT} value={form.group}
+                  onChange={e => setForm(f => ({...f, group: e.target.value}))}>
+                  {groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)}
                 </select>
               </Field>
               <Field label="Priority">
-                <select className={INPUT} value={form.priority} onChange={e => setForm(f => ({...f, priority: e.target.value}))}>
+                <select className={INPUT} value={form.priority}
+                  onChange={e => setForm(f => ({...f, priority: e.target.value}))}>
                   <option value="1 low">Low</option>
                   <option value="2 normal">Normal</option>
                   <option value="3 high">High</option>
@@ -500,69 +537,18 @@ function ZammadSection({ status }) {
               </Field>
             </div>
             <Field label="Description">
-              <textarea rows={5} className={INPUT} value={form.body}
-                onChange={e => setForm(f => ({...f, body: e.target.value}))}
-                placeholder="Describe the issue in detail…"/>
+              <textarea rows={4} className={INPUT} value={form.body}
+                onChange={e => setForm(f => ({...f, body: e.target.value}))}/>
             </Field>
           </div>
           {create.isError && <p className="text-red-500 text-xs mt-2">{create.error?.message}</p>}
           <div className="flex justify-end gap-2 mt-4">
             <button onClick={() => setModal(null)} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={() => create.mutate()} disabled={create.isPending || !form.title || !form.customer}
-              className="btn-primary text-sm">{create.isPending ? 'Creating…' : 'Create Ticket'}</button>
-          </div>
-        </Modal>
-      )}
-
-      {/* Settings modal */}
-      {modal === 'settings' && (
-        <Modal title="Zammad Settings" onClose={() => setModal(null)}>
-          <div className="flex flex-col gap-3">
-            <Field label="Zammad URL" hint="Your Zammad instance base URL">
-              <input className={INPUT} value={settings.zammad_url}
-                onChange={e => { setSettings(s => ({...s, zammad_url: e.target.value})); setTestResult(null); }}
-                placeholder="https://helpdesk.example.com"/>
-            </Field>
-            <Field label="API Token" hint="Profile → Token Access → Create token">
-              <input type="password" className={INPUT} value={settings.zammad_token}
-                onChange={e => { setSettings(s => ({...s, zammad_token: e.target.value})); setTestResult(null); }}
-                placeholder="Paste token here — it's only shown once in Zammad"/>
-            </Field>
-          </div>
-
-          {/* Inline permission guide */}
-          <div className="mt-4 bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-600 space-y-2">
-            <p className="font-semibold text-slate-700">Account requirements</p>
-            <p>The Zammad account must have <strong>Agent</strong> or <strong>Admin</strong> role. Required module access:</p>
-            <ul className="list-disc list-inside space-y-0.5 text-slate-500">
-              <li><strong>Ticket</strong> — Create, Read, Update</li>
-              <li><strong>User</strong> — Read (to resolve customer emails)</li>
-              <li><strong>Group</strong> — Read (to populate group picker)</li>
-              <li><strong>Admin</strong> — recommended, so all tickets are visible (agents only see their assigned groups)</li>
-            </ul>
-            <p className="text-slate-400">To set: Zammad Admin → Roles → edit role → expand each module.</p>
-          </div>
-
-          {testResult && (
-            <div className={`mt-3 px-3 py-2 rounded-lg text-xs border ${testResult.ok
-              ? 'bg-green-50 border-green-200 text-green-700'
-              : 'bg-red-50 border-red-200 text-red-600'}`}>
-              {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
-            </div>
-          )}
-          {saveError && <p className="text-red-500 text-xs mt-2">{saveError}</p>}
-
-          <div className="flex items-center justify-between mt-4">
-            <button onClick={testConnection} disabled={testing || !settings.zammad_url || !settings.zammad_token}
-              className="btn-secondary text-sm disabled:opacity-40">
-              {testing ? 'Testing…' : 'Test Connection'}
+            <button onClick={() => create.mutate()}
+              disabled={create.isPending || !form.title || !form.customer}
+              className="btn-primary text-sm">
+              {create.isPending ? 'Creating…' : 'Create Ticket'}
             </button>
-            <div className="flex gap-2">
-              <button onClick={() => setModal(null)} className="btn-secondary text-sm">Cancel</button>
-              <button onClick={saveSettings} disabled={saving} className="btn-primary text-sm">
-                {saving ? 'Saving…' : 'Save'}
-              </button>
-            </div>
           </div>
         </Modal>
       )}

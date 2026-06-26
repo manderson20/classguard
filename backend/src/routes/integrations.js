@@ -230,6 +230,16 @@ router.get('/zammad/groups', ...auth, async (req, res) => {
   }
 });
 
+// GET /api/v1/integrations/zammad/agent-stats
+router.get('/zammad/agent-stats', ...auth, async (req, res) => {
+  try {
+    const stats = await zammad.getAgentStats();
+    res.json(stats);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
 // GET /api/v1/integrations/tickets?page=
 router.get('/tickets', ...auth, async (req, res) => {
   try {
