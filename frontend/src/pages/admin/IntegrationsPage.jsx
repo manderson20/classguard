@@ -2160,9 +2160,136 @@ function AllDevicesTab({ snipeitMacFields = [] }) {
 }
 
 // ---------------------------------------------------------------------------
+// Infosec IQ
+// ---------------------------------------------------------------------------
+function InfosecIqSection() {
+  const [settings, setSettings] = useState({ base_url: '', api_key: '' });
+  const [hasKey, setHasKey]     = useState(false);
+  const [lastSync, setLastSync] = useState(null);
+  const [saving, setSaving]     = useState(false);
+  const [saveError, setSaveError] = useState(null);
+  const [saved, setSaved]       = useState(false);
+  const [testing, setTesting]   = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [syncing, setSyncing]   = useState(false);
+  const [syncMsg, setSyncMsg]   = useState(null);
+
+  useEffect(() => {
+    api.get('/infoseciq/settings')
+      .then(d => {
+        setSettings({ base_url: d.base_url || '', api_key: '' });
+        setHasKey(!!d.has_key);
+        setLastSync(d.last_sync || null);
+      })
+      .catch(() => {});
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setSaveError(null);
+    try {
+      const body = { base_url: settings.base_url };
+      if (settings.api_key) body.api_key = settings.api_key;
+      await api.put('/infoseciq/settings', body);
+      setSaved(true);
+      setHasKey(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e) {
+      setSaveError(e.message || 'Save failed');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await api.post('/infoseciq/test');
+      setTestResult({ ok: result.ok, message: result.ok ? `Connected — status ${result.status}` : `Failed (status ${result.status})` });
+    } catch (e) {
+      setTestResult({ ok: false, message: e.message || 'Connection failed' });
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  const sync = async () => {
+    setSyncing(true);
+    setSyncMsg(null);
+    try {
+      await api.post('/infoseciq/sync');
+      setSyncMsg('Sync started');
+      setTimeout(() => setSyncMsg(null), 4000);
+    } catch (e) {
+      setSyncMsg('Sync failed: ' + (e.message || 'Unknown'));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  return (
+    <div className="flex flex-col gap-5 max-w-xl">
+      <div className="flex items-center gap-3">
+        <StatusDot ok={hasKey}/>
+        <span className="text-sm text-slate-600">{hasKey ? 'Connected' : 'Not configured'}</span>
+        {lastSync && <span className="text-xs text-slate-400">Last sync: {new Date(lastSync).toLocaleString()}</span>}
+        {hasKey && (
+          <div className="ml-auto flex items-center gap-2">
+            {syncMsg && <span className={`text-xs font-medium ${syncMsg.startsWith('Sync failed') ? 'text-red-600' : 'text-green-600'}`}>{syncMsg}</span>}
+            <button onClick={sync} disabled={syncing} className="text-xs px-3 py-1 rounded-lg font-medium bg-primary-50 text-primary-700 hover:bg-primary-100 disabled:opacity-40">
+              {syncing ? 'Starting…' : 'Sync Now'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <div className="flex flex-col gap-3">
+        <Field label="Base URL" hint="Your Infosec IQ API base URL">
+          <input
+            className={INPUT}
+            value={settings.base_url}
+            onChange={e => { setSettings(s => ({ ...s, base_url: e.target.value })); setTestResult(null); }}
+            placeholder="https://api.infosecinstitute.com/iqv2"
+          />
+        </Field>
+        <Field label={hasKey ? 'API Key (leave blank to keep current)' : 'API Key'} hint="Your Infosec IQ API key">
+          <input
+            type="password"
+            className={INPUT}
+            value={settings.api_key}
+            onChange={e => { setSettings(s => ({ ...s, api_key: e.target.value })); setTestResult(null); }}
+            placeholder={hasKey ? 'Leave blank to keep current key' : 'Paste API key'}
+          />
+        </Field>
+      </div>
+
+      {testResult && (
+        <div className={`px-3 py-2 rounded-lg text-xs border ${testResult.ok
+          ? 'bg-green-50 border-green-200 text-green-700'
+          : 'bg-red-50 border-red-200 text-red-600'}`}>
+          {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
+        </div>
+      )}
+      {saveError && <p className="text-red-500 text-xs">{saveError}</p>}
+
+      <div className="flex items-center gap-3">
+        <button onClick={test} disabled={testing || (!settings.base_url)} className="btn-secondary text-sm disabled:opacity-40">
+          {testing ? 'Testing…' : 'Test Connection'}
+        </button>
+        <button onClick={save} disabled={saving} className="btn-primary text-sm disabled:opacity-40">
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+        {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Overview','All Devices','Google Workspace','Mosyle','Snipe-IT','Zammad','IPAM Import'];
+const TABS = ['Overview','All Devices','Google Workspace','Mosyle','Snipe-IT','Zammad','Infosec IQ','IPAM Import'];
 
 export default function IntegrationsPage() {
   const [tab, setTab] = useState('Overview');
@@ -2229,6 +2356,19 @@ export default function IntegrationsPage() {
               </Card>
             );
           })}
+          <Card title="Infosec IQ" icon="🛡" subtitle="Cybersecurity awareness training &amp; phishing simulation">
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center gap-2">
+                <StatusDot ok={!!status?.infoseciq?.has_key}/>
+                <span className="text-sm text-slate-600">
+                  {status?.infoseciq?.has_key ? 'Connected' : 'Not configured'}
+                </span>
+              </div>
+              {status?.infoseciq?.last_sync && (
+                <span className="text-xs text-slate-400">Last sync: {new Date(status.infoseciq.last_sync).toLocaleString()}</span>
+              )}
+            </div>
+          </Card>
           <Card title="IPAM Import" icon="📥" subtitle="One-time import from PHPiPAM">
             <p className="text-sm text-slate-600">Seed ClassGuard IPAM from a PHPiPAM mysqldump export — sections, VLANs, subnets, and IP addresses.</p>
           </Card>
@@ -2240,6 +2380,7 @@ export default function IntegrationsPage() {
       {tab==='Mosyle'             && <MosyleSection status={status}/>}
       {tab==='Snipe-IT'           && <SnipeitSection status={status}/>}
       {tab==='Zammad'             && <ZammadSection status={status}/>}
+      {tab==='Infosec IQ'         && <InfosecIqSection/>}
       {tab==='IPAM Import'        && <IpamImportSection/>}
     </div>
   );
