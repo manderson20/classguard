@@ -33,6 +33,29 @@ router.get('/directory-search', authenticate, requireMinRole('teacher'), async (
   res.json(rows);
 });
 
+// CSV export of the full directory — teacher-accessible, same gate as above.
+// Returns all include_in_directory entries; the client triggers the download.
+router.get('/directory-export.csv', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { rows } = await query(
+    `SELECT display_name, extension, building, room_number
+     FROM phones
+     WHERE include_in_directory = true
+     ORDER BY building, display_name`
+  );
+  const escape = (v) => {
+    const s = v == null ? '' : String(v);
+    return s.includes(',') || s.includes('"') || s.includes('\n')
+      ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const header = 'Name,Extension,Building,Room';
+  const body   = rows.map(r =>
+    [r.display_name, r.extension, r.building, r.room_number].map(escape).join(',')
+  ).join('\n');
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="Phone Directory.csv"');
+  res.send(`${header}\n${body}`);
+});
+
 // All remaining routes require the 'phones' admin permission
 router.use(authenticate, requirePermission('phones'));
 

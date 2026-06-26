@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import MdiIcon from '@mdi/react';
-import { mdiMagnify, mdiPhoneOutline } from '@mdi/js';
+import { mdiMagnify, mdiPhoneOutline, mdiDownload } from '@mdi/js';
 import api from '../lib/api';
 
 function useDebounced(value, delay = 300) {
@@ -11,6 +11,21 @@ function useDebounced(value, delay = 300) {
     return () => clearTimeout(t);
   }, [value, delay]);
   return debounced;
+}
+
+async function exportCsv() {
+  const token = localStorage.getItem('cg_token');
+  const res = await fetch('/api/v1/phones/directory-export.csv', {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = 'Phone Directory.csv';
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 export default function PhoneDirectory() {
@@ -29,11 +44,17 @@ export default function PhoneDirectory() {
 
   return (
     <div className="p-6 max-w-2xl mx-auto">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold text-slate-900">Phone Directory</h1>
-        <p className="text-slate-500 text-sm mt-0.5">
-          Search by name, extension, or building
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">Phone Directory</h1>
+          <p className="text-slate-500 text-sm mt-0.5">
+            Search by name, extension, or building
+          </p>
+        </div>
+        <button onClick={exportCsv} className="btn btn-secondary flex items-center gap-1.5 flex-shrink-0">
+          <MdiIcon path={mdiDownload} size="1em" />
+          Export CSV
+        </button>
       </div>
 
       <div className="relative mb-6">
