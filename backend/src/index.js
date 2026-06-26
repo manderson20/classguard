@@ -131,6 +131,7 @@ app.use('/api/v1/roster',        require('./routes/roster'));
 app.use('/api/v1/radius',        require('./routes/radius'));
 app.use('/api/v1/tls',           require('./routes/tls'));
 app.use('/api/v1/analytics',     require('./routes/analytics'));
+app.use('/api/v1/fleet',         require('./routes/fleet'));
 app.use('/api/v1/phones',        require('./routes/phones'));
 app.use('/api/v1/phones',        require('./routes/phoneChanges'));
 app.use('/api/v1/chat',          require('./routes/chat'));

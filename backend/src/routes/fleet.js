@@ -1,0 +1,551 @@
+const { Router } = require('express');
+const { pool }   = require('../db');
+const { authenticate }      = require('../middleware/auth');
+const { requireMinRole }    = require('../middleware/roles');
+const fleetSync  = require('../services/fleetSync');
+const snipeit    = require('../services/snipeit');
+const google     = require('../services/google');
+const deviceConsolidation = require('../services/deviceConsolidation');
+
+const router = Router();
+router.use(authenticate, requireMinRole('admin'));
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function aupStatus(aupDate) {
+  if (!aupDate) return 'unknown';
+  const now   = new Date();
+  const exp   = new Date(aupDate);
+  const msDay = 86_400_000;
+  if (exp < now)               return 'expired';
+  if (exp - now < 365 * msDay) return 'expiring';
+  return 'ok';
+}
+
+function compareVersions(current, latest) {
+  if (!current || !latest) return 'unknown';
+  const toNum = v => v.split('.').map(n => parseInt(n) || 0);
+  const c = toNum(current);
+  const l = toNum(latest);
+  for (let i = 0; i < Math.max(c.length, l.length); i++) {
+    const cv = c[i] ?? 0, lv = l[i] ?? 0;
+    if (cv < lv) return 'behind';
+    if (cv > lv) return 'upToDate'; // ahead of reference (shouldn't happen)
+  }
+  return 'upToDate';
+}
+
+function escapeCsv(v) {
+  const s = v == null ? '' : String(v);
+  return s.includes(',') || s.includes('"') || s.includes('\n')
+    ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// ---------------------------------------------------------------------------
+// GET /fleet/summary
+// ---------------------------------------------------------------------------
+router.get('/summary', async (req, res) => {
+  const [
+    { rows: allDevices },
+    { rows: aupRef },
+    { rows: osRef },
+    { rows: settings },
+  ] = await Promise.all([
+    pool.query(`SELECT source, serial_number, os_type, os_version, asset_tag, last_seen, external_id FROM integration_devices`),
+    pool.query(`SELECT model, aup_date FROM chromebook_aup_reference`),
+    pool.query(`SELECT os_family, latest_version FROM apple_os_reference`),
+    pool.query(`SELECT key, value FROM settings WHERE key IN ('last_mosyle_sync','last_snipeit_sync','last_google_devices_sync')`),
+  ]);
+
+  const aupMap = Object.fromEntries(aupRef.map(r => [r.model?.toLowerCase(), r.aup_date]));
+  const osMap  = Object.fromEntries(osRef.map(r => [r.os_family, r.latest_version]));
+  const syncs  = Object.fromEntries(settings.map(r => [r.key, r.value]));
+
+  // Deduplicate by serial number (same physical device across sources)
+  const bySerial = new Map();
+  for (const d of allDevices) {
+    const key = d.serial_number ? d.serial_number.trim().toUpperCase() : `__id__${d.source}`;
+    if (!bySerial.has(key)) bySerial.set(key, []);
+    bySerial.get(key).push(d);
+  }
+
+  const byOs = {};
+  let chromebooks = { total: 0, expired: 0, expiringSoon: 0, ok: 0, unknown: 0 };
+  let apple       = { total: 0, upToDate: 0, updateAvailable: 0, unknown: 0 };
+  let offlineCount = 0;
+  const snipeSerials = new Set(allDevices.filter(d => d.source === 'snipeit').map(d => d.serial_number?.trim().toUpperCase()).filter(Boolean));
+  let gapCount = 0;
+
+  for (const [, rows] of bySerial) {
+    const osType = rows.find(r => r.os_type)?.os_type || 'Unknown';
+    byOs[osType] = (byOs[osType] || 0) + 1;
+
+    if (osType === 'ChromeOS') {
+      chromebooks.total++;
+      const model    = rows.find(r => r.device_model)?.device_model;
+      const aupDate  = model ? aupMap[model?.toLowerCase()] : null;
+      const status   = aupStatus(aupDate);
+      if (status === 'expired')   chromebooks.expired++;
+      else if (status === 'expiring') chromebooks.expiringSoon++;
+      else if (status === 'ok')   chromebooks.ok++;
+      else                         chromebooks.unknown++;
+    }
+
+    if (['macOS','iOS','iPadOS','tvOS'].includes(osType)) {
+      apple.total++;
+      const version = rows.find(r => r.os_version)?.os_version;
+      const latest  = osMap[osType];
+      const status  = compareVersions(version, latest);
+      if (status === 'upToDate') apple.upToDate++;
+      else if (status === 'behind') apple.updateAvailable++;
+      else apple.unknown++;
+    }
+
+    const lastSeen = rows.map(r => r.last_seen).filter(Boolean).sort().pop();
+    if (!lastSeen || (Date.now() - new Date(lastSeen).getTime()) > 30 * 86_400_000) offlineCount++;
+
+    const hasSnipe = rows.some(r => r.source === 'snipeit');
+    const hasMDM   = rows.some(r => r.source !== 'snipeit');
+    if (!hasSnipe && hasMDM) gapCount++;
+  }
+
+  res.json({
+    total:       bySerial.size,
+    byOs,
+    chromebooks,
+    apple,
+    offline:     offlineCount,
+    gaps:        gapCount,
+    lastSync: {
+      mosyle:        syncs.last_mosyle_sync        || null,
+      snipeit:       syncs.last_snipeit_sync        || null,
+      googleDevices: syncs.last_google_devices_sync || null,
+    },
+  });
+});
+
+// ---------------------------------------------------------------------------
+// GET /fleet/devices
+// ---------------------------------------------------------------------------
+router.get('/devices', async (req, res) => {
+  const { os, source, q } = req.query;
+  const limit  = Math.min(parseInt(req.query.limit)  || 100, 500);
+  const offset = parseInt(req.query.offset) || 0;
+
+  const unified = await deviceConsolidation.getUnifiedDevices();
+
+  let filtered = unified;
+  if (os)     filtered = filtered.filter(d => d.osType === os);
+  if (source) filtered = filtered.filter(d => d.sources.some(s => s.source === source));
+  if (q) {
+    const lq = q.toLowerCase();
+    filtered = filtered.filter(d =>
+      d.deviceName?.toLowerCase().includes(lq) ||
+      d.serialNumber?.toLowerCase().includes(lq) ||
+      d.assignedEmail?.toLowerCase().includes(lq) ||
+      d.assetTag?.toLowerCase().includes(lq)
+    );
+  }
+
+  res.json({ devices: filtered.slice(offset, offset + limit), total: filtered.length });
+});
+
+// ---------------------------------------------------------------------------
+// GET /fleet/export.csv
+// ---------------------------------------------------------------------------
+router.get('/export.csv', async (req, res) => {
+  const unified = await deviceConsolidation.getUnifiedDevices();
+  const header  = 'Serial,Name,Model,OS,Version,Assigned,Status,Asset Tag,Sources,Last Seen';
+  const body    = unified.map(d => [
+    d.serialNumber, d.deviceName, d.deviceModel, d.osType, d.osVersion,
+    d.assignedEmail, d.status, d.assetTag,
+    d.sources.map(s => s.source).join('|'), d.lastSynced,
+  ].map(escapeCsv).join(',')).join('\n');
+
+  res.setHeader('Content-Type', 'text/csv');
+  res.setHeader('Content-Disposition', 'attachment; filename="Device Fleet.csv"');
+  res.send(`${header}\n${body}`);
+});
+
+// ---------------------------------------------------------------------------
+// GET /fleet/chromebooks
+// ---------------------------------------------------------------------------
+router.get('/chromebooks', async (req, res) => {
+  const { status: filterStatus } = req.query;
+
+  const [{ rows: chromebookRows }, { rows: aupRef }] = await Promise.all([
+    pool.query(
+      `SELECT id.id, id.external_id, id.serial_number, id.device_name, id.device_model,
+              id.os_version, id.assigned_email, id.asset_tag, id.synced_at,
+              id.source
+       FROM integration_devices id
+       WHERE id.os_type = 'ChromeOS'`
+    ),
+    pool.query(`SELECT model, aup_date FROM chromebook_aup_reference`),
+  ]);
+
+  const aupMap = Object.fromEntries(aupRef.map(r => [r.model?.toLowerCase(), r.aup_date]));
+
+  // Group by serial — pick the Google Admin row for deviceId (needed for disable action)
+  const bySerial = new Map();
+  for (const r of chromebookRows) {
+    const s = r.serial_number?.trim().toUpperCase() || `__id__${r.id}`;
+    if (!bySerial.has(s)) bySerial.set(s, []);
+    bySerial.get(s).push(r);
+  }
+
+  const result = [];
+  for (const [serial, rows] of bySerial) {
+    const googleRow = rows.find(r => r.source === 'google_admin') || rows[0];
+    const model     = googleRow.device_model;
+    const aupDate   = model ? aupMap[model.toLowerCase()] : null;
+    const status    = aupStatus(aupDate);
+
+    if (filterStatus && status !== filterStatus) continue;
+
+    result.push({
+      serialNumber:   serial,
+      deviceName:     googleRow.device_name,
+      deviceModel:    model,
+      assignedEmail:  googleRow.assigned_email,
+      assetTag:       rows.find(r => r.asset_tag)?.asset_tag || null,
+      googleDeviceId: rows.find(r => r.source === 'google_admin')?.external_id || null,
+      aupDate:        aupDate || null,
+      aupStatus:      status,
+      osVersion:      googleRow.os_version,
+      lastSync:       googleRow.synced_at,
+    });
+  }
+
+  result.sort((a, b) => {
+    const order = { expired: 0, expiring: 1, unknown: 2, ok: 3 };
+    return (order[a.aupStatus] ?? 4) - (order[b.aupStatus] ?? 4);
+  });
+
+  res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// POST /fleet/chromebooks/disable  body: { deviceIds: string[] }
+// ---------------------------------------------------------------------------
+router.post('/chromebooks/disable', async (req, res) => {
+  const { deviceIds } = req.body;
+  if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
+    return res.status(400).json({ error: 'deviceIds array required' });
+  }
+
+  let disabled = 0;
+  const errors = [];
+
+  for (const id of deviceIds) {
+    try {
+      await google.setChromeDeviceAction(id, 'disable', req.user.userId);
+      disabled++;
+    } catch (err) {
+      errors.push(`${id}: ${err.message}`);
+    }
+  }
+
+  res.json({ disabled, errors });
+});
+
+// ---------------------------------------------------------------------------
+// GET /fleet/apple
+// ---------------------------------------------------------------------------
+router.get('/apple', async (req, res) => {
+  const { os: filterOs, updateStatus: filterUpdate } = req.query;
+
+  const APPLE_OS = ['macOS', 'iOS', 'iPadOS', 'tvOS'];
+
+  const [{ rows: appleRows }, { rows: osRef }] = await Promise.all([
+    pool.query(
+      `SELECT id, serial_number, device_name, device_model, os_type, os_version,
+              assigned_email, asset_tag, synced_at, source
+       FROM integration_devices
+       WHERE os_type = ANY($1)`,
+      [APPLE_OS]
+    ),
+    pool.query(`SELECT os_family, latest_version FROM apple_os_reference`),
+  ]);
+
+  const osMap = Object.fromEntries(osRef.map(r => [r.os_family, r.latest_version]));
+
+  // Deduplicate by serial — prefer Mosyle for technical fields
+  const bySerial = new Map();
+  for (const r of appleRows) {
+    const s = r.serial_number?.trim().toUpperCase() || `__id__${r.id}`;
+    if (!bySerial.has(s)) bySerial.set(s, []);
+    bySerial.get(s).push(r);
+  }
+
+  const result = [];
+  for (const [serial, rows] of bySerial) {
+    const ref    = rows.find(r => r.source === 'mosyle') || rows[0];
+    const osType = ref.os_type;
+
+    if (filterOs && osType !== filterOs) continue;
+
+    const latestVersion = osMap[osType] || null;
+    const updateStatus  = compareVersions(ref.os_version, latestVersion);
+
+    if (filterUpdate && updateStatus !== filterUpdate) continue;
+
+    result.push({
+      serialNumber:   serial,
+      deviceName:     ref.device_name,
+      deviceModel:    ref.device_model,
+      osType,
+      osVersion:      ref.os_version,
+      latestVersion,
+      updateStatus,
+      assignedEmail:  rows.find(r => r.assigned_email)?.assigned_email || null,
+      assetTag:       rows.find(r => r.asset_tag)?.asset_tag || null,
+      lastSync:       ref.synced_at,
+    });
+  }
+
+  result.sort((a, b) => {
+    const order = { behind: 0, unknown: 1, upToDate: 2 };
+    return (order[a.updateStatus] ?? 3) - (order[b.updateStatus] ?? 3);
+  });
+
+  res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// OS reference CRUD
+// ---------------------------------------------------------------------------
+router.get('/apple/os-reference', async (req, res) => {
+  const { rows } = await pool.query(`SELECT * FROM apple_os_reference ORDER BY os_family`);
+  res.json(rows);
+});
+
+router.put('/apple/os-reference/:family', async (req, res) => {
+  const { latest_version, min_supported_version } = req.body;
+  const { rows: [row] } = await pool.query(
+    `UPDATE apple_os_reference
+     SET latest_version=$1, min_supported_version=$2, updated_at=NOW()
+     WHERE os_family=$3
+     RETURNING *`,
+    [latest_version, min_supported_version || null, req.params.family]
+  );
+  if (!row) return res.status(404).json({ error: 'OS family not found' });
+  res.json(row);
+});
+
+// ---------------------------------------------------------------------------
+// AUP reference CRUD
+// ---------------------------------------------------------------------------
+router.get('/chromebooks/aup-reference', async (req, res) => {
+  const { rows } = await pool.query(`SELECT * FROM chromebook_aup_reference ORDER BY model`);
+  res.json(rows);
+});
+
+router.post('/chromebooks/aup-reference', async (req, res) => {
+  const { model, aup_date, notes } = req.body;
+  if (!model) return res.status(400).json({ error: 'model required' });
+  const { rows: [row] } = await pool.query(
+    `INSERT INTO chromebook_aup_reference (model, aup_date, notes)
+     VALUES ($1,$2,$3)
+     ON CONFLICT (model) DO UPDATE SET aup_date=$2, notes=$3, updated_at=NOW()
+     RETURNING *`,
+    [model, aup_date || null, notes || null]
+  );
+  res.status(201).json(row);
+});
+
+router.delete('/chromebooks/aup-reference/:id', async (req, res) => {
+  await pool.query(`DELETE FROM chromebook_aup_reference WHERE id=$1`, [req.params.id]);
+  res.status(204).end();
+});
+
+// ---------------------------------------------------------------------------
+// Cross-sync
+// ---------------------------------------------------------------------------
+router.get('/cross-sync/gaps', async (req, res) => {
+  const gaps = await fleetSync.getGaps();
+  res.json(gaps);
+});
+
+router.get('/cross-sync/settings', async (req, res) => {
+  const cfg = await fleetSync.getFleetSettings();
+  let modelName = null, statusName = null;
+  if (cfg.defaultModelId || cfg.defaultStatusId) {
+    try {
+      if (cfg.defaultModelId) {
+        const models = await snipeit.listModels();
+        modelName = models.find(m => m.id === cfg.defaultModelId)?.name || null;
+      }
+      if (cfg.defaultStatusId) {
+        const statuses = await snipeit.listStatusLabels();
+        statusName = statuses.find(s => s.id === cfg.defaultStatusId)?.name || null;
+      }
+    } catch { /* Snipe-IT might not be reachable */ }
+  }
+  res.json({ ...cfg, defaultModelName: modelName, defaultStatusName: statusName });
+});
+
+router.post('/cross-sync/settings', async (req, res) => {
+  await fleetSync.setFleetSettings(req.body);
+  res.json({ ok: true });
+});
+
+router.post('/cross-sync/run', async (req, res) => {
+  try {
+    const result = await fleetSync.runCrossSync(req.user.userId);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/cross-sync/history', async (req, res) => {
+  const { rows } = await pool.query(
+    `SELECT fsl.*, u.full_name AS triggered_by_name
+     FROM fleet_sync_log fsl
+     LEFT JOIN users u ON u.id = fsl.triggered_by
+     ORDER BY run_at DESC LIMIT 20`
+  );
+  res.json(rows);
+});
+
+router.get('/cross-sync/snipeit-models', async (req, res) => {
+  try {
+    const models = await snipeit.listModels({ search: req.query.q });
+    res.json(models);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/cross-sync/snipeit-statuses', async (req, res) => {
+  try {
+    const statuses = await snipeit.listStatusLabels();
+    res.json(statuses);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /fleet/offline
+// ---------------------------------------------------------------------------
+router.get('/offline', async (req, res) => {
+  const days   = Math.min(parseInt(req.query.days) || 30, 365);
+  const cutoff = new Date(Date.now() - days * 86_400_000);
+
+  const unified = await deviceConsolidation.getUnifiedDevices();
+
+  const result = unified
+    .map(d => {
+      const lastSeen = d.network?.lastSeen || d.lastSynced;
+      const daysSince = lastSeen
+        ? Math.floor((Date.now() - new Date(lastSeen).getTime()) / 86_400_000)
+        : null;
+      return { ...d, lastSeen, daysSince };
+    })
+    .filter(d => !d.lastSeen || new Date(d.lastSeen) < cutoff)
+    .map(d => ({
+      serialNumber:  d.serialNumber,
+      deviceName:    d.deviceName,
+      deviceModel:   d.deviceModel,
+      osType:        d.osType,
+      assignedEmail: d.assignedEmail,
+      assetTag:      d.assetTag,
+      lastSeen:      d.lastSeen,
+      daysSince:     d.daysSince,
+      sources:       d.sources.map(s => s.source),
+    }))
+    .sort((a, b) => (b.daysSince ?? 99999) - (a.daysSince ?? 99999));
+
+  res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// GET /fleet/lifecycle
+// ---------------------------------------------------------------------------
+router.get('/lifecycle', async (req, res) => {
+  const [{ rows: chromebookRows }, { rows: aupRef }, { rows: snipeRows }] = await Promise.all([
+    pool.query(
+      `SELECT serial_number, device_name, device_model, os_type, assigned_email, asset_tag, source
+       FROM integration_devices WHERE serial_number IS NOT NULL`
+    ),
+    pool.query(`SELECT model, aup_date FROM chromebook_aup_reference`),
+    // Pull purchase/warranty from Snipe-IT raw_data custom fields
+    pool.query(
+      `SELECT serial_number, raw_data FROM integration_devices WHERE source='snipeit'`
+    ),
+  ]);
+
+  const aupMap = Object.fromEntries(aupRef.map(r => [r.model?.toLowerCase(), r.aup_date]));
+
+  // Extract purchase/warranty from Snipe-IT custom fields if present
+  const warrantyBySerial = new Map();
+  for (const r of snipeRows) {
+    if (!r.serial_number || !r.raw_data) continue;
+    const raw   = typeof r.raw_data === 'string' ? JSON.parse(r.raw_data) : r.raw_data;
+    const cf    = raw?.custom_fields || {};
+    // Common field names for purchase/warranty dates
+    const purchaseDate  = Object.values(cf).find(f => /purchase.*date|bought|acquired/i.test(f.field || ''))?.value || null;
+    const warrantyDate  = Object.values(cf).find(f => /warrant|eol|end.*of.*life/i.test(f.field || ''))?.value || null;
+    if (purchaseDate || warrantyDate) {
+      warrantyBySerial.set(r.serial_number.trim().toUpperCase(), { purchaseDate, warrantyExpires: warrantyDate });
+    }
+  }
+
+  // Group by serial
+  const bySerial = new Map();
+  for (const r of chromebookRows) {
+    const s = r.serial_number?.trim().toUpperCase() || `__id__${r.source}`;
+    if (!bySerial.has(s)) bySerial.set(s, []);
+    bySerial.get(s).push(r);
+  }
+
+  const result = [];
+  for (const [serial, rows] of bySerial) {
+    const ref      = rows.find(r => r.source === 'mosyle') ||
+                     rows.find(r => r.source === 'google_admin') ||
+                     rows[0];
+    const model    = ref.device_model;
+    const aupDate  = model ? aupMap[model?.toLowerCase()] : null;
+    const warranty = warrantyBySerial.get(serial) || {};
+
+    let warrantyStatus = 'none';
+    if (warranty.warrantyExpires) {
+      warrantyStatus = new Date(warranty.warrantyExpires) < new Date() ? 'expired' : 'ok';
+    }
+
+    result.push({
+      serialNumber:    serial,
+      deviceName:      ref.device_name,
+      deviceModel:     model,
+      osType:          ref.os_type,
+      assignedEmail:   rows.find(r => r.assigned_email)?.assigned_email || null,
+      assetTag:        rows.find(r => r.asset_tag)?.asset_tag || null,
+      aupDate:         aupDate || null,
+      aupStatus:       aupStatus(aupDate),
+      purchaseDate:    warranty.purchaseDate || null,
+      warrantyExpires: warranty.warrantyExpires || null,
+      warrantyStatus,
+      sources:         [...new Set(rows.map(r => r.source))],
+    });
+  }
+
+  // Sort: expired AUP or warranty first
+  result.sort((a, b) => {
+    const urgencyScore = (d) => {
+      let s = 0;
+      if (d.warrantyStatus === 'expired') s += 10;
+      if (d.aupStatus === 'expired')      s += 8;
+      if (d.aupStatus === 'expiring')     s += 4;
+      return s;
+    };
+    return urgencyScore(b) - urgencyScore(a);
+  });
+
+  res.json(result);
+});
+
+module.exports = router;

@@ -487,7 +487,24 @@ async function _auditLog(actorId, action, details) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Write an asset tag back to a Chromebook's annotatedAssetId field in Google
+// Admin. Requires the write scope (admin.directory.device.chromeos) —
+// same as Lost Mode actions.
+// ---------------------------------------------------------------------------
+async function updateChromebookAssetId(deviceId, assetTag) {
+  const auth  = await getServiceAccountAuth(['https://www.googleapis.com/auth/admin.directory.device.chromeos']);
+  const admin = google.admin({ version: 'directory_v1', auth });
+  const { rows: [cs] } = await pool.query(`SELECT value FROM settings WHERE key = 'google_customer_id'`);
+  await admin.chromeosdevices.patch({
+    customerId:  cs?.value || process.env.GOOGLE_CUSTOMER_ID || 'my_customer',
+    deviceId,
+    requestBody: { annotatedAssetId: assetTag },
+  });
+}
+
 module.exports = {
   initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits, getServiceAccountAuth,
   getOuRoleRules, resolveRoleFromOu, backfillRolesFromOu, syncDevices, setChromeDeviceAction,
+  updateChromebookAssetId,
 };

@@ -217,4 +217,42 @@ async function syncAssets() {
   return count;
 }
 
-module.exports = { getConfig, listAssets, getAsset, syncAssets, listCustomFields };
+// ---------------------------------------------------------------------------
+// Create a new hardware asset in Snipe-IT
+// ---------------------------------------------------------------------------
+async function createAsset({ name, serial, modelId, statusId = 1 }) {
+  const http = await getClient();
+  const res  = await http.post('/hardware', {
+    name:      name || serial || 'Unnamed Device',
+    serial:    serial || undefined,
+    model_id:  modelId,
+    status_id: statusId,
+  });
+  if (res.data?.status === 'error') {
+    const msg = Object.values(res.data?.messages || {}).flat().join('; ') || 'Snipe-IT create failed';
+    throw new Error(msg);
+  }
+  return res.data?.payload || res.data;
+}
+
+// ---------------------------------------------------------------------------
+// List models (for cross-sync settings picker)
+// ---------------------------------------------------------------------------
+async function listModels({ search } = {}) {
+  const http   = await getClient();
+  const params = { limit: 100, sort: 'name', order: 'asc' };
+  if (search) params.search = search;
+  const res = await http.get('/models', { params });
+  return (res.data?.rows || []).map(m => ({ id: m.id, name: m.name }));
+}
+
+// ---------------------------------------------------------------------------
+// List status labels (for cross-sync settings picker)
+// ---------------------------------------------------------------------------
+async function listStatusLabels() {
+  const http = await getClient();
+  const res  = await http.get('/statuslabels', { params: { limit: 100 } });
+  return (res.data?.rows || []).map(s => ({ id: s.id, name: s.name }));
+}
+
+module.exports = { getConfig, getClient, listAssets, getAsset, syncAssets, listCustomFields, createAsset, listModels, listStatusLabels };
