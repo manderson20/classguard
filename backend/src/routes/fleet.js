@@ -627,6 +627,28 @@ router.post('/apple/cert-status/import-csv', upload.single('file'), async (req, 
       [Array.from(convertedUdids)]
     );
 
+    // Automatically lift RADIUS blocks for devices now confirmed on the new cert.
+    // This lets re-enrolled devices rejoin the main 802.1X network without a
+    // separate manual unblock step.
+    const { rows: newlyConverted } = await pool.query(
+      `SELECT raw_data->>'wifi_mac_address' as wifi_mac
+       FROM integration_devices
+       WHERE source = 'mosyle' AND apns_cert_ok = true`
+    );
+
+    let unblocked = 0;
+    for (const d of newlyConverted) {
+      const mac = normaliseMac(d.wifi_mac);
+      if (!mac) continue;
+      const { rowCount: ub } = await pool.query(
+        `UPDATE radius_devices
+         SET status = 'approved', notes = 'Re-enrolled under new APNS certificate', updated_at = NOW()
+         WHERE mac_address = $1 AND status = 'blocked' AND notes LIKE 'APNS%'`,
+        [mac]
+      );
+      unblocked += ub;
+    }
+
     const { rows: totals } = await pool.query(
       `SELECT apns_cert_ok, COUNT(*) as cnt
        FROM integration_devices WHERE source='mosyle'
@@ -641,6 +663,7 @@ router.post('/apple/cert-status/import-csv', upload.single('file'), async (req, 
       matchedInDb: rowCount,
       newCert: summary['true']  || 0,
       oldCert: summary['false'] || 0,
+      unblocked,
     });
   } catch (err) {
     console.error('[fleet] cert-status import-csv:', err);

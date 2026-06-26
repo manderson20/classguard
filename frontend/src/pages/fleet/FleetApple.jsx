@@ -463,6 +463,9 @@ function CertStatusView() {
                 <span className="font-semibold">Import complete.</span>{' '}
                 Matched {importResult.matchedInDb} of {importResult.convertedInFile} UDIDs from file.
                 Now showing <span className="font-semibold">{importResult.newCert} on new cert</span> / {importResult.oldCert} needing re-enrollment.
+                {importResult.unblocked > 0 && (
+                  <> <span className="font-semibold">{importResult.unblocked} WiFi block{importResult.unblocked !== 1 ? 's' : ''} automatically lifted</span> — those devices can now rejoin the main network.</>
+                )}
               </>
             ) : (
               <><span className="font-semibold">Import failed:</span> {importResult.error}</>
