@@ -18,6 +18,24 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.8.0] - 2026-06-26
+
+### Added
+- **DHCPv6 (ISC Kea)** — full DHCPv6 support alongside DHCPv4: subnet scopes, DUID-based reservations, active lease view, per-scope and global options, and automatic Kea sync every 10 minutes. `kea-dhcp6` runs in the same container as `kea-dhcp4`, sharing the `classguard_kea` PostgreSQL lease database. Port 547/udp opens on the primary HA node only.
+- **DHCPv6 router setup checklist** — collapsible four-step notice on the DHCPv6 page covering M-flag configuration, DNS server assignment, and client verification. Dismissible per-browser via localStorage.
+- **Snipe-IT MAC field mapping** — admins can discover all Snipe-IT custom fields and designate which ones hold MAC addresses (supports multiple fields, e.g. wired NIC + wireless NIC). MAC-mapped fields are highlighted green in the device detail modal and used for network presence matching.
+- **Snipe-IT device detail modal** — clicking any device row in the Snipe-IT inventory opens a panel showing all raw custom fields, MAC addresses, and which integration sources contributed to the record.
+- **Snipe-IT asset tags** — asset tag column added to the device inventory table; asset tags are included in the search filter.
+- **LVM disk auto-expansion** — `infrastructure/disk/expand-disk.sh` (invoked by `install.sh`) extends the root LVM logical volume to consume all available disk space on first setup and on re-run after a VM storage increase. Supports both ext4 and XFS.
+
+### Changed
+- **HA, RADIUS, NTP pages** — removed redundant "Generate Configs" download cards from the Keepalived, FreeRADIUS, and chrony sections. All three configs are auto-generated from settings and applied by the update-watcher every minute; manual file deployment is not required and the UI implied otherwise.
+
+### Removed
+- **IPv6 HE tunnel feature** — tunnel termination and IPv6 routing belong on a dedicated router (pfSense/OPNsense/UniFi when supported). ClassGuard's IPv6 scope is DHCPv6 address assignment and DNS filtering (AAAA queries) only. The tunnel config page, API routes, and service file have been removed; the database table is retained.
+
+---
+
 ## [0.7.44] - 2026-06-25
 
 ### Added
