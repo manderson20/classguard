@@ -112,6 +112,7 @@ app.use('/api/v1/classes',     require('./routes/classes'));
 app.use('/api/v1/extension',   require('./routes/extension'));
 app.use('/api/v1/sync',        require('./routes/sync'));
 app.use('/api/v1/dhcp',        require('./routes/dhcp'));
+app.use('/api/v1/dhcpv6',      require('./routes/dhcpv6'));
 app.use('/api/v1/ipam',        require('./routes/ipam'));
 app.use('/api/v1/youtube',       require('./routes/youtube'));
 app.use('/api/v1/branding',         require('./routes/branding'));

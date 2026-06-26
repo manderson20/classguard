@@ -361,6 +361,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/radius',    icon: mdiLockOutline,              label: 'RADIUS / NAC',  permissionKey: 'radius' },
       { to: '/admin/ipam',      icon: mdiIpNetworkOutline,         label: 'IPAM',          permissionKey: 'ipam' },
       { to: '/admin/dhcp',      icon: mdiServerOutline,            label: 'DHCP',          permissionKey: 'dhcp' },
+      { to: '/admin/dhcpv6',    icon: mdiServerOutline,            label: 'DHCPv6',        permissionKey: 'dhcp' },
       { to: '/admin/network',   icon: mdiSitemap,                  label: 'Network Infra', permissionKey: 'network' },
       { to: '/admin/network-tools', icon: mdiNetworkOutline,       label: 'Network Tools', permissionKey: 'network' },
       { to: '/admin/phones',    icon: mdiPhoneOutline,             label: 'Phone System',  permissionKey: 'phones' },

@@ -507,7 +507,8 @@ router.get('/firewall-rules', async (req, res) => {
       // Kea has no enable/disable toggle -- it's simply never started on a
       // standby (install.sh), so DHCP is unconditional for whichever node
       // is currently primary.
-      staticRules.push({ port: '67', proto: 'udp', comment: 'DHCP' });
+      staticRules.push({ port: '67',  proto: 'udp', comment: 'DHCPv4' });
+      staticRules.push({ port: '547', proto: 'udp', comment: 'DHCPv6' });
 
       // VPN/SCEP containers are likewise never started on a standby, but
       // unlike Kea, VPN is genuinely optional even on the primary -- check

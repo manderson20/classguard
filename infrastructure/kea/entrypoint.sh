@@ -6,6 +6,7 @@ set -e
 # copies into a writable directory before launching either daemon.
 mkdir -p /tmp/kea-conf
 envsubst '${DB_PASSWORD}' < /etc/kea/kea-dhcp4.conf      > /tmp/kea-conf/kea-dhcp4.conf
+envsubst '${DB_PASSWORD}' < /etc/kea/kea-dhcp6.conf      > /tmp/kea-conf/kea-dhcp6.conf
 envsubst '${DB_PASSWORD}' < /etc/kea/kea-ctrl-agent.conf > /tmp/kea-conf/kea-ctrl-agent.conf
 
 # Clear stale PID/socket files left behind by a previous crashed run —
@@ -28,6 +29,9 @@ kea-admin db-init pgsql \
 
 # Start Kea Control Agent in the background
 kea-ctrl-agent -c /tmp/kea-conf/kea-ctrl-agent.conf &
+
+# Start Kea DHCPv6 in the background
+kea-dhcp6 -c /tmp/kea-conf/kea-dhcp6.conf &
 
 # Start Kea DHCP4 in the foreground (PID 1)
 exec kea-dhcp4 -c /tmp/kea-conf/kea-dhcp4.conf

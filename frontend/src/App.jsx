@@ -36,7 +36,8 @@ import ContentCategories  from './pages/admin/ContentCategories';
 import IpamPage        from './pages/admin/IpamPage';
 import IpamFullPage    from './pages/admin/IpamFullPage';
 import SubnetDetail    from './pages/admin/SubnetDetail';
-import DhcpManagement  from './pages/admin/DhcpManagement';
+import DhcpManagement    from './pages/admin/DhcpManagement';
+import DhcpV6Management from './pages/admin/DhcpV6Management';
 import SettingsPage    from './pages/admin/SettingsPage';
 import IntegrationsPage from './pages/admin/IntegrationsPage';
 import PhoneSystemPage  from './pages/admin/PhoneSystemPage';
@@ -140,6 +141,7 @@ export default function App() {
           <Route path="/admin/ipam/subnets/:subnetId" element={<SubnetDetail />} />
           <Route path="/admin/phones"                 element={<PhoneSystemPage />} />
           <Route path="/admin/dhcp"                   element={<DhcpManagement />} />
+          <Route path="/admin/dhcpv6"                element={<DhcpV6Management />} />
           <Route path="/admin/integrations"           element={<IntegrationsPage />} />
           <Route path="/admin/ha"                     element={<HaPage />} />
           <Route path="/admin/ntp"                    element={<NtpPage />} />

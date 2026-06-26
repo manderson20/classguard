@@ -11,7 +11,8 @@ const securityScan = require('./securityScan');
 const filterBypassDetection = require('./filterBypassDetection');
 const pingScan  = require('./pingScan');
 const dhcpDnsAutoRegister = require('./dhcpDnsAutoRegister');
-const dhcpKeaSync = require('./dhcpKeaSync');
+const dhcpKeaSync   = require('./dhcpKeaSync');
+const dhcpKeaSyncV6 = require('./dhcpKeaSyncV6');
 const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
 const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 const radiusSync = require('./radiusSync');
@@ -439,6 +440,7 @@ function startScheduler() {
   // remembering to click "Sync to Kea".
   cron.schedule('*/10 * * * *', () => {
     dhcpKeaSync.run().catch(err => console.error('[scheduler] dhcp-kea-sync error:', err.message));
+    dhcpKeaSyncV6.run().catch(err => console.error('[scheduler] dhcp-kea-sync-v6 error:', err.message));
   });
 
   // DHCP active lease -> IPAM address status sync — every 2 minutes, so

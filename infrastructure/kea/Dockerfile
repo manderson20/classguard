@@ -16,19 +16,20 @@ RUN apt-get update && apt-get install -y curl gnupg ca-certificates && \
     curl -1sLf 'https://dl.cloudsmith.io/public/isc/kea-2-6/setup.deb.sh' | bash - && \
     apt-get install -y \
       isc-kea-dhcp4=${KEA_VERSION} \
+      isc-kea-dhcp6=${KEA_VERSION} \
       isc-kea-ctrl-agent=${KEA_VERSION} \
       isc-kea-admin=${KEA_VERSION} \
       isc-kea-common=${KEA_VERSION} \
       isc-kea-hooks=${KEA_VERSION} \
       postgresql-client \
       gettext-base \
-    && apt-mark hold isc-kea-dhcp4 isc-kea-ctrl-agent isc-kea-admin isc-kea-common isc-kea-hooks \
+    && apt-mark hold isc-kea-dhcp4 isc-kea-dhcp6 isc-kea-ctrl-agent isc-kea-admin isc-kea-common isc-kea-hooks \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# 67/udp = DHCP, 8000 = Kea Control Agent
-EXPOSE 67/udp 8000
+# 67/udp = DHCPv4, 547/udp = DHCPv6, 8000 = Kea Control Agent
+EXPOSE 67/udp 547/udp 8000
 
 ENTRYPOINT ["/entrypoint.sh"]

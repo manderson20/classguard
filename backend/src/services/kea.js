@@ -176,6 +176,86 @@ async function getHAStatus() {
   return { ha: true, nodes };
 }
 
+// ---------------------------------------------------------------------------
+// DHCPv6 — mirrors the v4 functions above, targeting the 'dhcp6' service.
+// Key differences from v4:
+//   - subnet6 uses 'preferred-lifetime' in addition to 'valid-lifetime'
+//   - DNS option name is 'dns-servers' (code 23), not 'domain-name-servers'
+//   - Reservations use 'duid' + 'ip-addresses' (array), not 'hw-address'
+//   - No 'routers' option (IPv6 routing is via RA, not DHCP)
+// ---------------------------------------------------------------------------
+function dbRowToKeaSubnet6(row, options = [], reservations = []) {
+  const subnet6 = {
+    id:                   row.kea_subnet_id,
+    subnet:               row.subnet,
+    'preferred-lifetime': row.preferred_lifetime_seconds || 43200,
+    'valid-lifetime':     row.valid_lifetime_seconds || 86400,
+    pools: [{ pool: `${row.pool_start} - ${row.pool_end}` }],
+    'option-data':        [],
+  };
+
+  if (row.dns_servers && row.dns_servers.length) {
+    subnet6['option-data'].push({
+      name: 'dns-servers',
+      data: row.dns_servers.join(', '),
+    });
+  }
+  if (row.domain_name) {
+    subnet6['option-data'].push({ name: 'domain-search', data: row.domain_name });
+  }
+
+  const seen = new Set(subnet6['option-data'].map(o => o.name));
+  for (const opt of options) {
+    if (!opt.is_active) continue;
+    if (seen.has(opt.option_name)) continue;
+    subnet6['option-data'].push({ name: opt.option_name, data: opt.option_data });
+    seen.add(opt.option_name);
+  }
+
+  if (reservations.length) {
+    subnet6.reservations = reservations.map(r => ({
+      duid:           r.duid,
+      'ip-addresses': [r.ip_address],
+      ...(r.hostname ? { hostname: r.hostname } : {}),
+    }));
+  }
+
+  return subnet6;
+}
+
+async function getRunningConfig6() {
+  const res = await keaCommand('config-get', 'dhcp6', {});
+  return res.arguments;
+}
+
+async function applySubnets6(subnet6) {
+  const current = await getRunningConfig6();
+  await keaCommand('config-set', 'dhcp6', { Dhcp6: { ...current.Dhcp6, subnet6 } });
+  try { await keaCommand('config-write', 'dhcp6', {}); } catch { /* best-effort */ }
+}
+
+async function getLeases6() {
+  const res = await keaCommand('lease6-get-all', 'dhcp6', { subnets: [] });
+  return res.arguments?.leases ?? [];
+}
+
+async function getLease6(ip) {
+  const res = await keaCommand('lease6-get', 'dhcp6', {
+    'op-type': 'by-address',
+    ip,
+  });
+  return res.arguments?.lease ?? null;
+}
+
+async function deleteLease6(ip) {
+  await keaCommand('lease6-del', 'dhcp6', { ip });
+}
+
+async function getStats6() {
+  const res = await keaCommand('stat-lease6-get', 'dhcp6');
+  return res.arguments?.result ?? [];
+}
+
 module.exports = {
   keaCommand,
   dbRowToKeaSubnet,
@@ -186,4 +266,11 @@ module.exports = {
   deleteLease,
   getStats,
   getHAStatus,
+  dbRowToKeaSubnet6,
+  getRunningConfig6,
+  applySubnets6,
+  getLeases6,
+  getLease6,
+  deleteLease6,
+  getStats6,
 };
