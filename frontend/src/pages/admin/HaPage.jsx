@@ -738,9 +738,6 @@ function TlsSection() {
 function VrrpSection() {
   const qc = useQueryClient();
   const [form, setForm] = useState(null);
-  const [bundle, setBundle] = useState(null);
-  const [loadingBundle, setLoadingBundle] = useState(false);
-  const [activeFile, setActiveFile] = useState(null);
 
   const { data: vrrp = {} } = useQuery({
     queryKey: ['ha-vrrp'],
@@ -754,24 +751,6 @@ function VrrpSection() {
 
   const cfg = form || vrrp;
   const set = (k, v) => setForm(p => ({ ...(p || vrrp), [k]: v }));
-
-  const loadBundle = async () => {
-    setLoadingBundle(true);
-    try {
-      const b = await api.get('/ha/vrrp/bundle');
-      setBundle(b);
-      setActiveFile(Object.keys(b)[0]);
-    } finally {
-      setLoadingBundle(false);
-    }
-  };
-
-  const downloadFile = (name, content) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
-    a.download = name;
-    a.click();
-  };
 
   return (
     <div className="mb-8">
@@ -847,44 +826,9 @@ function VrrpSection() {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-semibold text-slate-900">Keepalived Config Files</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Generated from the VIP settings above. Deploy to each node's host (outside Docker).</p>
-          </div>
-          <button onClick={loadBundle} disabled={loadingBundle} className="btn-primary text-sm">
-            {loadingBundle ? 'Generating…' : 'Generate Configs'}
-          </button>
-        </div>
-
-        {bundle && (
-          <div className="border border-slate-200 rounded-lg overflow-hidden">
-            <div className="flex border-b border-slate-200 overflow-x-auto">
-              {Object.keys(bundle).map(name => (
-                <button key={name} onClick={() => setActiveFile(name)}
-                  className={`px-3 py-2 text-xs font-mono whitespace-nowrap border-r border-slate-200 transition-colors
-                    ${activeFile === name ? 'bg-primary-600 text-white' : 'hover:bg-slate-50 text-slate-600'}`}>
-                  {name}
-                </button>
-              ))}
-            </div>
-            {activeFile && (
-              <div className="relative">
-                <div className="absolute top-2 right-2 flex gap-2">
-                  <button onClick={() => navigator.clipboard.writeText(bundle[activeFile])}
-                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Copy</button>
-                  <button onClick={() => downloadFile(activeFile, bundle[activeFile])}
-                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Download</button>
-                </div>
-                <pre className="p-4 text-xs font-mono bg-slate-900 text-slate-100 overflow-x-auto max-h-96 overflow-y-auto whitespace-pre">
-                  {bundle[activeFile]}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+        Keepalived config is auto-generated from the settings above and applied on each node by the update-watcher every minute — no manual steps needed.
+      </p>
     </div>
   );
 }

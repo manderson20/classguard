@@ -820,9 +820,6 @@ function LogTab() {
 function HaConfigTab() {
   const qc = useQueryClient();
   const [haForm, setHaForm] = useState(null);
-  const [bundle, setBundle] = useState(null);
-  const [loadingBundle, setLoadingBundle] = useState(false);
-  const [activeFile, setActiveFile]       = useState(null);
 
   const { data: ha = {} } = useQuery({
     queryKey: ['radius-ha'],
@@ -834,21 +831,6 @@ function HaConfigTab() {
     mutationFn: () => api.put('/radius/ha', haForm || ha),
     onSuccess: () => qc.invalidateQueries({queryKey:['radius-ha']}),
   });
-
-  const loadBundle = async () => {
-    setLoadingBundle(true);
-    try {
-      const b = await api.get('/radius/config-bundle');
-      setBundle(b);
-      setActiveFile(Object.keys(b)[0]);
-    } finally { setLoadingBundle(false); }
-  };
-
-  const downloadFile = (name, content) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
-    a.download = name; a.click();
-  };
 
   const cfg = haForm || ha;
   const set = (k, v) => setHaForm(p => ({...(p||ha),[k]:v}));
@@ -929,45 +911,9 @@ function HaConfigTab() {
         </div>
       </div>
 
-      {/* Config file download */}
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-semibold text-slate-900">FreeRADIUS + Keepalived Config Files</h3>
-            <p className="text-xs text-slate-500 mt-0.5">Generated from your NAS clients and VIP settings. Deploy to each node.</p>
-          </div>
-          <button onClick={loadBundle} disabled={loadingBundle} className="btn-primary text-sm">
-            {loadingBundle?'Generating…':'Generate Configs'}
-          </button>
-        </div>
-
-        {bundle && (
-          <div className="border border-slate-200 rounded-lg overflow-hidden">
-            <div className="flex border-b border-slate-200 overflow-x-auto">
-              {Object.keys(bundle).map(name=>(
-                <button key={name} onClick={()=>setActiveFile(name)}
-                  className={`px-3 py-2 text-xs font-mono whitespace-nowrap border-r border-slate-200 transition-colors
-                    ${activeFile===name?'bg-primary-600 text-white':'hover:bg-slate-50 text-slate-600'}`}>
-                  {name}
-                </button>
-              ))}
-            </div>
-            {activeFile && (
-              <div className="relative">
-                <div className="absolute top-2 right-2 flex gap-2">
-                  <button onClick={()=>navigator.clipboard.writeText(bundle[activeFile])}
-                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Copy</button>
-                  <button onClick={()=>downloadFile(activeFile, bundle[activeFile])}
-                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Download</button>
-                </div>
-                <pre className="p-4 text-xs font-mono bg-slate-900 text-slate-100 overflow-x-auto max-h-96 overflow-y-auto whitespace-pre">
-                  {bundle[activeFile]}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
+      <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+        FreeRADIUS and Keepalived configs are auto-generated from the settings above and applied on each node by the update-watcher every minute — no manual steps needed.
+      </p>
     </div>
   );
 }

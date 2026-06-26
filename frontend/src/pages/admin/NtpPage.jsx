@@ -98,8 +98,7 @@ function NtpClientsSection() {
             ))}
             {!isLoading && clients.length === 0 && (
               <tr><td colSpan={5} className="text-center text-slate-400 py-8 text-sm">
-                No devices reported yet. Install <span className="font-mono text-xs">ntp-client-report.sh</span> (from
-                the config bundle below) via cron on each node once chrony is running.
+                No devices reported yet — enable the NTP server above and wait for clients to sync.
               </td></tr>
             )}
           </tbody>
@@ -117,9 +116,6 @@ function NtpClientsSection() {
 function NtpServerSection() {
   const qc = useQueryClient();
   const [form, setForm] = useState(null);
-  const [bundle, setBundle] = useState(null);
-  const [loadingBundle, setLoadingBundle] = useState(false);
-  const [activeFile, setActiveFile] = useState(null);
 
   const { data: cfgData = {} } = useQuery({
     queryKey: ['ntp-server-config'],
@@ -134,24 +130,6 @@ function NtpServerSection() {
   const cfg = form || cfgData;
   const set = (k, v) => setForm(p => ({ ...(p || cfgData), [k]: v }));
 
-  const loadBundle = async () => {
-    setLoadingBundle(true);
-    try {
-      const b = await api.get('/ntp/server-bundle');
-      setBundle(b);
-      setActiveFile(Object.keys(b)[0]);
-    } finally {
-      setLoadingBundle(false);
-    }
-  };
-
-  const downloadFile = (name, content) => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain' }));
-    a.download = name;
-    a.click();
-  };
-
   return (
     <div className="mb-8">
       <h2 className="font-semibold text-slate-800 mb-3">NTP Server — Serve Time to the LAN</h2>
@@ -160,8 +138,8 @@ function NtpServerSection() {
         <p className="text-xs text-slate-500 mb-4">
           Runs <strong>chrony</strong> on every node, independently — unlike VRRP there's no
           failover priority here, every node just serves time on its own real IP. Point DHCP
-          option 42 (or clients directly) at every node's IP for redundancy. Install chrony
-          directly on the host (not in Docker) on each node and deploy the matching config below.
+          option 42 (or clients directly) at every node's IP for redundancy. Chrony config is
+          auto-generated from the settings below and applied on each node by the update-watcher every minute.
         </p>
 
         <label className="flex items-center gap-2 text-sm text-slate-700 cursor-pointer mb-4">
@@ -201,48 +179,6 @@ function NtpServerSection() {
         </div>
       </div>
 
-      <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm">
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h3 className="font-semibold text-slate-900">chrony Config Files</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Generated from the settings above. Deploy to each node's host (outside Docker) —
-              also includes <span className="font-mono">ntp-client-report.sh</span>, which feeds
-              the "Devices Polling This Server" list below once installed via cron.
-            </p>
-          </div>
-          <button onClick={loadBundle} disabled={loadingBundle} className="btn-primary text-sm">
-            {loadingBundle ? 'Generating…' : 'Generate Configs'}
-          </button>
-        </div>
-
-        {bundle && (
-          <div className="border border-slate-200 rounded-lg overflow-hidden">
-            <div className="flex border-b border-slate-200 overflow-x-auto">
-              {Object.keys(bundle).map(name => (
-                <button key={name} onClick={() => setActiveFile(name)}
-                  className={`px-3 py-2 text-xs font-mono whitespace-nowrap border-r border-slate-200 transition-colors
-                    ${activeFile === name ? 'bg-primary-600 text-white' : 'hover:bg-slate-50 text-slate-600'}`}>
-                  {name}
-                </button>
-              ))}
-            </div>
-            {activeFile && (
-              <div className="relative">
-                <div className="absolute top-2 right-2 flex gap-2">
-                  <button onClick={() => navigator.clipboard.writeText(bundle[activeFile])}
-                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Copy</button>
-                  <button onClick={() => downloadFile(activeFile, bundle[activeFile])}
-                    className="bg-white border border-slate-200 rounded px-2 py-1 text-xs hover:bg-slate-50">Download</button>
-                </div>
-                <pre className="p-4 text-xs font-mono bg-slate-900 text-slate-100 overflow-x-auto max-h-96 overflow-y-auto whitespace-pre">
-                  {bundle[activeFile]}
-                </pre>
-              </div>
-            )}
-          </div>
-        )}
-      </div>
     </div>
   );
 }
