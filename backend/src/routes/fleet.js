@@ -359,6 +359,114 @@ router.put('/apple/os-reference/:family', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// APNS push certificate status
+// ---------------------------------------------------------------------------
+
+// Auto-detect the cert replacement date by finding the first day where
+// daily enrollment volume spikes significantly above the prior baseline.
+async function detectCertDate() {
+  // APNS certs are valid for 1 year, so a replacement must be within the last 18 months.
+  // Restricting the window avoids false positives from old initial device rollouts.
+  const { rows } = await pool.query(`
+    WITH daily AS (
+      SELECT date_trunc('day', enrolled_at)::date AS d, COUNT(*)::int AS cnt
+      FROM integration_devices
+      WHERE source = 'mosyle' AND enrolled_at IS NOT NULL
+        AND enrolled_at >= NOW() - INTERVAL '18 months'
+      GROUP BY 1
+    ),
+    with_baseline AS (
+      SELECT d, cnt,
+        COALESCE(AVG(cnt) OVER (ORDER BY d ROWS BETWEEN 30 PRECEDING AND 1 PRECEDING), 0) AS avg_30d
+      FROM daily
+    )
+    SELECT d AS cert_date
+    FROM with_baseline
+    WHERE cnt >= GREATEST(10, avg_30d * 3)
+    ORDER BY d
+    LIMIT 1
+  `);
+  return rows[0]?.cert_date || null;
+}
+
+router.get('/apple/cert-status', async (req, res) => {
+  try {
+    const { rows: settingRows } = await pool.query(
+      `SELECT value FROM settings WHERE key = 'apns_cert_replaced_on'`
+    );
+    const manualDate = settingRows[0]?.value || null;
+
+    let certDate     = manualDate;
+    let autoDetected = false;
+    if (!certDate) {
+      certDate     = await detectCertDate();
+      autoDetected = certDate != null;
+    }
+
+    if (!certDate) {
+      return res.json({ certDate: null, autoDetected: false, summary: null, oldCertDevices: [] });
+    }
+
+    const { rows: devices } = await pool.query(`
+      SELECT serial_number, device_name, device_model, os_type,
+             assigned_email, asset_tag, enrolled_at, synced_at
+      FROM integration_devices
+      WHERE source = 'mosyle'
+        AND os_type IN ('iOS','iPadOS','macOS')
+      ORDER BY enrolled_at ASC NULLS LAST
+    `);
+
+    const threshold     = new Date(certDate);
+    const summary       = { newCert: { total:0, iOS:0, iPadOS:0, macOS:0 }, oldCert: { total:0, iOS:0, iPadOS:0, macOS:0 } };
+    const oldCertDevices = [];
+
+    for (const d of devices) {
+      const isNew = d.enrolled_at && new Date(d.enrolled_at) >= threshold;
+      const bucket = isNew ? summary.newCert : summary.oldCert;
+      bucket.total++;
+      if (d.os_type === 'iOS')    bucket.iOS++;
+      else if (d.os_type === 'iPadOS') bucket.iPadOS++;
+      else if (d.os_type === 'macOS')  bucket.macOS++;
+
+      if (!isNew) {
+        oldCertDevices.push({
+          serialNumber: d.serial_number,
+          deviceName:   d.device_name,
+          deviceModel:  d.device_model,
+          osType:       d.os_type,
+          assignedEmail: d.assigned_email,
+          assetTag:     d.asset_tag,
+          enrolledAt:   d.enrolled_at,
+          lastSync:     d.synced_at,
+        });
+      }
+    }
+
+    res.json({ certDate, autoDetected, summary, oldCertDevices });
+  } catch (err) {
+    console.error('[fleet] cert-status:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/apple/cert-status/threshold', async (req, res) => {
+  try {
+    const { certDate } = req.body;
+    if (certDate && !/^\d{4}-\d{2}-\d{2}$/.test(certDate)) {
+      return res.status(400).json({ error: 'Invalid date format (YYYY-MM-DD)' });
+    }
+    await pool.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('apns_cert_replaced_on',$1,NOW())
+       ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
+      [certDate || null]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // AUP reference CRUD
 // ---------------------------------------------------------------------------
 router.get('/chromebooks/aup-reference', async (req, res) => {

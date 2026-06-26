@@ -129,21 +129,35 @@ async function syncDevices() {
     const status  = d.device_status || d.status         || null;
     const macs    = [d.wifi_mac_address, d.bluetooth_mac].filter(Boolean);
     const ips     = [d.last_ip_address].filter(Boolean);
-    const osType  = d.os_type || (name?.toLowerCase().includes('ipad') ? 'iPadOS' : 'iOS');
+
+    // Mosyle returns os='mac' for Macs, os='ios' for both iPhones and iPads (differentiated by name)
+    const rawOs  = (d.os_type || d.os || '').toLowerCase();
+    const osType = rawOs === 'mac'    ? 'macOS'
+      : rawOs === 'tvos'              ? 'tvOS'
+      : rawOs === 'ipados'            ? 'iPadOS'
+      : name?.toLowerCase().includes('ipad') ? 'iPadOS'
+      : 'iOS';
+
+    // date_enroll is a Unix timestamp in seconds
+    const enrolledAt = d.date_enroll && parseInt(d.date_enroll, 10) > 0
+      ? new Date(parseInt(d.date_enroll, 10) * 1000)
+      : null;
 
     await pool.query(
       `INSERT INTO integration_devices
          (source, external_id, serial_number, mac_addresses, device_name, device_model,
-          os_type, os_version, assigned_email, ip_addresses, status, raw_data, synced_at)
-       VALUES ('mosyle',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
+          os_type, os_version, assigned_email, ip_addresses, status, raw_data, enrolled_at, synced_at)
+       VALUES ('mosyle',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
        ON CONFLICT (source, external_id) DO UPDATE SET
          serial_number = EXCLUDED.serial_number, mac_addresses = EXCLUDED.mac_addresses,
          device_name = EXCLUDED.device_name, device_model = EXCLUDED.device_model,
-         os_version = EXCLUDED.os_version, assigned_email = EXCLUDED.assigned_email,
+         os_type = EXCLUDED.os_type, os_version = EXCLUDED.os_version,
+         assigned_email = EXCLUDED.assigned_email,
          ip_addresses = EXCLUDED.ip_addresses, status = EXCLUDED.status,
+         enrolled_at = EXCLUDED.enrolled_at,
          raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
       [serial || d.deviceudid || d.udid, serial, `{${macs.join(',')}}`, name, model,
-       osType, os, user, `{${ips.join(',')}}`, status, JSON.stringify(d)]
+       osType, os, user, `{${ips.join(',')}}`, status, JSON.stringify(d), enrolledAt]
     );
     count++;
   }
