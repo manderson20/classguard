@@ -118,6 +118,13 @@ async function listAllDevices() {
 // ---------------------------------------------------------------------------
 async function syncDevices() {
   const devices = await listAllDevices();
+
+  // Fetch cert replacement date once for the whole sync batch.
+  const { rows: certRows } = await pool.query(
+    `SELECT value FROM settings WHERE key = 'apns_cert_replaced_on'`
+  );
+  const certDate = certRows[0]?.value ? new Date(certRows[0].value) : null;
+
   let count = 0;
 
   for (const d of devices) {
@@ -143,11 +150,16 @@ async function syncDevices() {
       ? new Date(parseInt(d.date_enroll, 10) * 1000)
       : null;
 
+    // Determine APNS cert status: true = enrolled after cert replacement (new cert),
+    // false = enrolled before (needs re-enrollment), null = no cert date configured yet.
+    const apnsCertOk = certDate && enrolledAt ? enrolledAt >= certDate : null;
+
     await pool.query(
       `INSERT INTO integration_devices
          (source, external_id, serial_number, mac_addresses, device_name, device_model,
-          os_type, os_version, assigned_email, ip_addresses, status, raw_data, enrolled_at, synced_at)
-       VALUES ('mosyle',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
+          os_type, os_version, assigned_email, ip_addresses, status, raw_data,
+          enrolled_at, apns_cert_ok, synced_at)
+       VALUES ('mosyle',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW())
        ON CONFLICT (source, external_id) DO UPDATE SET
          serial_number = EXCLUDED.serial_number, mac_addresses = EXCLUDED.mac_addresses,
          device_name = EXCLUDED.device_name, device_model = EXCLUDED.device_model,
@@ -155,9 +167,10 @@ async function syncDevices() {
          assigned_email = EXCLUDED.assigned_email,
          ip_addresses = EXCLUDED.ip_addresses, status = EXCLUDED.status,
          enrolled_at = EXCLUDED.enrolled_at,
+         apns_cert_ok = EXCLUDED.apns_cert_ok,
          raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
       [serial || d.deviceudid || d.udid, serial, `{${macs.join(',')}}`, name, model,
-       osType, os, user, `{${ips.join(',')}}`, status, JSON.stringify(d), enrolledAt]
+       osType, os, user, `{${ips.join(',')}}`, status, JSON.stringify(d), enrolledAt, apnsCertOk]
     );
     count++;
   }

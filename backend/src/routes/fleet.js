@@ -491,19 +491,22 @@ router.get('/apple/cert-status', async (req, res) => {
 
     const { rows: devices } = await pool.query(`
       SELECT serial_number, device_name, device_model, os_type,
-             assigned_email, asset_tag, enrolled_at, synced_at
+             assigned_email, asset_tag, enrolled_at, apns_cert_ok, synced_at
       FROM integration_devices
       WHERE source = 'mosyle'
         AND os_type IN ('iOS','iPadOS','macOS','tvOS')
       ORDER BY enrolled_at ASC NULLS LAST
     `);
 
-    const threshold     = new Date(certDate);
-    const summary       = { newCert: { total:0, iOS:0, iPadOS:0, macOS:0, tvOS:0 }, oldCert: { total:0, iOS:0, iPadOS:0, macOS:0, tvOS:0 } };
+    const summary        = { newCert: { total:0, iOS:0, iPadOS:0, macOS:0, tvOS:0 }, oldCert: { total:0, iOS:0, iPadOS:0, macOS:0, tvOS:0 } };
     const oldCertDevices = [];
 
     for (const d of devices) {
-      const isNew = d.enrolled_at && new Date(d.enrolled_at) >= threshold;
+      // Use the stored apns_cert_ok flag (set by Mosyle sync) when available;
+      // fall back to date comparison for devices not yet synced after migration.
+      const isNew = d.apns_cert_ok !== null
+        ? d.apns_cert_ok
+        : (d.enrolled_at && new Date(d.enrolled_at) >= new Date(certDate));
       const bucket = isNew ? summary.newCert : summary.oldCert;
       bucket.total++;
       if (d.os_type === 'iOS')         bucket.iOS++;
@@ -550,6 +553,21 @@ router.put('/apple/cert-status/threshold', async (req, res) => {
         [appleId || null]
       );
     }
+
+    // Recalculate apns_cert_ok for all Mosyle devices whenever the cert date changes.
+    if (certDate) {
+      await pool.query(
+        `UPDATE integration_devices
+         SET apns_cert_ok = (enrolled_at IS NOT NULL AND enrolled_at >= $1::timestamptz)
+         WHERE source = 'mosyle'`,
+        [certDate]
+      );
+    } else {
+      await pool.query(
+        `UPDATE integration_devices SET apns_cert_ok = NULL WHERE source = 'mosyle'`
+      );
+    }
+
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
