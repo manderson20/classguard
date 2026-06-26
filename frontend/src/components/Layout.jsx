@@ -51,6 +51,10 @@ import {
   mdiWifiOff,
   mdiCalendarClock,
   mdiMonitor,
+  mdiWrench,
+  mdiPlus,
+  mdiCheckCircleOutline,
+  mdiAccountGroup,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -59,7 +63,7 @@ import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
 const VERSION = '0.8.0';
-const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
+const ROLES   = { student: 0, student_technician: 0.5, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
   return <MdiIcon path={path} size="1em" className="flex-shrink-0" />;
@@ -319,6 +323,31 @@ const NAV_VIEWS = [
   { value: 'admin',   label: 'Admin' },
   { value: 'teacher', label: 'Teacher' },
   { value: 'fleet',   label: 'Device Fleet' },
+  { value: 'techlab', label: 'Tech Lab' },
+];
+
+// Shown to non-admin tech instructors who only need teacher/techlab toggle
+const TEACHER_TECH_VIEWS = [
+  { value: 'teacher', label: 'Teacher' },
+  { value: 'techlab', label: 'Tech Lab' },
+];
+
+const TECH_LAB_SECTIONS = [
+  {
+    label: 'Tech Lab',
+    items: [
+      { to: '/techlab',     icon: mdiWrench, label: 'My Tickets', end: true },
+      { to: '/techlab/new', icon: mdiPlus,   label: 'New Ticket' },
+    ],
+  },
+  {
+    label: 'Instructor',
+    instructorOnly: true,
+    items: [
+      { to: '/techlab/approvals', icon: mdiCheckCircleOutline, label: 'Approvals' },
+      { to: '/techlab/students',  icon: mdiAccountGroup,       label: 'Students'  },
+    ],
+  },
 ];
 
 const TEACHER_NAV = [
@@ -456,6 +485,9 @@ export default function Layout() {
   const isAdmin          = (ROLES[user?.role] ?? 0) >= ROLES.admin;
   const isStaff          = (ROLES[user?.role] ?? 0) >= ROLES.teacher;
   const isSuperAdmin     = user?.role === 'superadmin';
+  const isStudentTech    = user?.role === 'student_technician';
+  const isTechInstructor = user?.is_tech_instructor === true;
+  const isTechLabUser    = isStudentTech || isTechInstructor || isAdmin;
 
   // Hides admin nav items a custom-role-restricted admin can't actually
   // reach — pure UX (no dead links in the sidebar). The real enforcement is
@@ -484,8 +516,24 @@ export default function Layout() {
   useEffect(() => {
     localStorage.setItem('cg_nav_view', navView);
   }, [navView]);
-  const showTeacherNav = !isAdmin || navView === 'teacher';
-  const showFleetNav   = isAdmin && navView === 'fleet';
+
+  // Student technicians are always in tech-lab view; resolve which stored
+  // view is active for everyone else before computing nav visibility.
+  const currentNavView = isStudentTech ? 'techlab' : navView;
+
+  // Nav view options shown in the dropdown switcher:
+  //   • Admins → all four views (admin, teacher, fleet, techlab)
+  //   • Non-admin tech instructors → teacher + techlab toggle
+  //   • All others → no switcher (plain teachers always see classroom nav)
+  const navViewOptions = isAdmin
+    ? NAV_VIEWS
+    : isTechInstructor
+      ? TEACHER_TECH_VIEWS
+      : [];
+
+  const showTeacherNav = !isStudentTech && (currentNavView === 'teacher' || (!isAdmin && !isTechInstructor));
+  const showFleetNav   = isAdmin && currentNavView === 'fleet';
+  const showTechLabNav = isStudentTech || (isTechLabUser && currentNavView === 'techlab');
 
   const { data: pendingData } = useQuery({
     queryKey: ['unblock-pending-count'],
@@ -536,18 +584,17 @@ export default function Layout() {
           </div>
         </div>
 
-        {/* Nav-view switcher — admins+ only, since a plain teacher has
-            nothing else to switch to. A dropdown rather than a fixed
-            two-way toggle so a future view is a one-line addition to
-            NAV_VIEWS above, not a layout change here. */}
-        {isAdmin && (
+        {/* Nav-view switcher — shown to admins (all four views) and to
+            non-admin tech instructors (teacher/techlab toggle). Student
+            technicians never see it: they're always in techlab view. */}
+        {navViewOptions.length > 0 && (
           <div className="px-3 pt-3 flex-shrink-0">
             <select
-              value={navView}
+              value={currentNavView}
               onChange={e => setNavView(e.target.value)}
               className="w-full bg-slate-800 text-white text-[12px] font-medium rounded-md py-1.5 px-2 border border-slate-700 focus:outline-none focus:ring-1 focus:ring-primary-500"
             >
-              {NAV_VIEWS.map(v => (
+              {navViewOptions.map(v => (
                 <option key={v.value} value={v.value} className="bg-slate-800 text-white">
                   {v.label}
                 </option>
@@ -583,8 +630,24 @@ export default function Layout() {
             </section>
           ))}
 
+          {/* Tech Lab — student technicians and instructors in techlab view */}
+          {showTechLabNav && TECH_LAB_SECTIONS.map(section => {
+            // Instructor-only sections hidden from student techs
+            if (section.instructorOnly && !isTechInstructor && !isAdmin) return null;
+            return (
+              <section key={section.label}>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
+                  {section.label}
+                </p>
+                <div className="space-y-0.5">
+                  {section.items.map(item => <NavItem key={item.to} {...item} />)}
+                </div>
+              </section>
+            );
+          })}
+
           {/* Admins — grouped sections */}
-          {!showTeacherNav && !showFleetNav && ADMIN_SECTIONS.map(section => {
+          {!showTeacherNav && !showFleetNav && !showTechLabNav && ADMIN_SECTIONS.map(section => {
             const visibleItems = section.items.filter(canSee);
             if (visibleItems.length === 0) return null;
             return (
