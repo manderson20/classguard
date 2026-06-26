@@ -62,7 +62,6 @@ import LostModePage        from './pages/admin/LostModePage';
 import FilterBypassPage    from './pages/admin/FilterBypassPage';
 import HelpCenterPage      from './pages/admin/HelpCenterPage';
 import VpnPage             from './pages/admin/VpnPage';
-import Ipv6Page             from './pages/admin/Ipv6Page';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
 import ScreenTimePage      from './pages/admin/ScreenTimePage';
 import BellSchedulePage    from './pages/admin/BellSchedulePage';
@@ -164,7 +163,6 @@ export default function App() {
           <Route path="/admin/settings"               element={<SettingsPage />} />
           <Route path="/admin/system-health"           element={<SystemHealthPage />} />
           <Route path="/admin/vpn"                    element={<VpnPage />} />
-          <Route path="/admin/ipv6"                   element={<Ipv6Page />} />
 
           {/* Superadmin-only: managing what a role grants is itself
               adjacent to privilege escalation, same tier as role assignment */}
