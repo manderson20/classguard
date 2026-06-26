@@ -382,6 +382,7 @@ function CertStatusView() {
                 summary.newCert.iOS    && `${summary.newCert.iOS} iPhone`,
                 summary.newCert.iPadOS && `${summary.newCert.iPadOS} iPad`,
                 summary.newCert.macOS  && `${summary.newCert.macOS} Mac`,
+                summary.newCert.tvOS   && `${summary.newCert.tvOS} Apple TV`,
               ].filter(Boolean).join(' · ') || 'No breakdown'}
               color="green"
             />
@@ -392,6 +393,7 @@ function CertStatusView() {
                 summary.oldCert.iOS    && `${summary.oldCert.iOS} iPhone`,
                 summary.oldCert.iPadOS && `${summary.oldCert.iPadOS} iPad`,
                 summary.oldCert.macOS  && `${summary.oldCert.macOS} Mac`,
+                summary.oldCert.tvOS   && `${summary.oldCert.tvOS} Apple TV`,
               ].filter(Boolean).join(' · ') || 'No breakdown'}
               color={summary.oldCert.total > 0 ? 'amber' : 'green'}
             />
@@ -436,7 +438,7 @@ function CertStatusView() {
                 value={search}
                 onChange={e => setSearch(e.target.value)}
               />
-              {['', 'iOS', 'iPadOS', 'macOS'].map(os => (
+              {['', 'iOS', 'iPadOS', 'macOS', 'tvOS'].map(os => (
                 <button
                   key={os}
                   onClick={() => setOsFilter(os)}
