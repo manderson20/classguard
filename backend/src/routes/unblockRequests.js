@@ -3,6 +3,7 @@ const router   = express.Router();
 const { pool } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
+const zammad   = require('../services/zammad');
 
 // Authenticated admin middleware
 const adminAuth = [authenticate, requirePermission('unblock_requests')];
@@ -72,6 +73,13 @@ router.post('/', async (req, res) => {
         sourceIp || null,
       ]
     );
+    const requesterDisplay = requester_name || requester_email || `user #${studentId}`;
+    zammad.createTicketForEvent('unblock_request', {
+      title:         `Unblock Request — ${domain} — ${requesterDisplay}`,
+      body:          `A site unblock request was submitted.\n\nDomain: ${domain}\nRequester: ${requesterDisplay}\nReason: ${reason?.trim() || 'Not provided'}\nRequest ID: ${request.id}`,
+      customerEmail: requester_email || '',
+    }).catch(err => console.error('[zammad/unblock-request]', err.message));
+
     res.status(201).json(request);
   } catch (err) {
     if (err.code === '23505') { // unique_violation
