@@ -60,6 +60,14 @@ function hostsInCidr(cidr, version = 4) {
   } catch { return 0; }
 }
 
+function prefixToMask(cidr) {
+  if (!cidr) return '';
+  const n = parseInt(cidr.split('/')[1], 10);
+  if (isNaN(n) || n < 0 || n > 32) return '';
+  const mask = n === 0 ? 0 : (~0 << (32 - n)) >>> 0;
+  return [(mask >>> 24) & 0xff, (mask >>> 16) & 0xff, (mask >>> 8) & 0xff, mask & 0xff].join('.');
+}
+
 function UtilBar({ used, total, compact = false, threshold = 90 }) {
   if (!total) return <span className="text-xs text-slate-400">{used || 0}</span>;
   const pct      = Math.min(100, Math.round((used / total) * 100));
@@ -565,6 +573,11 @@ function SubnetIpView({ subnet: subnetProp, onBack }) {
         <div>
           <h2 className="text-xl font-bold text-slate-900">
             <span className="font-mono">{subnet.subnet}</span>
+            {subnet.ip_version !== 6 && (
+              <span className="ml-2 font-mono font-normal text-base text-slate-400" title="Subnet mask">
+                ({prefixToMask(subnet.subnet)})
+              </span>
+            )}
             {subnet.name && <span className="ml-2 font-normal text-lg text-slate-500">{subnet.name}</span>}
           </h2>
           <div className="flex flex-wrap gap-3 text-xs text-slate-500 mt-1">
