@@ -65,6 +65,58 @@ router.post('/', async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
+// POST /api/v1/penalty-box/:studentId/allow-request
+// Teacher submits a site-access request for a penalty box student to an admin.
+// Verifies the student is in the teacher's class and is currently restricted.
+router.post('/:studentId/allow-request', async (req, res) => {
+  const { role, userId } = req.user;
+  const { studentId } = req.params;
+  const { domain, reason } = req.body;
+  if (!domain) return res.status(400).json({ error: 'domain required' });
+
+  if (role === 'teacher') {
+    const { rows: [membership] } = await query(
+      `SELECT 1 FROM class_members cm
+       JOIN classes c ON c.id = cm.class_id
+       WHERE cm.student_id = $1 AND c.teacher_id = $2`,
+      [studentId, userId]
+    );
+    if (!membership) return res.status(403).json({ error: 'Student is not in your class' });
+  }
+
+  const { rows: [active] } = await query(
+    `SELECT 1 FROM penalty_box WHERE student_id = $1 AND released_at IS NULL`,
+    [studentId]
+  );
+  if (!active) return res.status(400).json({ error: 'Student is not currently restricted' });
+
+  const { rows: [teacher] } = await query(
+    `SELECT full_name, email FROM users WHERE id = $1`, [userId]
+  );
+
+  try {
+    const { rows: [request] } = await query(
+      `INSERT INTO unblock_requests
+         (domain, student_id, requester_email, requester_name, reason, source_ip)
+       VALUES ($1,$2,$3,$4,$5,$6)
+       RETURNING id, domain, status, requested_at`,
+      [
+        domain.toLowerCase().trim(),
+        studentId,
+        teacher.email,
+        `${teacher.full_name || teacher.email} (on behalf of student)`,
+        reason?.trim() || null,
+        req.ip || null,
+      ]
+    );
+    res.status(201).json(request);
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'A pending request for this domain already exists' });
+    console.error('[penalty-box/allow-request]', err);
+    res.status(500).json({ error: 'Failed to submit request' });
+  }
+});
+
 // DELETE /api/v1/penalty-box/:studentId
 // Release a student from the penalty box
 router.delete('/:studentId', async (req, res) => {

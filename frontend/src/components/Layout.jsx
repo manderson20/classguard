@@ -315,10 +315,11 @@ const NAV_VIEWS = [
 ];
 
 const TEACHER_NAV = [
-  { to: '/classes',     icon: mdiHomeOutline, label: 'My Classes'  },
-  { to: '/penalty-box', icon: mdiFlagOutline,  label: 'Penalty Box' },
-  { to: '/lockdown',    icon: mdiLock,         label: 'Lockdown Tests' },
-  { to: '/help',        icon: mdiHelpCircleOutline, label: 'Help Center' },
+  { to: '/classes',          icon: mdiHomeOutline,      label: 'My Classes'      },
+  { to: '/penalty-box',      icon: mdiFlagOutline,      label: 'Penalty Box'     },
+  { to: '/phone-directory',  icon: mdiPhoneOutline,     label: 'Phone Directory' },
+  { to: '/lockdown',         icon: mdiLock,             label: 'Lockdown Tests'  },
+  { to: '/help',             icon: mdiHelpCircleOutline, label: 'Help Center'   },
 ];
 
 const ADMIN_SECTIONS = [

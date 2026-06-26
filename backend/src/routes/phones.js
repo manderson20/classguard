@@ -8,7 +8,32 @@ const phoneTemplateImport    = require('../services/phoneTemplateImport');
 const phoneDirectory = require('../services/phoneDirectory');
 const phoneIpam = require('../services/phoneIpam');
 
+const { requireMinRole } = require('../middleware/roles');
+
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// Teacher-accessible directory search — placed before the requirePermission
+// gate so that teachers can look up colleagues without needing the full
+// phones admin permission. Returns only include_in_directory entries and
+// only the fields relevant to a staff directory (no device/network details).
+// ---------------------------------------------------------------------------
+router.get('/directory-search', authenticate, requireMinRole('teacher'), async (req, res) => {
+  const { q } = req.query;
+  if (!q || q.trim().length < 2) return res.json([]);
+  const { rows } = await query(
+    `SELECT display_name, extension, building, room_number
+     FROM phones
+     WHERE include_in_directory = true
+       AND (display_name ILIKE $1 OR extension ILIKE $1 OR building ILIKE $1)
+     ORDER BY building, display_name
+     LIMIT 25`,
+    [`%${q.trim()}%`]
+  );
+  res.json(rows);
+});
+
+// All remaining routes require the 'phones' admin permission
 router.use(authenticate, requirePermission('phones'));
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
