@@ -2,15 +2,17 @@ const BASE = import.meta.env.VITE_API_URL || '';
 
 async function apiFetch(path, options = {}) {
   const token = localStorage.getItem('cg_token');
+  const isFormData = options.body instanceof FormData;
 
   const res = await fetch(`${BASE}/api/v1${path}`, {
     ...options,
     headers: {
-      'Content-Type': 'application/json',
+      // Omit Content-Type for FormData — browser sets it with the boundary automatically.
+      ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
     },
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    body: isFormData ? options.body : options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
 
   if (res.status === 401) {

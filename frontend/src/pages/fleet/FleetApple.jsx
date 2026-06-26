@@ -176,6 +176,8 @@ function CertStatusView() {
   const [osFilter,     setOsFilter]     = useState('');
   const [search,       setSearch]       = useState('');
   const [showHelp,     setShowHelp]     = useState(false);
+  const [importResult, setImportResult] = useState(null);
+  const [importing,    setImporting]    = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['fleet-apple-cert'],
@@ -191,6 +193,25 @@ function CertStatusView() {
       setAppleIdInput('');
     },
   });
+
+  const handleCsvImport = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    setImporting(true);
+    setImportResult(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const result = await api.post('/fleet/apple/cert-status/import-csv', form);
+      setImportResult({ ok: true, ...result });
+      qc.invalidateQueries({ queryKey: ['fleet-apple-cert'] });
+    } catch (err) {
+      setImportResult({ ok: false, error: err.message || 'Upload failed' });
+    } finally {
+      setImporting(false);
+    }
+  };
 
   const certDate     = data?.certDate     || null;
   const autoDetected = data?.autoDetected || false;
@@ -366,6 +387,40 @@ function CertStatusView() {
                 <span className="text-xs text-slate-400 uppercase tracking-wide">Apple ID</span>
                 <p className="font-semibold text-slate-800 mt-0.5">{appleId}</p>
               </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Mosyle CSV import */}
+      <div className="card p-5">
+        <div className="flex items-start justify-between gap-4 flex-wrap">
+          <div>
+            <h3 className="font-semibold text-slate-900">Reconcile from Mosyle Export</h3>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Export the <strong>converted devices</strong> list from Mosyle and upload it here.
+              ClassGuard will mark those devices as on the new certificate and all others as needing re-enrollment.
+            </p>
+            <p className="text-xs text-slate-400 mt-1">
+              In Mosyle: <span className="font-mono bg-slate-100 px-1 rounded">Devices → Filter by push cert status → Export CSV</span>
+            </p>
+          </div>
+          <label className={`btn flex items-center gap-2 flex-shrink-0 cursor-pointer ${importing ? 'opacity-60 pointer-events-none' : 'btn-secondary'}`}>
+            <MdiIcon path={mdiDownload} size="0.9em" className="rotate-180" />
+            {importing ? 'Importing…' : 'Upload Converted List'}
+            <input type="file" accept=".csv,.txt" className="hidden" onChange={handleCsvImport} disabled={importing} />
+          </label>
+        </div>
+        {importResult && (
+          <div className={`mt-3 rounded-lg px-4 py-3 text-sm ${importResult.ok ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
+            {importResult.ok ? (
+              <>
+                <span className="font-semibold">Import complete.</span>{' '}
+                Matched {importResult.matchedInDb} of {importResult.convertedInFile} UDIDs from file.
+                Now showing <span className="font-semibold">{importResult.newCert} on new cert</span> / {importResult.oldCert} needing re-enrollment.
+              </>
+            ) : (
+              <><span className="font-semibold">Import failed:</span> {importResult.error}</>
             )}
           </div>
         )}

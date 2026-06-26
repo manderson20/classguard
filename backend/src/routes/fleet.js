@@ -6,6 +6,9 @@ const fleetSync  = require('../services/fleetSync');
 const snipeit    = require('../services/snipeit');
 const google     = require('../services/google');
 const deviceConsolidation = require('../services/deviceConsolidation');
+const multer     = require('multer');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const router = Router();
 router.use(authenticate, requireMinRole('admin'));
@@ -570,6 +573,62 @@ router.put('/apple/cert-status/threshold', async (req, res) => {
 
     res.json({ ok: true });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Import Mosyle "converted devices" CSV to set apns_cert_ok authoritatively.
+// Accepts the CSV exported from Mosyle (DeviceUDID in first column).
+// Marks matched devices as apns_cert_ok=true, all other Mosyle devices as false.
+// ---------------------------------------------------------------------------
+router.post('/apple/cert-status/import-csv', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    const text = req.file.buffer.toString('utf8');
+    const lines = text.split('\n').slice(1); // skip header row
+
+    const convertedUdids = new Set(
+      lines
+        .map(l => l.split(',')[0].replace(/"/g, '').trim())
+        .filter(Boolean)
+    );
+
+    if (convertedUdids.size === 0) {
+      return res.status(400).json({ error: 'No UDIDs found in file — check format' });
+    }
+
+    // Mark all Mosyle devices false first, then flip the converted ones true.
+    await pool.query(
+      `UPDATE integration_devices SET apns_cert_ok = false WHERE source = 'mosyle'`
+    );
+
+    const { rowCount } = await pool.query(
+      `UPDATE integration_devices
+       SET apns_cert_ok = true
+       WHERE source = 'mosyle'
+         AND raw_data->>'deviceudid' = ANY($1::text[])`,
+      [Array.from(convertedUdids)]
+    );
+
+    const { rows: totals } = await pool.query(
+      `SELECT apns_cert_ok, COUNT(*) as cnt
+       FROM integration_devices WHERE source='mosyle'
+       GROUP BY apns_cert_ok`
+    );
+
+    const summary = Object.fromEntries(totals.map(r => [String(r.apns_cert_ok), +r.cnt]));
+
+    res.json({
+      ok: true,
+      convertedInFile: convertedUdids.size,
+      matchedInDb: rowCount,
+      newCert: summary['true']  || 0,
+      oldCert: summary['false'] || 0,
+    });
+  } catch (err) {
+    console.error('[fleet] cert-status import-csv:', err);
     res.status(500).json({ error: err.message });
   }
 });
