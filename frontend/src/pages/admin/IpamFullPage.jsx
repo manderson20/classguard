@@ -434,13 +434,44 @@ function IpForm({ form, setForm, isNew, subnetId, subnetIsPublic, error }) {
 // ---------------------------------------------------------------------------
 // Subnet IP view — drill-down into a subnet's addresses
 // ---------------------------------------------------------------------------
-function SubnetIpView({ subnet, onBack }) {
+function SubnetIpView({ subnet: subnetProp, onBack }) {
   const qc = useQueryClient();
+  const [subnet, setSubnet]             = useState(subnetProp);
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch]             = useState('');
   const [page, setPage]                 = useState(1);
   const [modal, setModal]               = useState(null); // null | 'add' | {ip record}
   const [form, setForm]                 = useState(EMPTY_IP);
+  const [subnetEditOpen, setSubnetEditOpen] = useState(false);
+  const [subnetForm, setSubnetForm]     = useState({});
+  const setSF = (k, v) => setSubnetForm(p => ({ ...p, [k]: v }));
+
+  // These are already cached by SubnetsTab — zero extra network requests
+  const { data: sections  = [] } = useQuery({ queryKey: ['ipam-sections'],  queryFn: () => api.get('/ipam/sections') });
+  const { data: vrfs      = [] } = useQuery({ queryKey: ['vrfs'],           queryFn: () => api.get('/ipam/vrfs') });
+  const { data: vlans     = [] } = useQuery({ queryKey: ['vlans'],          queryFn: () => api.get('/ipam/vlans') });
+  const { data: locations = [] } = useQuery({ queryKey: ['ipam-locations'], queryFn: () => api.get('/ipam/locations') });
+
+  const saveSubnet = useMutation({
+    mutationFn: () => api.put(`/ipam/ipam-subnets/${subnet.id}`, subnetForm),
+    onSuccess: async () => {
+      qc.invalidateQueries({ queryKey: ['ipam-subnets'] });
+      // Refresh local subnet data so the header updates immediately
+      const fresh = await api.get(`/ipam/ipam-subnets/${subnet.id}`);
+      setSubnet(fresh);
+      setSubnetEditOpen(false);
+    },
+  });
+
+  function openSubnetEdit() {
+    setSubnetForm({
+      ...subnet,
+      tags:        subnet.tags        || [],
+      parent_id:   subnet.parent_id   ?? null,
+      location_id: subnet.location_id ?? null,
+    });
+    setSubnetEditOpen(true);
+  }
 
   // Reset to page 1 whenever the filter or search changes
   useEffect(() => { setPage(1); }, [statusFilter, search]);
@@ -549,6 +580,7 @@ function SubnetIpView({ subnet, onBack }) {
           </div>
         </div>
         <div className="flex gap-2 flex-shrink-0">
+          <button onClick={openSubnetEdit} className="btn-secondary text-sm">Edit Subnet</button>
           <button
             onClick={() => {
               const token = localStorage.getItem('cg_token');
@@ -749,7 +781,7 @@ function SubnetIpView({ subnet, onBack }) {
         </p>
       )}
 
-      {/* Add / Edit modal */}
+      {/* Add / Edit IP modal */}
       {modal !== null && (
         <Modal
           title={modal === 'add' ? 'Add IP Address' : `Edit ${modal.ip}`}
@@ -773,6 +805,86 @@ function SubnetIpView({ subnet, onBack }) {
               {addIp.isPending || editIp.isPending ? 'Saving…' : 'Save'}
             </button>
           </div>
+        </Modal>
+      )}
+
+      {/* Edit Subnet modal */}
+      {subnetEditOpen && (
+        <Modal title={`Edit Subnet — ${subnet.subnet}`} onClose={() => setSubnetEditOpen(false)} wide>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="Subnet CIDR">
+              <input className={INPUT} value={subnetForm.subnet || ''} disabled
+                style={{ opacity: 0.6, cursor: 'not-allowed' }} />
+            </Field>
+            <Field label="IP Version">
+              <select className={SELECT} value={subnetForm.ip_version || 4} onChange={e => setSF('ip_version', e.target.value)}>
+                <option value={4}>IPv4</option>
+                <option value={6}>IPv6</option>
+              </select>
+            </Field>
+            <Field label="Name">
+              <input className={INPUT} value={subnetForm.name || ''} onChange={e => setSF('name', e.target.value)} placeholder="Student VLAN" />
+            </Field>
+            <Field label="Gateway">
+              <input className={INPUT} value={subnetForm.gateway || ''} onChange={e => setSF('gateway', e.target.value)} placeholder="10.10.0.1" />
+            </Field>
+            <Field label="Section">
+              <select className={SELECT} value={subnetForm.section_id || ''} onChange={e => setSF('section_id', e.target.value || null)}>
+                <option value="">None</option>
+                {sections.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </Field>
+            <Field label="VRF">
+              <select className={SELECT} value={subnetForm.vrf_id || ''} onChange={e => setSF('vrf_id', e.target.value || null)}>
+                <option value="">None</option>
+                {vrfs.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
+              </select>
+            </Field>
+            <Field label="VLAN">
+              <select className={SELECT} value={subnetForm.vlan_id || ''} onChange={e => setSF('vlan_id', e.target.value || null)}>
+                <option value="">None</option>
+                {vlans.map(v => <option key={v.id} value={v.id}>{v.vlan_id} — {v.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Location">
+              <select className={SELECT} value={subnetForm.location_id || ''} onChange={e => setSF('location_id', e.target.value || null)}>
+                <option value="">None</option>
+                {locations.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Description">
+              <input className={INPUT} value={subnetForm.description || ''} onChange={e => setSF('description', e.target.value)} />
+            </Field>
+            <Field label="Alert threshold %" hint="Warn when utilization reaches this %">
+              <input type="number" min="1" max="100" className={INPUT}
+                value={subnetForm.alert_threshold_pct ?? 90}
+                onChange={e => setSF('alert_threshold_pct', e.target.value ? parseInt(e.target.value, 10) : 90)} />
+            </Field>
+          </div>
+          <Field label="Tags">
+            <TagInput value={subnetForm.tags || []} onChange={v => setSF('tags', v)} />
+          </Field>
+          <Field label="Notes">
+            <textarea className={INPUT + ' resize-none mt-3'} rows={2} value={subnetForm.notes || ''} onChange={e => setSF('notes', e.target.value)} />
+          </Field>
+          <div className="mt-4 pt-4 border-t border-slate-200">
+            <label className="flex items-center gap-2 cursor-pointer select-none">
+              <input type="checkbox" className="h-4 w-4 rounded border-slate-300 text-primary-600"
+                checked={!!subnetForm.is_public} onChange={e => setSF('is_public', e.target.checked)} />
+              <span className="text-sm font-semibold text-slate-700">Public IP space</span>
+            </label>
+          </div>
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={() => setSubnetEditOpen(false)} className="btn-secondary text-sm">Cancel</button>
+            <button onClick={() => saveSubnet.mutate()} disabled={saveSubnet.isPending} className="btn-primary text-sm">
+              {saveSubnet.isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          {saveSubnet.isError && (
+            <div className="mt-2 px-3 py-2 rounded-lg text-xs border bg-red-50 border-red-200 text-red-600">
+              {saveSubnet.error?.message || 'Failed to save'}
+            </div>
+          )}
         </Modal>
       )}
     </div>
