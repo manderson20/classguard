@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
@@ -1889,10 +1889,10 @@ function SectionsTab() {
 // ---------------------------------------------------------------------------
 // Search tab — global IP + subnet search across all IPAM data
 // ---------------------------------------------------------------------------
-function SearchTab({ onGoToSubnet }) {
-  const [q, setQ] = useState('');
+function SearchTab({ onGoToSubnet, preset = '' }) {
+  const [q, setQ] = useState(preset);
   // Debounce the actual query so we don't hammer the API on every keystroke
-  const [debouncedQ, setDebouncedQ] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState(preset);
   useEffect(() => {
     const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
     return () => clearTimeout(t);
@@ -2207,15 +2207,125 @@ function ActivityTab() {
 // ---------------------------------------------------------------------------
 const TABS = ['Subnets', 'VLANs', 'VRFs', 'Sections', 'BGP', 'NAT', 'Locations', 'Multicast', 'Search', 'Calculator', 'Activity'];
 
+// ---------------------------------------------------------------------------
+// Global IPAM header search — always-visible, live dropdown
+// ---------------------------------------------------------------------------
+function IpamHeaderSearch({ onGoToSubnet }) {
+  const [q, setQ]             = useState('');
+  const [debQ, setDebQ]       = useState('');
+  const [open, setOpen]       = useState(false);
+  const ref                   = useRef(null);
+
+  useEffect(() => {
+    const t = setTimeout(() => setDebQ(q.trim()), 250);
+    return () => clearTimeout(t);
+  }, [q]);
+
+  useEffect(() => {
+    function handler(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const active = debQ.length >= 2;
+  const { data, isFetching } = useQuery({
+    queryKey: ['ipam-header-search', debQ],
+    queryFn:  () => api.get(`/ipam/search?q=${encodeURIComponent(debQ)}`),
+    enabled:  active,
+  });
+
+  const ips     = data?.ips?.slice(0, 8)     ?? [];
+  const subnets = data?.subnets?.slice(0, 4) ?? [];
+  const hasResults = ips.length > 0 || subnets.length > 0;
+
+  function pick(subnetId) {
+    setQ('');
+    setOpen(false);
+    onGoToSubnet(subnetId);
+  }
+
+  return (
+    <div ref={ref} className="relative w-72">
+      <div className="relative">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-xs">🔍</span>
+        <input
+          value={q}
+          onChange={e => { setQ(e.target.value); setOpen(true); }}
+          onFocus={() => setOpen(true)}
+          placeholder="Search IPs, hostnames, MACs…"
+          className="w-full border border-slate-300 rounded-lg pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary-400 bg-white"
+        />
+        {isFetching && (
+          <span className="absolute right-2 top-1/2 -translate-y-1/2 text-[10px] text-slate-400">…</span>
+        )}
+      </div>
+
+      {open && q.length >= 2 && (
+        <div className="absolute z-50 left-0 right-0 mt-1 bg-white border border-slate-200 rounded-xl shadow-lg overflow-hidden">
+          {!hasResults && !isFetching && (
+            <div className="px-4 py-3 text-sm text-slate-400">No results for "{debQ}"</div>
+          )}
+
+          {subnets.length > 0 && (
+            <>
+              <div className="px-3 pt-2 pb-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Subnets</div>
+              {subnets.map(s => (
+                <button key={s.id} onClick={() => pick(s.id)}
+                  className="w-full text-left px-3 py-2 hover:bg-primary-50 flex items-center gap-3">
+                  <span className="font-mono text-sm text-slate-800">{s.subnet}</span>
+                  {s.name && <span className="text-xs text-slate-500 truncate">{s.name}</span>}
+                  <span className="ml-auto text-[10px] text-slate-400 flex-shrink-0">{s.section_name}</span>
+                </button>
+              ))}
+            </>
+          )}
+
+          {ips.length > 0 && (
+            <>
+              <div className="px-3 pt-2 pb-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide border-t border-slate-100">
+                IP Addresses
+              </div>
+              {ips.map(r => (
+                <button key={r.id} onClick={() => pick(r.subnet_id)}
+                  className="w-full text-left px-3 py-2 hover:bg-primary-50 flex items-center gap-3">
+                  <span className="font-mono text-sm text-slate-800 flex-shrink-0">{r.ip}</span>
+                  <span className="text-xs text-slate-600 truncate">{r.hostname || r.owner || r.description || ''}</span>
+                  <span className="ml-auto text-[10px] text-slate-400 flex-shrink-0 font-mono">{r.subnet}</span>
+                </button>
+              ))}
+            </>
+          )}
+
+          {(data?.ips?.length > 8 || data?.subnets?.length > 4) && (
+            <button
+              onClick={() => { setOpen(false); onGoToSubnet(null, debQ); }}
+              className="w-full text-center px-3 py-2 text-xs text-primary-600 border-t border-slate-100 hover:bg-slate-50">
+              See all results →
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function IpamFullPage() {
   const [tab, setTab]                   = useState('Subnets');
   const [activeSubnet, setActiveSubnet] = useState(null);
+  const [searchPreset, setSearchPreset] = useState('');
 
   const { data: sections = [] } = useQuery({ queryKey: ['ipam-sections'], queryFn: () => api.get('/ipam/sections') });
   const { data: vrfs = [] }     = useQuery({ queryKey: ['vrfs'],          queryFn: () => api.get('/ipam/vrfs') });
   const { data: vlans = [] }    = useQuery({ queryKey: ['vlans'],         queryFn: () => api.get('/ipam/vlans') });
 
-  const goToSubnet = useCallback(async (subnetId) => {
+  const goToSubnet = useCallback(async (subnetId, presearch) => {
+    if (!subnetId) {
+      // "see all results" — open Search tab with the query pre-filled
+      setActiveSubnet(null);
+      setTab('Search');
+      if (presearch) setSearchPreset(presearch);
+      return;
+    }
     try {
       const s = await api.get(`/ipam/ipam-subnets/${subnetId}`);
       setActiveSubnet(s);
@@ -2225,13 +2335,16 @@ export default function IpamFullPage() {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold text-slate-900">IPAM</h1>
-        <p className="text-slate-500 text-sm mt-0.5">
-          IP Address Management — IPv4, IPv6, VLANs, VRFs, BGP, NAT
-          {' · '}
-          <Link to="/admin/ipam/subnets" className="text-primary-600 hover:underline">Classic DHCP view →</Link>
-        </p>
+      <div className="flex items-start justify-between mb-5 gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-900">IPAM</h1>
+          <p className="text-slate-500 text-sm mt-0.5">
+            IP Address Management — IPv4, IPv6, VLANs, VRFs, BGP, NAT
+            {' · '}
+            <Link to="/admin/ipam/subnets" className="text-primary-600 hover:underline">Classic DHCP view →</Link>
+          </p>
+        </div>
+        <IpamHeaderSearch onGoToSubnet={goToSubnet} />
       </div>
 
       {!activeSubnet && (
@@ -2260,7 +2373,7 @@ export default function IpamFullPage() {
           {tab === 'NAT'        && <NatTab />}
           {tab === 'Locations'  && <LocationsTab />}
           {tab === 'Multicast'  && <MulticastTab vlans={vlans} />}
-          {tab === 'Search'     && <SearchTab onGoToSubnet={goToSubnet} />}
+          {tab === 'Search'     && <SearchTab onGoToSubnet={goToSubnet} preset={searchPreset} />}
           {tab === 'Calculator' && <CidrCalculator />}
           {tab === 'Activity'   && <ActivityTab />}
         </>
