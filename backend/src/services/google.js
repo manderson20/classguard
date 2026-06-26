@@ -409,23 +409,33 @@ async function syncDevices(actorId) {
     const net = (d.lastKnownNetwork || [])[0] || {};
     const ips = [...new Set([net.ipAddress, net.wanIpAddress].filter(Boolean))];
 
+    // autoUpdateExpiration is a Unix timestamp in milliseconds (string from API)
+    const aupMs  = d.autoUpdateExpiration ? parseInt(d.autoUpdateExpiration, 10) : null;
+    const aupDate = aupMs && aupMs > 0 ? new Date(aupMs).toISOString().split('T')[0] : null;
+
     await pool.query(
       `INSERT INTO integration_devices
          (source, external_id, serial_number, mac_addresses, device_name, device_model,
-          os_type, os_version, assigned_email, ip_addresses, status, last_seen, raw_data, synced_at)
-       VALUES ('google_admin',$1,$2,$3,$4,$5,'ChromeOS',$6,$7,$8,$9,$10,$11,NOW())
+          os_type, os_version, assigned_email, ip_addresses, status, last_seen,
+          aup_date, aup_source, raw_data, synced_at)
+       VALUES ('google_admin',$1,$2,$3,$4,$5,'ChromeOS',$6,$7,$8,$9,$10,$11,$12,$13,NOW())
        ON CONFLICT (source, external_id) DO UPDATE SET
          serial_number = EXCLUDED.serial_number, mac_addresses = EXCLUDED.mac_addresses,
          device_name = EXCLUDED.device_name, os_version = EXCLUDED.os_version,
          assigned_email = EXCLUDED.assigned_email, ip_addresses = EXCLUDED.ip_addresses,
          status = EXCLUDED.status,
-         last_seen = EXCLUDED.last_seen, raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
+         last_seen = EXCLUDED.last_seen,
+         aup_date   = EXCLUDED.aup_date,
+         aup_source = EXCLUDED.aup_source,
+         raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
       [d.deviceId, d.serialNumber,
        `{${[d.macAddress, d.ethernetMacAddress].filter(Boolean).join(',')}}`,
        d.annotatedAssetId || d.deviceId, d.model,
        d.osVersion, d.lastEnrollmentTime ? d.annotatedUser || null : null,
        `{${ips.join(',')}}`,
-       d.status, d.lastSync ? new Date(d.lastSync) : null, JSON.stringify(stripControlChars(d))]
+       d.status, d.lastSync ? new Date(d.lastSync) : null,
+       aupDate, aupDate ? 'google_admin' : null,
+       JSON.stringify(stripControlChars(d))]
     );
   }
 

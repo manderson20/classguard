@@ -53,13 +53,15 @@ router.get('/summary', async (req, res) => {
     { rows: osRef },
     { rows: settings },
   ] = await Promise.all([
-    pool.query(`SELECT source, serial_number, os_type, os_version, asset_tag, last_seen, external_id FROM integration_devices`),
-    pool.query(`SELECT model, aup_date FROM chromebook_aup_reference`),
+    pool.query(`SELECT source, serial_number, os_type, os_version, asset_tag, last_seen, external_id, device_model, aup_date FROM integration_devices`),
+    pool.query(`SELECT model, aup_date, requires_license FROM chromebook_aup_reference`),
     pool.query(`SELECT os_family, latest_version FROM apple_os_reference`),
     pool.query(`SELECT key, value FROM settings WHERE key IN ('last_mosyle_sync','last_snipeit_sync','last_google_devices_sync')`),
   ]);
 
-  const aupMap = Object.fromEntries(aupRef.map(r => [r.model?.toLowerCase(), r.aup_date]));
+  const aupMap = Object.fromEntries(
+    aupRef.map(r => [r.model?.toLowerCase(), { aup_date: r.aup_date, requires_license: r.requires_license }])
+  );
   const osMap  = Object.fromEntries(osRef.map(r => [r.os_family, r.latest_version]));
   const syncs  = Object.fromEntries(settings.map(r => [r.key, r.value]));
 
@@ -84,13 +86,17 @@ router.get('/summary', async (req, res) => {
 
     if (osType === 'ChromeOS') {
       chromebooks.total++;
-      const model    = rows.find(r => r.device_model)?.device_model;
-      const aupDate  = model ? aupMap[model?.toLowerCase()] : null;
-      const status   = aupStatus(aupDate);
-      if (status === 'expired')   chromebooks.expired++;
+      const googleRow  = rows.find(r => r.source === 'google_admin') || rows[0];
+      const model      = googleRow?.device_model;
+      // Prefer per-device AUP from Google Admin API, fall back to model table
+      const deviceDate = googleRow?.aup_date || null;
+      const refDate    = model ? aupMap[model.toLowerCase()]?.aup_date : null;
+      const aupDate    = deviceDate || refDate;
+      const status     = aupStatus(aupDate);
+      if (status === 'expired')      chromebooks.expired++;
       else if (status === 'expiring') chromebooks.expiringSoon++;
-      else if (status === 'ok')   chromebooks.ok++;
-      else                         chromebooks.unknown++;
+      else if (status === 'ok')      chromebooks.ok++;
+      else                            chromebooks.unknown++;
     }
 
     if (['macOS','iOS','iPadOS','tvOS'].includes(osType)) {
@@ -179,16 +185,18 @@ router.get('/chromebooks', async (req, res) => {
     pool.query(
       `SELECT id.id, id.external_id, id.serial_number, id.device_name, id.device_model,
               id.os_version, id.assigned_email, id.asset_tag, id.synced_at,
-              id.source
+              id.aup_date, id.aup_source, id.source
        FROM integration_devices id
        WHERE id.os_type = 'ChromeOS'`
     ),
-    pool.query(`SELECT model, aup_date FROM chromebook_aup_reference`),
+    pool.query(`SELECT model, aup_date, requires_license FROM chromebook_aup_reference`),
   ]);
 
-  const aupMap = Object.fromEntries(aupRef.map(r => [r.model?.toLowerCase(), r.aup_date]));
+  const aupMap = Object.fromEntries(
+    aupRef.map(r => [r.model?.toLowerCase(), { aup_date: r.aup_date, requires_license: r.requires_license }])
+  );
 
-  // Group by serial — pick the Google Admin row for deviceId (needed for disable action)
+  // Group by serial — Google Admin row is preferred (has per-device AUP date)
   const bySerial = new Map();
   for (const r of chromebookRows) {
     const s = r.serial_number?.trim().toUpperCase() || `__id__${r.id}`;
@@ -200,22 +208,37 @@ router.get('/chromebooks', async (req, res) => {
   for (const [serial, rows] of bySerial) {
     const googleRow = rows.find(r => r.source === 'google_admin') || rows[0];
     const model     = googleRow.device_model;
-    const aupDate   = model ? aupMap[model.toLowerCase()] : null;
-    const status    = aupStatus(aupDate);
+    const modelKey  = model?.toLowerCase();
+
+    // Per-device date from Google Admin API (authoritative — already reflects license/extension state)
+    // Fall back to model reference table if no API date
+    const deviceAupDate  = googleRow.aup_date || null;
+    const refEntry       = modelKey ? aupMap[modelKey] : null;
+    const refAupDate     = refEntry?.aup_date || null;
+    const aupDate        = deviceAupDate || refAupDate;
+    const aupSource      = deviceAupDate ? 'google_admin' : (refAupDate ? 'model_ref' : null);
+
+    // requiresLicense is only relevant when we're using the model-table estimate
+    // (the Admin API date already reflects whether extended support is active)
+    const requiresLicense = aupSource === 'model_ref' && (refEntry?.requires_license === true);
+
+    const status = aupStatus(aupDate);
 
     if (filterStatus && status !== filterStatus) continue;
 
     result.push({
-      serialNumber:   serial,
-      deviceName:     googleRow.device_name,
-      deviceModel:    model,
-      assignedEmail:  googleRow.assigned_email,
-      assetTag:       rows.find(r => r.asset_tag)?.asset_tag || null,
-      googleDeviceId: rows.find(r => r.source === 'google_admin')?.external_id || null,
-      aupDate:        aupDate || null,
-      aupStatus:      status,
-      osVersion:      googleRow.os_version,
-      lastSync:       googleRow.synced_at,
+      serialNumber:    serial,
+      deviceName:      googleRow.device_name,
+      deviceModel:     model,
+      assignedEmail:   googleRow.assigned_email,
+      assetTag:        rows.find(r => r.asset_tag)?.asset_tag || null,
+      googleDeviceId:  rows.find(r => r.source === 'google_admin')?.external_id || null,
+      aupDate:         aupDate || null,
+      aupSource,
+      aupStatus:       status,
+      requiresLicense,
+      osVersion:       googleRow.os_version,
+      lastSync:        googleRow.synced_at,
     });
   }
 
