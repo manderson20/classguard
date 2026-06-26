@@ -55,11 +55,17 @@ if [[ -d .git ]]; then
     # works even when a fresh git-init defaulted to 'master' locally but
     # the remote uses 'main'.
     UPSTREAM=$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null || echo "origin/main")
-    if ! git pull --ff-only; then
-      warn "Fast-forward pull failed (remote history diverged) -- resetting to $UPSTREAM"
-      git fetch origin
+    # Fetch first, then attempt a fast-forward merge. Using fetch + merge
+    # separately avoids the 'if ! git pull' / set -e interaction where git's
+    # fatal: exit causes errexit to fire before the if-condition can suppress
+    # it on some bash versions. If fast-forward fails (diverged history, e.g.
+    # a force-push on the remote), reset hard — no local work to lose since
+    # we checked for uncommitted changes above.
+    git fetch origin
+    git merge --ff-only "$UPSTREAM" 2>/dev/null || {
+      warn "Fast-forward merge failed (history diverged) — resetting hard to $UPSTREAM"
       git reset --hard "$UPSTREAM"
-    fi
+    }
     AFTER_REV=$(git rev-parse HEAD)
     if [[ "$BEFORE_REV" == "$AFTER_REV" ]]; then
       info "Already up to date ($AFTER_REV)"
