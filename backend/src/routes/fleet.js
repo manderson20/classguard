@@ -475,11 +475,12 @@ async function detectCertDate() {
 router.get('/apple/cert-status', async (req, res) => {
   try {
     const { rows: settingRows } = await pool.query(
-      `SELECT key, value FROM settings WHERE key IN ('apns_cert_replaced_on','apns_cert_apple_id')`
+      `SELECT key, value FROM settings WHERE key IN ('apns_cert_replaced_on','apns_cert_apple_id','apns_old_cert_expires_on')`
     );
     const settings   = Object.fromEntries(settingRows.map(r => [r.key, r.value]));
-    const manualDate = settings.apns_cert_replaced_on || null;
-    const appleId    = settings.apns_cert_apple_id    || null;
+    const manualDate = settings.apns_cert_replaced_on    || null;
+    const appleId    = settings.apns_cert_apple_id       || null;
+    const certExpiry = settings.apns_old_cert_expires_on || null;
 
     let certDate     = manualDate;
     let autoDetected = false;
@@ -488,8 +489,15 @@ router.get('/apple/cert-status', async (req, res) => {
       autoDetected = certDate != null;
     }
 
+    // Count how many old-cert device MACs are currently blocked in RADIUS
+    const { rows: blockedRows } = await pool.query(
+      `SELECT COUNT(*) as cnt FROM radius_devices
+       WHERE source = 'mosyle' AND status = 'blocked' AND notes LIKE 'APNS%'`
+    );
+    const wifiBlockedCount = parseInt(blockedRows[0]?.cnt || 0, 10);
+
     if (!certDate) {
-      return res.json({ certDate: null, autoDetected: false, appleId, summary: null, oldCertDevices: [] });
+      return res.json({ certDate: null, autoDetected: false, appleId, certExpiry, summary: null, oldCertDevices: [], wifiBlockedCount });
     }
 
     const { rows: devices } = await pool.query(`
@@ -531,7 +539,7 @@ router.get('/apple/cert-status', async (req, res) => {
       }
     }
 
-    res.json({ certDate, autoDetected, appleId, summary, oldCertDevices });
+    res.json({ certDate, autoDetected, appleId, certExpiry, summary, oldCertDevices, wifiBlockedCount });
   } catch (err) {
     console.error('[fleet] cert-status:', err);
     res.status(500).json({ error: err.message });
@@ -540,10 +548,10 @@ router.get('/apple/cert-status', async (req, res) => {
 
 router.put('/apple/cert-status/threshold', async (req, res) => {
   try {
-    const { certDate, appleId } = req.body;
-    if (certDate && !/^\d{4}-\d{2}-\d{2}$/.test(certDate)) {
-      return res.status(400).json({ error: 'Invalid date format (YYYY-MM-DD)' });
-    }
+    const { certDate, appleId, certExpiry } = req.body;
+    if (certDate   && !/^\d{4}-\d{2}-\d{2}$/.test(certDate))   return res.status(400).json({ error: 'Invalid certDate format (YYYY-MM-DD)' });
+    if (certExpiry && !/^\d{4}-\d{2}-\d{2}$/.test(certExpiry)) return res.status(400).json({ error: 'Invalid certExpiry format (YYYY-MM-DD)' });
+
     await pool.query(
       `INSERT INTO settings (key, value, updated_at) VALUES ('apns_cert_replaced_on',$1,NOW())
        ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
@@ -554,6 +562,13 @@ router.put('/apple/cert-status/threshold', async (req, res) => {
         `INSERT INTO settings (key, value, updated_at) VALUES ('apns_cert_apple_id',$1,NOW())
          ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
         [appleId || null]
+      );
+    }
+    if (certExpiry !== undefined) {
+      await pool.query(
+        `INSERT INTO settings (key, value, updated_at) VALUES ('apns_old_cert_expires_on',$1,NOW())
+         ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
+        [certExpiry || null]
       );
     }
 
@@ -629,6 +644,136 @@ router.post('/apple/cert-status/import-csv', upload.single('file'), async (req, 
     });
   } catch (err) {
     console.error('[fleet] cert-status import-csv:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /fleet/apple/cert-status/detect-stale
+// After the old cert expires, any Mosyle device whose last heartbeat predates
+// the expiry is definitively on the old cert (Mosyle can no longer push to it).
+// Sets apns_cert_ok = false for those devices.
+// ---------------------------------------------------------------------------
+router.post('/apple/cert-status/detect-stale', async (req, res) => {
+  try {
+    const { rows: s } = await pool.query(
+      `SELECT value FROM settings WHERE key = 'apns_old_cert_expires_on'`
+    );
+    const expiryDate = s[0]?.value;
+    if (!expiryDate) {
+      return res.status(400).json({ error: 'Old cert expiry date not set — enter it in Certificate Details first' });
+    }
+
+    // Devices whose last beat predates the expiry can no longer receive push — old cert.
+    const { rowCount } = await pool.query(
+      `UPDATE integration_devices
+       SET apns_cert_ok = false
+       WHERE source = 'mosyle'
+         AND to_timestamp((raw_data->>'date_last_beat')::bigint) < $1::timestamptz
+         AND apns_cert_ok IS DISTINCT FROM false`,
+      [expiryDate]
+    );
+
+    const { rows: totals } = await pool.query(
+      `SELECT apns_cert_ok, COUNT(*) as cnt FROM integration_devices
+       WHERE source='mosyle' GROUP BY apns_cert_ok`
+    );
+    const t = Object.fromEntries(totals.map(r => [String(r.apns_cert_ok), +r.cnt]));
+
+    res.json({ ok: true, detected: rowCount, newCert: t['true'] || 0, oldCert: t['false'] || 0 });
+  } catch (err) {
+    console.error('[fleet] detect-stale:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /fleet/apple/cert-status/block-wifi
+// Pushes all old-cert Mosyle device WiFi MACs into radius_devices as 'blocked'.
+// Devices already in radius_devices are updated (not duplicated).
+// Skips devices with no WiFi MAC address.
+// ---------------------------------------------------------------------------
+function osTypeToDeviceType(osType) {
+  if (osType === 'iPadOS') return 'tablet';
+  if (osType === 'macOS')  return 'laptop';
+  if (osType === 'iOS')    return 'phone';
+  if (osType === 'tvOS')   return 'tv';
+  return 'other';
+}
+
+function normaliseMac(raw) {
+  if (!raw) return null;
+  const hex = raw.replace(/[^a-fA-F0-9]/g, '');
+  if (hex.length !== 12) return null;
+  return hex.match(/.{2}/g).join(':').toUpperCase();
+}
+
+router.post('/apple/cert-status/block-wifi', async (req, res) => {
+  try {
+    const { rows: devices } = await pool.query(
+      `SELECT id, device_name, os_type, raw_data->>'wifi_mac_address' as wifi_mac
+       FROM integration_devices
+       WHERE source = 'mosyle' AND apns_cert_ok = false`
+    );
+
+    let blocked = 0, skipped = 0;
+
+    for (const d of devices) {
+      const mac = normaliseMac(d.wifi_mac);
+      if (!mac) { skipped++; continue; }
+
+      await pool.query(
+        `INSERT INTO radius_devices
+           (mac_address, device_name, device_type, status, source, source_device_id, notes)
+         VALUES ($1,$2,$3,'blocked','mosyle',$4,'APNS certificate expired — re-enrollment required')
+         ON CONFLICT (mac_address) DO UPDATE SET
+           status = 'blocked',
+           notes  = 'APNS certificate expired — re-enrollment required',
+           updated_at = NOW()`,
+        [mac, d.device_name, osTypeToDeviceType(d.os_type), d.id]
+      );
+      blocked++;
+    }
+
+    res.json({ ok: true, blocked, skipped });
+  } catch (err) {
+    console.error('[fleet] block-wifi:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /fleet/apple/cert-status/unblock-wifi
+// After re-enrollment (apns_cert_ok = true), lift the RADIUS block for those
+// devices so they can rejoin the main 802.1X network.
+// ---------------------------------------------------------------------------
+router.post('/apple/cert-status/unblock-wifi', async (req, res) => {
+  try {
+    const { rows: devices } = await pool.query(
+      `SELECT raw_data->>'wifi_mac_address' as wifi_mac
+       FROM integration_devices
+       WHERE source = 'mosyle' AND apns_cert_ok = true`
+    );
+
+    let unblocked = 0;
+    for (const d of devices) {
+      const mac = normaliseMac(d.wifi_mac);
+      if (!mac) continue;
+
+      const { rowCount } = await pool.query(
+        `UPDATE radius_devices
+         SET status = 'approved', notes = 'Re-enrolled under new APNS certificate', updated_at = NOW()
+         WHERE mac_address = $1
+           AND status = 'blocked'
+           AND notes LIKE 'APNS%'`,
+        [mac]
+      );
+      unblocked += rowCount;
+    }
+
+    res.json({ ok: true, unblocked });
+  } catch (err) {
+    console.error('[fleet] unblock-wifi:', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -176,8 +176,11 @@ function CertStatusView() {
   const [osFilter,     setOsFilter]     = useState('');
   const [search,       setSearch]       = useState('');
   const [showHelp,     setShowHelp]     = useState(false);
-  const [importResult, setImportResult] = useState(null);
-  const [importing,    setImporting]    = useState(false);
+  const [importResult,  setImportResult]  = useState(null);
+  const [importing,     setImporting]     = useState(false);
+  const [expiryInput,   setExpiryInput]   = useState('');
+  const [wifiAction,    setWifiAction]    = useState(null); // 'blocking'|'detecting'|'unblocking'
+  const [wifiResult,    setWifiResult]    = useState(null);
 
   const { data, isLoading } = useQuery({
     queryKey: ['fleet-apple-cert'],
@@ -213,11 +216,13 @@ function CertStatusView() {
     }
   };
 
-  const certDate     = data?.certDate     || null;
-  const autoDetected = data?.autoDetected || false;
-  const appleId      = data?.appleId      || null;
-  const summary      = data?.summary      || null;
-  const allOld       = data?.oldCertDevices || [];
+  const certDate        = data?.certDate        || null;
+  const autoDetected    = data?.autoDetected    || false;
+  const appleId         = data?.appleId         || null;
+  const certExpiry      = data?.certExpiry      || null;
+  const summary         = data?.summary         || null;
+  const allOld          = data?.oldCertDevices  || [];
+  const wifiBlockedCount = data?.wifiBlockedCount || 0;
 
   const filtered = allOld.filter(d => {
     if (osFilter && d.osType !== osFilter) return false;
@@ -235,9 +240,24 @@ function CertStatusView() {
 
   const handleSave = () => {
     saveMutation.mutate({
-      certDate: dateInput || certDate || null,
-      appleId:  appleIdInput !== '' ? appleIdInput : appleId,
+      certDate:   dateInput   || certDate   || null,
+      appleId:    appleIdInput !== '' ? appleIdInput : appleId,
+      certExpiry: expiryInput || certExpiry || null,
     });
+  };
+
+  const handleWifiAction = async (action) => {
+    setWifiAction(action);
+    setWifiResult(null);
+    try {
+      const result = await api.post(`/fleet/apple/cert-status/${action}`);
+      setWifiResult({ ok: true, action, ...result });
+      qc.invalidateQueries({ queryKey: ['fleet-apple-cert'] });
+    } catch (err) {
+      setWifiResult({ ok: false, action, error: err.message || 'Failed' });
+    } finally {
+      setWifiAction(null);
+    }
   };
 
   return (
@@ -350,12 +370,30 @@ function CertStatusView() {
               The Apple ID shown in Mosyle MDM Settings or the Push Certificates Portal.
             </p>
           </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+              Old Cert Expires On
+            </span>
+            <div className="flex items-center gap-2">
+              <MdiIcon path={mdiCalendar} size="1em" className="text-slate-400 flex-shrink-0" />
+              <input
+                type="date"
+                className="input flex-1"
+                value={expiryInput || certExpiry || ''}
+                onChange={e => setExpiryInput(e.target.value)}
+              />
+            </div>
+            <p className="text-xs text-slate-400">
+              When the old APNS certificate expires. After this date, stale devices can be auto-detected by last heartbeat.
+            </p>
+          </label>
         </div>
 
         <div className="mt-4 flex items-center gap-3 flex-wrap">
           <button
             className="btn btn-primary btn-sm"
-            disabled={(!dateInput && !appleIdInput) || saveMutation.isPending}
+            disabled={(!dateInput && !appleIdInput && !expiryInput) || saveMutation.isPending}
             onClick={handleSave}
           >
             {saveMutation.isPending ? 'Saving…' : 'Save'}
@@ -367,7 +405,8 @@ function CertStatusView() {
               onClick={() => {
                 setDateInput('');
                 setAppleIdInput('');
-                saveMutation.mutate({ certDate: null, appleId: null });
+                setExpiryInput('');
+                saveMutation.mutate({ certDate: null, appleId: null, certExpiry: null });
               }}
             >
               Clear
@@ -386,6 +425,12 @@ function CertStatusView() {
               <div>
                 <span className="text-xs text-slate-400 uppercase tracking-wide">Apple ID</span>
                 <p className="font-semibold text-slate-800 mt-0.5">{appleId}</p>
+              </div>
+            )}
+            {certExpiry && (
+              <div>
+                <span className="text-xs text-slate-400 uppercase tracking-wide">Old cert expires</span>
+                <p className="font-semibold text-amber-700 mt-0.5">{new Date(certExpiry).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
               </div>
             )}
           </div>
@@ -421,6 +466,74 @@ function CertStatusView() {
               </>
             ) : (
               <><span className="font-semibold">Import failed:</span> {importResult.error}</>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* 802.1X WiFi blocking */}
+      <div className="card p-5">
+        <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
+          <div>
+            <h3 className="font-semibold text-slate-900">802.1X WiFi Enforcement</h3>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Block old-cert devices from the main wireless network via RADIUS. Students must bring
+              devices to IT for wipe and re-enrollment on the remediation network.
+            </p>
+          </div>
+          {wifiBlockedCount > 0 && (
+            <span className="flex-shrink-0 px-3 py-1 rounded-full bg-red-100 text-red-700 text-sm font-semibold">
+              {wifiBlockedCount} MAC{wifiBlockedCount !== 1 ? 's' : ''} blocked
+            </span>
+          )}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          {certExpiry && (
+            <button
+              className="btn btn-secondary flex items-center gap-2"
+              disabled={!!wifiAction}
+              onClick={() => handleWifiAction('detect-stale')}
+            >
+              <MdiIcon path={mdiAutorenew} size="0.9em" className={wifiAction === 'detect-stale' ? 'animate-spin' : ''} />
+              {wifiAction === 'detect-stale' ? 'Detecting…' : 'Detect Stale Devices'}
+            </button>
+          )}
+          <button
+            className="btn flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white"
+            disabled={!!wifiAction || !summary?.oldCert?.total}
+            onClick={() => handleWifiAction('block-wifi')}
+          >
+            <MdiIcon path={mdiAlertCircle} size="0.9em" />
+            {wifiAction === 'block-wifi' ? 'Blocking…' : `Block Old-Cert Devices (${summary?.oldCert?.total ?? 0})`}
+          </button>
+          {wifiBlockedCount > 0 && (
+            <button
+              className="btn btn-secondary flex items-center gap-2"
+              disabled={!!wifiAction}
+              onClick={() => handleWifiAction('unblock-wifi')}
+            >
+              <MdiIcon path={mdiCheckCircle} size="0.9em" />
+              {wifiAction === 'unblock-wifi' ? 'Unblocking…' : 'Unblock Re-enrolled Devices'}
+            </button>
+          )}
+        </div>
+
+        {!certExpiry && (
+          <p className="text-xs text-slate-400 mt-3">
+            Set the old cert expiry date above to enable the "Detect Stale Devices" auto-scan after expiry.
+          </p>
+        )}
+
+        {wifiResult && (
+          <div className={`mt-3 rounded-lg px-4 py-3 text-sm ${wifiResult.ok ? 'bg-green-50 border border-green-200 text-green-800' : 'bg-red-50 border border-red-200 text-red-800'}`}>
+            {wifiResult.ok ? (
+              wifiResult.action === 'detect-stale'  ? <>Detected {wifiResult.detected} stale device{wifiResult.detected !== 1 ? 's' : ''} — now showing {wifiResult.oldCert} needing re-enrollment.</> :
+              wifiResult.action === 'block-wifi'    ? <><span className="font-semibold">{wifiResult.blocked} device{wifiResult.blocked !== 1 ? 's' : ''} blocked from WiFi.</span>{wifiResult.skipped > 0 && ` ${wifiResult.skipped} skipped (no WiFi MAC).`} They will be rejected at the next 802.1X auth attempt.</> :
+              wifiResult.action === 'unblock-wifi'  ? <><span className="font-semibold">{wifiResult.unblocked} device{wifiResult.unblocked !== 1 ? 's' : ''} unblocked</span> and approved to rejoin the main network.</> :
+              'Done.'
+            ) : (
+              <><span className="font-semibold">Failed:</span> {wifiResult.error}</>
             )}
           </div>
         )}
