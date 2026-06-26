@@ -285,7 +285,7 @@ router.post('/google', loginLimiter, async (req, res) => {
 router.get('/me', authenticate, async (req, res) => {
   try {
     const { rows } = await query(
-      `SELECT id, email, full_name, given_name, photo_url, role, google_ou, is_active
+      `SELECT id, email, full_name, given_name, photo_url, role, google_ou, is_active, is_tech_instructor
        FROM users WHERE id = $1`,
       [req.user.userId]
     );
