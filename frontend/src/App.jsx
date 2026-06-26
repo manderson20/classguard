@@ -67,6 +67,15 @@ import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
 import ScreenTimePage      from './pages/admin/ScreenTimePage';
 import BellSchedulePage    from './pages/admin/BellSchedulePage';
 
+// Fleet pages
+import FleetOverview    from './pages/fleet/FleetOverview';
+import FleetDevices     from './pages/fleet/FleetDevices';
+import FleetChromebooks from './pages/fleet/FleetChromebooks';
+import FleetApple       from './pages/fleet/FleetApple';
+import FleetCrossSync   from './pages/fleet/FleetCrossSync';
+import FleetOffline     from './pages/fleet/FleetOffline';
+import FleetLifecycle   from './pages/fleet/FleetLifecycle';
+
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function RequireAuth({ children, minRole = 'teacher' }) {
@@ -171,6 +180,15 @@ export default function App() {
           <Route element={<RequireAuth minRole="superadmin"><Outlet /></RequireAuth>}>
             <Route path="/admin/custom-roles"         element={<CustomRolesPage />} />
           </Route>
+
+          {/* Device Fleet */}
+          <Route path="/fleet"              element={<FleetOverview />} />
+          <Route path="/fleet/devices"      element={<FleetDevices />} />
+          <Route path="/fleet/chromebooks"  element={<FleetChromebooks />} />
+          <Route path="/fleet/apple"        element={<FleetApple />} />
+          <Route path="/fleet/cross-sync"   element={<FleetCrossSync />} />
+          <Route path="/fleet/offline"      element={<FleetOffline />} />
+          <Route path="/fleet/lifecycle"    element={<FleetLifecycle />} />
         </Route>
       </Route>
 

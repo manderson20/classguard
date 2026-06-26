@@ -45,6 +45,12 @@ import {
   mdiWifiAlert,
   mdiHelpCircleOutline,
   mdiNetworkOutline,
+  mdiLaptop,
+  mdiSync,
+  mdiTablet,
+  mdiWifiOff,
+  mdiCalendarClock,
+  mdiMonitor,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -312,6 +318,7 @@ function HaAutoPromoteBanner({ socket, navigate }) {
 const NAV_VIEWS = [
   { value: 'admin',   label: 'Admin' },
   { value: 'teacher', label: 'Teacher' },
+  { value: 'fleet',   label: 'Device Fleet' },
 ];
 
 const TEACHER_NAV = [
@@ -320,6 +327,31 @@ const TEACHER_NAV = [
   { to: '/phone-directory',  icon: mdiPhoneOutline,     label: 'Phone Directory' },
   { to: '/lockdown',         icon: mdiLock,             label: 'Lockdown Tests'  },
   { to: '/help',             icon: mdiHelpCircleOutline, label: 'Help Center'   },
+];
+
+const FLEET_SECTIONS = [
+  {
+    label: 'Fleet',
+    items: [
+      { to: '/fleet',          icon: mdiViewDashboardOutline, label: 'Overview', end: true },
+      { to: '/fleet/devices',  icon: mdiLaptop,               label: 'All Devices' },
+    ],
+  },
+  {
+    label: 'By Platform',
+    items: [
+      { to: '/fleet/chromebooks', icon: mdiMonitor,  label: 'Chromebooks' },
+      { to: '/fleet/apple',       icon: mdiTablet,   label: 'Apple Devices' },
+    ],
+  },
+  {
+    label: 'Management',
+    items: [
+      { to: '/fleet/cross-sync', icon: mdiSync,          label: 'Cross-System Sync' },
+      { to: '/fleet/offline',    icon: mdiWifiOff,        label: 'Offline Devices'  },
+      { to: '/fleet/lifecycle',  icon: mdiCalendarClock,  label: 'Lifecycle & Warranty' },
+    ],
+  },
 ];
 
 const ADMIN_SECTIONS = [
@@ -453,6 +485,7 @@ export default function Layout() {
     localStorage.setItem('cg_nav_view', navView);
   }, [navView]);
   const showTeacherNav = !isAdmin || navView === 'teacher';
+  const showFleetNav   = isAdmin && navView === 'fleet';
 
   const { data: pendingData } = useQuery({
     queryKey: ['unblock-pending-count'],
@@ -538,8 +571,20 @@ export default function Layout() {
             </section>
           )}
 
+          {/* Device Fleet — grouped sections */}
+          {showFleetNav && FLEET_SECTIONS.map(section => (
+            <section key={section.label}>
+              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
+                {section.label}
+              </p>
+              <div className="space-y-0.5">
+                {section.items.map(item => <NavItem key={item.to} {...item} />)}
+              </div>
+            </section>
+          ))}
+
           {/* Admins — grouped sections */}
-          {!showTeacherNav && ADMIN_SECTIONS.map(section => {
+          {!showTeacherNav && !showFleetNav && ADMIN_SECTIONS.map(section => {
             const visibleItems = section.items.filter(canSee);
             if (visibleItems.length === 0) return null;
             return (
