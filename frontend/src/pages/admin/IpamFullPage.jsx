@@ -1269,63 +1269,82 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-            <tr>{['Subnet','Ver','Name','Section','VRF','VLAN','Gateway','Utilization',''].map(h =>
+            <tr>{['Subnet','Ver','Name','VRF','VLAN','Gateway','Utilization',''].map(h =>
               <th key={h} className="px-3 py-2 text-left">{h}</th>)}
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
-            {flatRows.map(s => {
-              const total      = hostsInCidr(s.subnet, s.ip_version);
-              const hasKids    = s._children.length > 0;
-              const isExpanded = !collapsed.has(s.id);
-              const indent     = s._depth * 20;
-              return (
-                <tr key={s.id} className="hover:bg-slate-50">
-                  <td className="py-2 pr-3" style={{ paddingLeft: `${8 + indent}px` }}>
-                    <div className="flex items-center gap-1">
-                      {hasKids ? (
-                        <button onClick={() => toggleCollapse(s.id)}
-                          className="text-slate-400 hover:text-slate-700 w-4 text-xs flex-shrink-0 select-none leading-none">
-                          {isExpanded ? '▼' : '▶'}
+          <tbody>
+            {(() => {
+              let lastSection = null;
+              return flatRows.flatMap(s => {
+                const rows       = [];
+                const total      = hostsInCidr(s.subnet, s.ip_version);
+                const hasKids    = s._children.length > 0;
+                const isExpanded = !collapsed.has(s.id);
+                const indent     = s._depth * 20;
+
+                // Section header row whenever the root-level section changes
+                if (s._depth === 0 && s.section_name !== lastSection) {
+                  lastSection = s.section_name;
+                  rows.push(
+                    <tr key={`sec-${s.section_name}`} className="bg-slate-100 border-t border-slate-300">
+                      <td colSpan={8} className="px-3 py-1.5">
+                        <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">
+                          {s.section_name || 'No Section'}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                }
+
+                rows.push(
+                  <tr key={s.id} className="hover:bg-slate-50 border-t border-slate-100">
+                    <td className="py-2 pr-3" style={{ paddingLeft: `${8 + indent}px` }}>
+                      <div className="flex items-center gap-1">
+                        {hasKids ? (
+                          <button onClick={() => toggleCollapse(s.id)}
+                            className="text-slate-400 hover:text-slate-700 w-4 text-xs flex-shrink-0 select-none leading-none">
+                            {isExpanded ? '▼' : '▶'}
+                          </button>
+                        ) : (
+                          <span className="w-4 flex-shrink-0" />
+                        )}
+                        <button onClick={() => onSelect(s)}
+                          className="font-mono font-semibold text-primary-700 hover:underline text-left">
+                          {s.subnet}
                         </button>
-                      ) : (
-                        <span className="w-4 flex-shrink-0" />
-                      )}
-                      <button onClick={() => onSelect(s)}
-                        className="font-mono font-semibold text-primary-700 hover:underline text-left">
-                        {s.subnet}
-                      </button>
-                      {s.is_public && (
-                        <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-semibold ml-1">Public</span>
-                      )}
-                      {hasKids && (
-                        <span className="text-xs text-slate-400 ml-1 font-normal">({s._children.length})</span>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-3 py-2"><Badge label={`IPv${s.ip_version}`} color={ipvColor(s.ip_version)} /></td>
-                  <td className="px-3 py-2 text-slate-700">{s.name || '—'}</td>
-                  <td className="px-3 py-2 text-slate-500 text-xs">{s.section_name || '—'}</td>
-                  <td className="px-3 py-2 text-slate-500 text-xs">{s.vrf_name || '—'}</td>
-                  <td className="px-3 py-2 text-slate-500 text-xs">{s.vlan_name ? `${s.vlan_id} ${s.vlan_name}` : '—'}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-600">{s.gateway || '—'}</td>
-                  <td className="px-3 py-2 min-w-[120px]">
-                    <UtilBar used={parseInt(s.ip_count) || 0} total={total} compact threshold={s.alert_threshold_pct || 90} />
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap text-right space-x-3">
-                    <button onClick={() => onSelect(s)} className="text-xs text-primary-600 hover:underline">IPs</button>
-                    <button onClick={() => setSplit(s)} className="text-xs text-violet-600 hover:underline">Split</button>
-                    <button onClick={() => { setForm({ ...s, parent_id: s.parent_id ?? null, tags: s.tags || [], location_id: s.location_id ?? null }); setModal(s); }}
-                      className="text-xs text-slate-500 hover:underline">Edit</button>
-                    <button onClick={() => setAuditTarget(s)} className="text-xs text-slate-400 hover:underline">History</button>
-                    <button onClick={() => { if (confirm(`Delete ${s.subnet}?`)) del.mutate(s.id); }}
-                      className="text-xs text-red-500 hover:underline">Del</button>
-                  </td>
-                </tr>
-              );
-            })}
+                        {s.is_public && (
+                          <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded-full font-semibold ml-1">Public</span>
+                        )}
+                        {hasKids && (
+                          <span className="text-xs text-slate-400 ml-1 font-normal">({s._children.length})</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2"><Badge label={`IPv${s.ip_version}`} color={ipvColor(s.ip_version)} /></td>
+                    <td className="px-3 py-2 text-slate-700">{s.name || '—'}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{s.vrf_name || '—'}</td>
+                    <td className="px-3 py-2 text-slate-500 text-xs">{s.vlan_name ? `${s.vlan_id} ${s.vlan_name}` : '—'}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-600">{s.gateway || '—'}</td>
+                    <td className="px-3 py-2 min-w-[120px]">
+                      <UtilBar used={parseInt(s.ip_count) || 0} total={total} compact threshold={s.alert_threshold_pct || 90} />
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap text-right space-x-3">
+                      <button onClick={() => onSelect(s)} className="text-xs text-primary-600 hover:underline">IPs</button>
+                      <button onClick={() => setSplit(s)} className="text-xs text-violet-600 hover:underline">Split</button>
+                      <button onClick={() => { setForm({ ...s, parent_id: s.parent_id ?? null, tags: s.tags || [], location_id: s.location_id ?? null }); setModal(s); }}
+                        className="text-xs text-slate-500 hover:underline">Edit</button>
+                      <button onClick={() => setAuditTarget(s)} className="text-xs text-slate-400 hover:underline">History</button>
+                      <button onClick={() => { if (confirm(`Delete ${s.subnet}?`)) del.mutate(s.id); }}
+                        className="text-xs text-red-500 hover:underline">Del</button>
+                    </td>
+                  </tr>
+                );
+                return rows;
+              });
+            })()}
             {!flatRows.length && (
-              <tr><td colSpan={9} className="text-center text-slate-400 py-8 text-sm">
+              <tr><td colSpan={8} className="text-center text-slate-400 py-8 text-sm">
                 No subnets yet — click <strong>+ Add Subnet</strong> to get started
               </td></tr>
             )}
