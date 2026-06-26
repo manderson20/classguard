@@ -76,7 +76,15 @@ import FleetCrossSync   from './pages/fleet/FleetCrossSync';
 import FleetOffline     from './pages/fleet/FleetOffline';
 import FleetLifecycle   from './pages/fleet/FleetLifecycle';
 
-const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
+// Tech Lab pages
+import TechLabHome      from './pages/techlab/TechLabHome';
+import TicketNew        from './pages/techlab/TicketNew';
+import TicketDetail     from './pages/techlab/TicketDetail';
+import TechLabApprovals from './pages/techlab/TechLabApprovals';
+import TechLabStudents  from './pages/techlab/TechLabStudents';
+import AdminTechLab     from './pages/admin/AdminTechLab';
+
+const ROLES = { student: 0, student_technician: 0.5, teacher: 1, admin: 2, superadmin: 3 };
 
 function RequireAuth({ children, minRole = 'teacher' }) {
   const { user, loading } = useAuth();
@@ -103,6 +111,13 @@ function RequireAuth({ children, minRole = 'teacher' }) {
   return children;
 }
 
+// Route student_technicians straight to /techlab; everyone else to /classes
+function DefaultRedirect() {
+  const { user } = useAuth();
+  if (user?.role === 'student_technician') return <Navigate to="/techlab" replace />;
+  return <Navigate to="/classes" replace />;
+}
+
 export default function App() {
   return (
     <Routes>
@@ -113,19 +128,28 @@ export default function App() {
       {/* First-time setup wizard — requires auth but bypasses Layout */}
       <Route path="/wizard" element={<RequireAuth minRole="superadmin"><SetupWizard /></RequireAuth>} />
 
-      {/* Teacher + Admin shared layout */}
-      <Route element={<RequireAuth minRole="teacher"><Layout /></RequireAuth>}>
-        <Route index element={<Navigate to="/classes" replace />} />
+      {/* Shared layout — student_technicians and above can reach it */}
+      <Route element={<RequireAuth minRole="student_technician"><Layout /></RequireAuth>}>
+        <Route index element={<DefaultRedirect />} />
 
-        {/* Teacher routes */}
-        <Route path="/classes"                 element={<Classes />} />
-        <Route path="/classes/:classId"        element={<ClassDetail />} />
-        <Route path="/classes/:classId/lesson" element={<ActiveLesson />} />
-        <Route path="/penalty-box"             element={<PenaltyBox />} />
-        <Route path="/phone-directory"         element={<PhoneDirectory />} />
-        <Route path="/lockdown"                element={<LockdownTests />} />
-        <Route path="/help"                    element={<HelpCenterPage />} />
-        <Route path="/help/:slug"              element={<HelpCenterPage />} />
+        {/* Tech Lab routes — accessible to student_technician+ */}
+        <Route path="/techlab"             element={<TechLabHome />} />
+        <Route path="/techlab/new"         element={<TicketNew />} />
+        <Route path="/techlab/tickets/:id" element={<TicketDetail />} />
+        <Route path="/techlab/approvals"   element={<TechLabApprovals />} />
+        <Route path="/techlab/students"    element={<TechLabStudents />} />
+
+        {/* Teacher routes — gated so student_technicians can't reach them */}
+        <Route element={<RequireAuth minRole="teacher"><Outlet /></RequireAuth>}>
+          <Route path="/classes"                 element={<Classes />} />
+          <Route path="/classes/:classId"        element={<ClassDetail />} />
+          <Route path="/classes/:classId/lesson" element={<ActiveLesson />} />
+          <Route path="/penalty-box"             element={<PenaltyBox />} />
+          <Route path="/phone-directory"         element={<PhoneDirectory />} />
+          <Route path="/lockdown"                element={<LockdownTests />} />
+          <Route path="/help"                    element={<HelpCenterPage />} />
+          <Route path="/help/:slug"              element={<HelpCenterPage />} />
+        </Route>
 
         {/* Admin routes */}
         <Route element={<RequireAuth minRole="admin"><Outlet /></RequireAuth>}>
@@ -174,6 +198,7 @@ export default function App() {
           <Route path="/admin/settings"               element={<SettingsPage />} />
           <Route path="/admin/system-health"           element={<SystemHealthPage />} />
           <Route path="/admin/vpn"                    element={<VpnPage />} />
+          <Route path="/admin/tech-lab"               element={<AdminTechLab />} />
 
           {/* Superadmin-only: managing what a role grants is itself
               adjacent to privilege escalation, same tier as role assignment */}
