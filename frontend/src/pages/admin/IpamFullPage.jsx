@@ -2071,11 +2071,50 @@ const STATUS_COLORS = {
 // Inline search results — replaces tab content when a query is active
 // ---------------------------------------------------------------------------
 function IpamSearchResults({ query, onGoToSubnet }) {
+  const qc = useQueryClient();
+  const [editModal, setEditModal] = useState(null);
+  const [form, setForm]           = useState(EMPTY_IP);
+
   const { data, isFetching } = useQuery({
     queryKey: ['ipam-search', query],
     queryFn:  () => api.get(`/ipam/search?q=${encodeURIComponent(query)}`),
     enabled:  query.length >= 2,
     keepPreviousData: true,
+  });
+
+  const openEdit = r => {
+    setForm({
+      ...EMPTY_IP, ...r,
+      mac_address:   r.mac_address  || '',
+      hostname:      r.hostname     || '',
+      owner:         r.owner        || '',
+      description:   r.description  || '',
+      notes:         r.notes        || '',
+      nat_public_ip: r.nat_public_ip ? String(r.nat_public_ip).split('/')[0] : '',
+    });
+    setEditModal(r);
+  };
+
+  const editIp = useMutation({
+    mutationFn: () => api.put(
+      `/ipam/ipam-subnets/${editModal.subnet_id}/addresses/${editModal.id}`,
+      {
+        hostname:      form.hostname    || null,
+        mac_address:   form.mac_address || null,
+        owner:         form.owner       || null,
+        device_type:   form.device_type || null,
+        status:        form.status,
+        description:   form.description || null,
+        notes:         form.notes       || null,
+        is_gateway:    form.is_gateway,
+        tags:          form.tags        || [],
+        nat_public_ip: form.nat_public_ip || null,
+      }
+    ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['ipam-search', query] });
+      setEditModal(null);
+    },
   });
 
   const ips     = data?.ips     ?? [];
@@ -2170,9 +2209,13 @@ function IpamSearchResults({ query, onGoToSubnet }) {
                     </td>
                     <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">{r.subnet || '—'}</td>
                     <td className="px-4 py-2.5 text-xs text-slate-400">{r.section_name || '—'}</td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td className="px-4 py-2.5 text-right whitespace-nowrap">
+                      <button onClick={() => openEdit(r)}
+                        className="text-xs text-primary-600 hover:underline mr-3">
+                        Edit
+                      </button>
                       <button onClick={() => onGoToSubnet(r.subnet_id)}
-                        className="text-xs text-primary-600 hover:underline whitespace-nowrap">
+                        className="text-xs text-slate-400 hover:text-slate-600 hover:underline">
                         View subnet →
                       </button>
                     </td>
@@ -2185,6 +2228,29 @@ function IpamSearchResults({ query, onGoToSubnet }) {
             <p className="text-xs text-slate-400 mt-2 text-center">Showing first 200 matches — refine your search to narrow results</p>
           )}
         </div>
+      )}
+
+      {/* Edit modal */}
+      {editModal && (
+        <Modal title={`Edit ${editModal.ip}`} onClose={() => setEditModal(null)} wide>
+          <IpForm
+            form={form}
+            setForm={setForm}
+            isNew={false}
+            subnetId={editModal.subnet_id}
+            subnetIsPublic={false}
+            error={editIp.error}
+          />
+          <div className="flex justify-end gap-2 mt-4">
+            <button onClick={() => setEditModal(null)} className="btn-secondary text-sm">Cancel</button>
+            <button
+              onClick={() => editIp.mutate()}
+              disabled={editIp.isPending}
+              className="btn-primary text-sm">
+              {editIp.isPending ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </Modal>
       )}
     </div>
   );
