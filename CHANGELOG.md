@@ -18,6 +18,33 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.8.1] - 2026-06-26
+
+### Added
+
+- **APNS Push Certificate Workflow** — complete toolset for managing an MDM push certificate replacement in Mosyle (replacing, not renewing, creates a new push topic and breaks MDM connectivity for un-migrated devices):
+  - `apns_cert_ok` flag per device (`integration_devices`, migration 085) — `true` = on new cert, `false` = needs re-enrollment, `null` = cert date not yet configured.
+  - Mosyle sync automatically computes `apns_cert_ok` per device based on enrollment date vs. the cert replacement date you enter.
+  - **Push Certificate Status tab** (Fleet → Apple Devices) — summary stats, per-OS breakdown (iOS / iPadOS / macOS / tvOS), and a scrollable old-cert device list.
+  - **tvOS / Apple TV** devices are now included in all cert-status counts and OS filter tabs.
+  - **Reconcile from Mosyle Export** — import Mosyle's "Devices — Push Converted" CSV to authoritatively mark which devices are on the new cert. This is the only reliable signal during the overlap window while the old cert is still valid (enrollment date alone has ~4.5 % false-positive rate for districts that wiped and re-enrolled some devices before the cert switch).
+  - **Old Cert Expiry Date** field in Certificate Details — required for post-expiry detection.
+  - **Detect Stale Devices** button — after the old cert expires, scans every Mosyle device's `date_last_beat` against the expiry date. Any device that has not beaten since expiry has definitively lost MDM connectivity and is marked `apns_cert_ok = false`.
+  - **Block Old-Cert Devices from WiFi** — inserts all old-cert device WiFi MACs into FreeRADIUS (`radius_devices`, `status = blocked`, migration 086). Devices are rejected at the next 802.1X auth attempt, forcing students to bring them to IT for re-enrollment. Skips devices with no recorded WiFi MAC.
+  - **Automatic WiFi unblock on re-enrollment** — when a CSV import marks a device as converted, its RADIUS block is automatically lifted in the same request. No separate unblock step. The "Unblock Re-enrolled Devices" button remains available for bulk cleanup.
+
+- **Chromebook Lifecycle Flow** (Fleet → Chromebooks):
+  - **Google Admin Status filter row** — filter the Chromebook table by Active / Disabled / Deprovisioned alongside the existing AUP and license filters.
+  - **Context-aware action buttons** — the Active filter view shows a "Disable Selected" action; the Disabled filter view shows "Re-enable Selected" and "Deprovision Selected".
+  - **Deprovisioned callout** — when viewing deprovisioned devices, a blue information panel explains what re-enrollment requires (factory reset, re-enroll in Admin Console, re-apply policies).
+  - **Disabled workflow hint** — when viewing disabled devices, a callout explains what end users will see (enrollment lock) and the next available actions.
+
+### Fixed
+
+- **Chromebooks filter lockup** — clicking "Needs License Verification" and then switching to an AUP tab or Google Admin tab had no visible effect; the filters stacked silently because clicking any tab failed to clear the competing filter state. All three filter groups (AUP, license, Google Admin) now enforce mutual exclusion: activating any one clears the other two.
+
+---
+
 ## [0.8.0] - 2026-06-26
 
 ### Added
