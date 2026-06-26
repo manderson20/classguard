@@ -168,12 +168,13 @@ async function syncAssets() {
   let count = 0;
 
   for (const a of assets) {
-    const serial  = a.serial || null;
-    const model   = a.model?.name || null;
-    const name    = a.name || null;
-    const user    = a.assigned_to?.email || a.assigned_to?.name || null;
-    const status  = a.status_label?.name || null;
-    const osType  = a.category?.name || null;
+    const serial   = a.serial || null;
+    const model    = a.model?.name || null;
+    const name     = a.name || null;
+    const user     = a.assigned_to?.email || a.assigned_to?.name || null;
+    const status   = a.status_label?.name || null;
+    const osType   = a.category?.name || null;
+    const assetTag = a.asset_tag || null;
 
     // Build MAC list from admin-configured custom field keys.
     // Each field value may contain multiple MACs (comma/semicolon/newline-separated).
@@ -194,15 +195,15 @@ async function syncAssets() {
     await pool.query(
       `INSERT INTO integration_devices
          (source, external_id, serial_number, mac_addresses, device_name, device_model,
-          os_type, assigned_user, assigned_email, status, raw_data, synced_at)
-       VALUES ('snipeit',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+          os_type, assigned_user, assigned_email, status, asset_tag, raw_data, synced_at)
+       VALUES ('snipeit',$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())
        ON CONFLICT (source, external_id) DO UPDATE SET
          serial_number = EXCLUDED.serial_number, mac_addresses = EXCLUDED.mac_addresses,
-         device_name = EXCLUDED.device_name,
-         device_model = EXCLUDED.device_model, os_type = EXCLUDED.os_type,
-         assigned_user = EXCLUDED.assigned_user, assigned_email = EXCLUDED.assigned_email,
-         status = EXCLUDED.status, raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
-      [String(a.id), serial, `{${macs.join(',')}}`, name, model, osType, user, user, status, JSON.stringify(a)]
+         device_name = EXCLUDED.device_name, device_model = EXCLUDED.device_model,
+         os_type = EXCLUDED.os_type, assigned_user = EXCLUDED.assigned_user,
+         assigned_email = EXCLUDED.assigned_email, status = EXCLUDED.status,
+         asset_tag = EXCLUDED.asset_tag, raw_data = EXCLUDED.raw_data, synced_at = NOW()`,
+      [String(a.id), serial, `{${macs.join(',')}}`, name, model, osType, user, user, status, assetTag, JSON.stringify(a)]
     );
     count++;
   }

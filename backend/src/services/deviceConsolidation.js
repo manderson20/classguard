@@ -82,6 +82,7 @@ async function getUnifiedDevices() {
       assignedUser:  pickField(rowsBySource, 'assigned_user',  ASSET_FIELD_SOURCES),
       status:        pickField(rowsBySource, 'status',        ASSET_FIELD_SOURCES),
       location:      pickField(rowsBySource, 'location',      ASSET_FIELD_SOURCES),
+      assetTag:      pickField(rowsBySource, 'asset_tag',     ASSET_FIELD_SOURCES),
       macAddresses:  macs,
       ipAddresses:   ips,
       sources:       rows.map(r => ({ source: r.source, id: r.id, externalId: r.external_id, syncedAt: r.synced_at })),

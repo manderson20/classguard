@@ -80,7 +80,8 @@ router.get('/devices', ...auth, async (req, res) => {
         (d.deviceName    || '').toLowerCase().includes(q) ||
         (d.serialNumber  || '').toLowerCase().includes(q) ||
         (d.assignedEmail || '').toLowerCase().includes(q) ||
-        (d.assignedUser  || '').toLowerCase().includes(q)
+        (d.assignedUser  || '').toLowerCase().includes(q) ||
+        (d.assetTag      || '').toLowerCase().includes(q)
       );
     }
 

@@ -580,6 +580,7 @@ function DeviceDetailModal({ device, onClose, snipeitMacFields = [] }) {
 
   const infoRows = [
     ['Serial',      device.serialNumber,                         true],
+    ['Asset Tag',   device.assetTag,                             true],
     ['Model',       device.deviceModel,                          false],
     ['OS',          device.osType,                               false],
     ['Status',      device.status,                               false],
@@ -687,7 +688,7 @@ function DevicesTable({ source, search, snipeitMacFields = [] }) {
       <div className="overflow-x-auto rounded-lg border border-slate-200">
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-            <tr>{['Device','Model','OS','Serial','Assigned To','Sources','On Network','Status','Last Synced'].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+            <tr>{['Device','Model','OS','Serial','Asset Tag','Assigned To','Sources','On Network','Status','Last Synced'].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {devices.map(d=>(
@@ -700,6 +701,7 @@ function DevicesTable({ source, search, snipeitMacFields = [] }) {
                   </span>
                 </td>
                 <td className="px-3 py-2 font-mono text-xs text-slate-500">{d.serialNumber||'—'}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-500">{d.assetTag||'—'}</td>
                 <td className="px-3 py-2 text-xs text-slate-500">{d.assignedEmail||d.assignedUser||'—'}</td>
                 <td className="px-3 py-2">
                   <div className="flex gap-1 flex-wrap">
@@ -724,7 +726,7 @@ function DevicesTable({ source, search, snipeitMacFields = [] }) {
                 <td className="px-3 py-2 text-xs text-slate-400">{d.lastSynced ? new Date(d.lastSynced).toLocaleDateString() : '—'}</td>
               </tr>
             ))}
-            {!devices.length && <tr><td colSpan={9} className="text-center text-slate-400 py-6">No devices synced yet</td></tr>}
+            {!devices.length && <tr><td colSpan={10} className="text-center text-slate-400 py-6">No devices synced yet</td></tr>}
           </tbody>
         </table>
       </div>
@@ -1836,6 +1838,7 @@ function MosyleSection({ status }) {
 function SnipeitSection({ status }) {
   const qc = useQueryClient();
   const [modal, setModal]   = useState(null);
+  const [search, setSearch] = useState('');
   const [form, setForm]     = useState({ snipeit_url:'', snipeit_token:'', snipeit_client_id:'', snipeit_client_secret:'' });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
@@ -1919,7 +1922,14 @@ function SnipeitSection({ status }) {
         </p>
       )}
       <ErrorBanner message={status?.snipeit?.lastError}/>
-      {configured && <DevicesTable source="snipeit" snipeitMacFields={savedMacFields}/>}
+      {configured && (
+        <input
+          value={search} onChange={e=>setSearch(e.target.value)}
+          placeholder="Search name, serial, asset tag, or assigned user…"
+          className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm w-full max-w-sm focus:outline-none focus:ring-1 focus:ring-primary-500"
+        />
+      )}
+      {configured && <DevicesTable source="snipeit" search={search||null} snipeitMacFields={savedMacFields}/>}
       {modal && (
         <Modal title="Snipe-IT Settings" onClose={()=>setModal(null)}>
           <div className="flex flex-col gap-3">
