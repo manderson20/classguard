@@ -281,6 +281,35 @@ router.post('/chromebooks/disable', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /fleet/chromebooks/reenable  body: { deviceIds: string[] }
+// ---------------------------------------------------------------------------
+router.post('/chromebooks/reenable', async (req, res) => {
+  const { deviceIds } = req.body;
+  if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
+    return res.status(400).json({ error: 'deviceIds array required' });
+  }
+
+  let reenabled = 0;
+  const errors  = [];
+
+  for (const id of deviceIds) {
+    try {
+      await google.setChromeDeviceAction(id, 'reenable', req.user.userId);
+      await pool.query(
+        `UPDATE integration_devices SET status = 'ACTIVE', synced_at = NOW()
+         WHERE source = 'google_admin' AND external_id = $1`,
+        [id]
+      );
+      reenabled++;
+    } catch (err) {
+      errors.push(`${id}: ${err.message}`);
+    }
+  }
+
+  res.json({ reenabled, errors });
+});
+
+// ---------------------------------------------------------------------------
 // POST /fleet/chromebooks/deprovision  body: { deviceIds: string[], reason: string }
 // ---------------------------------------------------------------------------
 router.post('/chromebooks/deprovision', async (req, res) => {

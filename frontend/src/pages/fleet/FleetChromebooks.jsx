@@ -8,6 +8,7 @@ import {
   mdiShieldCheckOutline,
   mdiInformationOutline,
   mdiDeleteOutline,
+  mdiRefresh,
 } from '@mdi/js';
 import api from '../../lib/api';
 
@@ -17,6 +18,13 @@ const STATUS_TABS = [
   { value: 'expiring', label: 'Expiring Soon (<12 mo)'  },
   { value: 'ok',       label: 'Current'                 },
   { value: 'unknown',  label: 'Unknown'                 },
+];
+
+const GOOGLE_STATUS_TABS = [
+  { value: '',              label: 'All Statuses'   },
+  { value: 'ACTIVE',        label: 'Active'         },
+  { value: 'DISABLED',      label: 'Disabled'       },
+  { value: 'DEPROVISIONED', label: 'Deprovisioned'  },
 ];
 
 const DEPROVISION_REASONS = [
@@ -94,28 +102,50 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
-// Unified modal for both disable and deprovision actions.
+// Modal for disable / reenable / deprovision actions.
 function ActionModal({ action, count, onConfirm, onCancel, loading, result }) {
   const [deprovisionReason, setDeprovisionReason] = useState(DEPROVISION_REASONS[0].value);
 
-  const isDeprovision = action === 'deprovision';
-  const title = isDeprovision
-    ? `Deprovision ${count} Chromebook${count !== 1 ? 's' : ''}?`
-    : `Disable ${count} Chromebook${count !== 1 ? 's' : ''}?`;
-
-  const resultKey = isDeprovision ? 'deprovisioned' : 'disabled';
+  const cfg = {
+    disable: {
+      title:      `Disable ${count} Chromebook${count !== 1 ? 's' : ''}?`,
+      icon:       mdiAlertCircleOutline,
+      iconCls:    'text-red-500',
+      btnCls:     'bg-red-600 hover:bg-red-700',
+      resultKey:  'disabled',
+      resultVerb: 'Disabled',
+      actionVerb: 'Disabling',
+      btnLabel:   (n) => `Disable ${n} device${n !== 1 ? 's' : ''}`,
+    },
+    reenable: {
+      title:      `Re-enable ${count} Chromebook${count !== 1 ? 's' : ''}?`,
+      icon:       mdiRefresh,
+      iconCls:    'text-green-600',
+      btnCls:     'bg-green-600 hover:bg-green-700',
+      resultKey:  'reenabled',
+      resultVerb: 'Re-enabled',
+      actionVerb: 'Re-enabling',
+      btnLabel:   (n) => `Re-enable ${n} device${n !== 1 ? 's' : ''}`,
+    },
+    deprovision: {
+      title:      `Deprovision ${count} Chromebook${count !== 1 ? 's' : ''}?`,
+      icon:       mdiDeleteOutline,
+      iconCls:    'text-slate-700',
+      btnCls:     'bg-slate-800 hover:bg-slate-900',
+      resultKey:  'deprovisioned',
+      resultVerb: 'Deprovisioned',
+      actionVerb: 'Deprovisioning',
+      btnLabel:   (n) => `Deprovision ${n} device${n !== 1 ? 's' : ''}`,
+    },
+  }[action] || {};
 
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <h2 className="font-bold text-slate-900 flex items-center gap-2">
-            <MdiIcon
-              path={isDeprovision ? mdiDeleteOutline : mdiAlertCircleOutline}
-              size="1em"
-              className={isDeprovision ? 'text-slate-700' : 'text-red-500'}
-            />
-            {title}
+            <MdiIcon path={cfg.icon} size="1em" className={cfg.iconCls} />
+            {cfg.title}
           </h2>
           <button onClick={onCancel} className="text-slate-400 hover:text-slate-700 text-xl">×</button>
         </div>
@@ -123,7 +153,7 @@ function ActionModal({ action, count, onConfirm, onCancel, loading, result }) {
           {result ? (
             <div>
               <p className="text-sm text-green-700 font-medium mb-2">
-                {isDeprovision ? 'Deprovisioned' : 'Disabled'}: {result[resultKey]}
+                {cfg.resultVerb}: {result[cfg.resultKey]}
               </p>
               {result.errors?.length > 0 && (
                 <div className="text-sm text-red-600">
@@ -137,14 +167,26 @@ function ActionModal({ action, count, onConfirm, onCancel, loading, result }) {
             </div>
           ) : (
             <>
-              {isDeprovision ? (
+              {action === 'disable' && (
+                <p className="text-sm text-slate-600 mb-4">
+                  Students will not be able to sign in to {count === 1 ? 'this device' : 'these devices'} in Google Admin.
+                  The device stays enrolled and licensed — you can re-enable it at any time from the Disabled view.
+                </p>
+              )}
+              {action === 'reenable' && (
+                <p className="text-sm text-slate-600 mb-4">
+                  {count === 1 ? 'This device' : 'These devices'} will be re-activated in Google Admin.
+                  Students will be able to sign in again immediately.
+                </p>
+              )}
+              {action === 'deprovision' && (
                 <>
                   <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
                     <p className="font-semibold mb-1">This action is irreversible.</p>
                     <p>
-                      The device will be removed from Google MDM and its Chrome Education Upgrade
-                      license will be freed. You cannot undo this from ClassGuard — the device
-                      would need to be re-enrolled from scratch.
+                      {count === 1 ? 'This device' : 'These devices'} will be removed from Google MDM and
+                      {count === 1 ? ' its' : ' their'} Chrome Education Upgrade license will be freed.
+                      Re-provisioning requires a physical wipe and re-enrollment — it cannot be undone from ClassGuard.
                     </p>
                   </div>
                   <label className="block mb-4">
@@ -162,31 +204,17 @@ function ActionModal({ action, count, onConfirm, onCancel, loading, result }) {
                     </select>
                   </label>
                 </>
-              ) : (
-                <p className="text-sm text-slate-600 mb-4">
-                  This will disable {count} selected Chromebook{count !== 1 ? 's' : ''} in Google Admin.
-                  Students will not be able to sign in until you re-enable them. The device stays
-                  enrolled and licensed — this is reversible.
-                </p>
               )}
               <div className="flex gap-3">
                 <button className="btn btn-secondary flex-1" onClick={onCancel} disabled={loading}>
                   Cancel
                 </button>
                 <button
-                  className={`btn flex-1 text-white ${
-                    isDeprovision
-                      ? 'bg-slate-800 hover:bg-slate-900'
-                      : 'bg-red-600 hover:bg-red-700'
-                  }`}
-                  onClick={() => onConfirm(isDeprovision ? deprovisionReason : null)}
+                  className={`btn flex-1 text-white ${cfg.btnCls}`}
+                  onClick={() => onConfirm(action === 'deprovision' ? deprovisionReason : null)}
                   disabled={loading}
                 >
-                  {loading
-                    ? (isDeprovision ? 'Deprovisioning…' : 'Disabling…')
-                    : (isDeprovision
-                        ? `Deprovision ${count} device${count !== 1 ? 's' : ''}`
-                        : `Disable ${count} device${count !== 1 ? 's' : ''}`)}
+                  {loading ? `${cfg.actionVerb}…` : cfg.btnLabel(count)}
                 </button>
               </div>
             </>
@@ -198,12 +226,13 @@ function ActionModal({ action, count, onConfirm, onCancel, loading, result }) {
 }
 
 export default function FleetChromebooks() {
-  const [statusFilter,    setStatusFilter]    = useState('');
-  const [showLicenseOnly, setShowLicenseOnly] = useState(false);
-  const [selected,        setSelected]        = useState(new Set());
-  const [pendingAction,   setPendingAction]   = useState(null); // 'disable' | 'deprovision' | null
-  const [actionResult,    setActionResult]    = useState(null);
-  const [bannerDismissed, setBannerDismissed] = useState(false);
+  const [statusFilter,       setStatusFilter]       = useState('');
+  const [googleStatusFilter, setGoogleStatusFilter] = useState('');
+  const [showLicenseOnly,    setShowLicenseOnly]    = useState(false);
+  const [selected,           setSelected]           = useState(new Set());
+  const [pendingAction,      setPendingAction]      = useState(null); // 'disable' | 'reenable' | 'deprovision' | null
+  const [actionResult,       setActionResult]       = useState(null);
+  const [bannerDismissed,    setBannerDismissed]    = useState(false);
   const qc = useQueryClient();
 
   const { data: allDevices = [], isLoading } = useQuery({
@@ -221,9 +250,10 @@ export default function FleetChromebooks() {
 
   const displayedDevices = useMemo(() =>
     allDevices
-      .filter(d => !statusFilter    || d.aupStatus === statusFilter)
-      .filter(d => !showLicenseOnly || d.requiresLicense),
-    [allDevices, statusFilter, showLicenseOnly]
+      .filter(d => !statusFilter       || d.aupStatus    === statusFilter)
+      .filter(d => !googleStatusFilter || d.googleStatus === googleStatusFilter)
+      .filter(d => !showLicenseOnly    || d.requiresLicense),
+    [allDevices, statusFilter, googleStatusFilter, showLicenseOnly]
   );
 
   const expiredDevices = useMemo(
@@ -252,7 +282,24 @@ export default function FleetChromebooks() {
     },
   });
 
-  const isSelectable = (d) => !!d.googleDeviceId && d.googleStatus === 'ACTIVE';
+  const reenableMutation = useMutation({
+    mutationFn: (deviceIds) => api.post('/fleet/chromebooks/reenable', { deviceIds }),
+    onSuccess: (result) => {
+      setActionResult(result);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ['fleet-chromebooks'] });
+      qc.invalidateQueries({ queryKey: ['fleet-summary'] });
+    },
+  });
+
+  // Which devices can be checked depends on the Google status filter:
+  // Active view → only ACTIVE; Disabled view → only DISABLED; Deprovisioned → none.
+  const isSelectable = (d) => {
+    if (!d.googleDeviceId) return false;
+    if (googleStatusFilter === 'DISABLED')      return d.googleStatus === 'DISABLED';
+    if (googleStatusFilter === 'DEPROVISIONED') return false;
+    return d.googleStatus === 'ACTIVE' || !d.googleStatus;
+  };
 
   const toggleAll = () => {
     const selectable = displayedDevices.filter(isSelectable).map(d => d.googleDeviceId);
@@ -275,10 +322,13 @@ export default function FleetChromebooks() {
   };
 
   const handleConfirm = (deprovisionReason) => {
+    const ids = [...selected];
     if (pendingAction === 'deprovision') {
-      deprovisionMutation.mutate({ deviceIds: [...selected], reason: deprovisionReason });
+      deprovisionMutation.mutate({ deviceIds: ids, reason: deprovisionReason });
+    } else if (pendingAction === 'reenable') {
+      reenableMutation.mutate(ids);
     } else {
-      disableMutation.mutate([...selected]);
+      disableMutation.mutate(ids);
     }
   };
 
@@ -287,7 +337,7 @@ export default function FleetChromebooks() {
     setActionResult(null);
   };
 
-  const isMutationPending = disableMutation.isPending || deprovisionMutation.isPending;
+  const isMutationPending = disableMutation.isPending || deprovisionMutation.isPending || reenableMutation.isPending;
 
   return (
     <div className="p-6">
@@ -306,20 +356,32 @@ export default function FleetChromebooks() {
         </div>
         {selected.size > 0 && (
           <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
-            <button
-              className="btn flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white"
-              onClick={() => setPendingAction('disable')}
-            >
-              <MdiIcon path={mdiAlertCircleOutline} size="1em" />
-              Disable Selected ({selected.size})
-            </button>
-            <button
-              className="btn flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white"
-              onClick={() => setPendingAction('deprovision')}
-            >
-              <MdiIcon path={mdiDeleteOutline} size="1em" />
-              Deprovision Selected ({selected.size})
-            </button>
+            {googleStatusFilter === 'DISABLED' ? (
+              <>
+                <button
+                  className="btn flex items-center gap-1.5 bg-green-600 hover:bg-green-700 text-white"
+                  onClick={() => setPendingAction('reenable')}
+                >
+                  <MdiIcon path={mdiRefresh} size="1em" />
+                  Re-enable Selected ({selected.size})
+                </button>
+                <button
+                  className="btn flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white"
+                  onClick={() => setPendingAction('deprovision')}
+                >
+                  <MdiIcon path={mdiDeleteOutline} size="1em" />
+                  Deprovision Selected ({selected.size})
+                </button>
+              </>
+            ) : (
+              <button
+                className="btn flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white"
+                onClick={() => setPendingAction('disable')}
+              >
+                <MdiIcon path={mdiAlertCircleOutline} size="1em" />
+                Disable Selected ({selected.size})
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -414,6 +476,47 @@ export default function FleetChromebooks() {
           )}
         </button>
       </div>
+
+      {/* Google Admin Status filter */}
+      <div className="flex gap-1 mb-4 items-center flex-wrap">
+        <span className="text-xs text-slate-500 mr-1">Google Admin:</span>
+        {GOOGLE_STATUS_TABS.map(tab => (
+          <button
+            key={tab.value}
+            onClick={() => { setGoogleStatusFilter(tab.value); setSelected(new Set()); }}
+            className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              googleStatusFilter === tab.value
+                ? 'bg-slate-700 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
+      {/* Deprovisioned info callout */}
+      {googleStatusFilter === 'DEPROVISIONED' && (
+        <div className="mb-4 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3 flex items-start gap-3">
+          <MdiIcon path={mdiInformationOutline} size="1.1em" className="text-slate-500 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-slate-600">
+            <span className="font-semibold">Deprovisioned devices cannot be re-provisioned remotely.</span>{' '}
+            Deprovisioning removes the device from Google MDM entirely. To bring a device back into management,
+            it must be physically wiped and re-enrolled. Once re-enrolled, it will appear here as Active after the next Google Admin sync.
+          </p>
+        </div>
+      )}
+
+      {/* Disabled view workflow hint */}
+      {googleStatusFilter === 'DISABLED' && displayedDevices.length > 0 && (
+        <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 flex items-start gap-3">
+          <MdiIcon path={mdiInformationOutline} size="1.1em" className="text-blue-500 flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-blue-800">
+            Select disabled devices to <span className="font-semibold">Re-enable</span> them (reverses the disable),
+            or <span className="font-semibold">Deprovision</span> them to permanently free the Chrome Education Upgrade license.
+          </p>
+        </div>
+      )}
 
       {/* Expired AUP action bar */}
       {statusFilter === 'expired' && expiredDevices.length > 0 && (
