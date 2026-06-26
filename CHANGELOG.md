@@ -18,6 +18,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.8.2] - 2026-06-26
+
+### Fixed
+
+- **APNS WiFi block now covers wired connections** — Macs connected via USB-C ethernet adapters or docks have a separate `ethernet_mac_address` in Mosyle. Previously only the WiFi MAC was blocked, leaving wired 802.1X auth unaffected. Block, unblock, and CSV-import auto-unblock now insert/update both MACs per device. iPads and iPhones are unaffected (no ethernet port). Bluetooth MACs continue to be excluded (not used for 802.1X).
+- **Mosyle sync MAC list corrected** — the sync was reading `bluetooth_mac` (undefined) instead of `bluetooth_mac_address`, so Bluetooth MACs were never stored in `mac_addresses`. Also now includes `ethernet_mac_address` in the stored array.
+
+---
+
 ## [0.8.1] - 2026-06-26
 
 ### Added
