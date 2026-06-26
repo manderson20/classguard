@@ -1175,21 +1175,45 @@ router.get('/ipam-subnets/:id/next-free', async (req, res) => {
 });
 
 // GET /ipam/search?q=
+// Returns matching IP address records AND matching subnets in one response.
 router.get('/search', async (req, res) => {
   const { q } = req.query;
   if (!q || q.length < 2) return res.status(400).json({ error: 'q must be at least 2 chars' });
-  const { rows } = await query(
-    `SELECT ia.id, ia.ip, ia.hostname, ia.owner, ia.mac_address, ia.status, ia.device_type,
-            ia.description, s.subnet, s.name AS subnet_name, s.id AS subnet_id
-     FROM ip_addresses ia
-     LEFT JOIN ipam_subnets s ON s.id = ia.ipam_subnet_id
-     WHERE ia.ipam_subnet_id IS NOT NULL
-       AND (ia.ip::text ILIKE $1 OR ia.hostname ILIKE $1 OR ia.owner ILIKE $1
-            OR ia.mac_address::text ILIKE $1 OR ia.description ILIKE $1)
-     ORDER BY ia.ip LIMIT 100`,
-    [`%${q}%`]
-  );
-  res.json(rows.map(r => ({ ...r, mac_vendor: lookupVendor(r.mac_address) })));
+  const like = `%${q}%`;
+
+  const [{ rows: ips }, { rows: subnets }] = await Promise.all([
+    query(
+      `SELECT ia.id, ia.ip, ia.hostname, ia.owner, ia.mac_address, ia.status, ia.device_type,
+              ia.tags, ia.description, s.subnet, s.name AS subnet_name, s.id AS subnet_id,
+              sec.name AS section_name
+       FROM ip_addresses ia
+       LEFT JOIN ipam_subnets s   ON s.id   = ia.ipam_subnet_id
+       LEFT JOIN ipam_sections sec ON sec.id = s.section_id
+       WHERE ia.ipam_subnet_id IS NOT NULL
+         AND (ia.ip::text ILIKE $1 OR ia.hostname ILIKE $1 OR ia.owner ILIKE $1
+              OR ia.mac_address::text ILIKE $1 OR ia.description ILIKE $1
+              OR array_to_string(ia.tags, ' ') ILIKE $1)
+       ORDER BY ia.ip LIMIT 200`,
+      [like]
+    ),
+    query(
+      `SELECT s.id, s.subnet, s.name, s.description, s.ip_version,
+              sec.name AS section_name,
+              COUNT(ia.id) AS ip_count
+       FROM ipam_subnets s
+       LEFT JOIN ipam_sections sec ON sec.id = s.section_id
+       LEFT JOIN ip_addresses  ia  ON ia.ipam_subnet_id = s.id
+       WHERE s.subnet::text ILIKE $1 OR s.name ILIKE $1 OR s.description ILIKE $1
+       GROUP BY s.id, s.subnet, s.name, s.description, s.ip_version, sec.name
+       ORDER BY s.subnet LIMIT 50`,
+      [like]
+    ),
+  ]);
+
+  res.json({
+    ips:     ips.map(r => ({ ...r, mac_vendor: lookupVendor(r.mac_address) })),
+    subnets,
+  });
 });
 
 // ---------------------------------------------------------------------------

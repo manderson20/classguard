@@ -1140,6 +1140,7 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
   const [modal, setModal]           = useState(null);
   const [form, setForm]             = useState(EMPTY_SUBNET);
   const [ipvFilter, setIpv]         = useState('');
+  const [subnetSearch, setSubnetSearch] = useState('');
   const [importOpen, setImport]     = useState(false);
   const [splitTarget, setSplit]     = useState(null);
   const [collapsed, setCollapsed]   = useState(new Set()); // nodes NOT in set are expanded
@@ -1192,8 +1193,19 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
   const ipvColor = v => v === 6 ? 'purple' : 'blue';
   const setF = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
-  const tree     = buildTree(subnets);
-  const flatRows = flattenTree(tree, collapsed, ipvFilter);
+  const tree = buildTree(subnets);
+  // When a search term is active, flatten ALL nodes (ignore collapse state) and
+  // filter in-place so the user sees every match regardless of tree depth.
+  const flatRows = (() => {
+    const all = flattenTree(tree, subnetSearch ? new Set() : collapsed, ipvFilter);
+    if (!subnetSearch) return all;
+    const s = subnetSearch.toLowerCase();
+    return all.filter(n =>
+      (n.subnet      && n.subnet.toLowerCase().includes(s)) ||
+      (n.name        && n.name.toLowerCase().includes(s))   ||
+      (n.description && n.description.toLowerCase().includes(s))
+    );
+  })();
 
   // Parent picker: subnets with shorter prefix than what's typed, excluding self
   const currentPrefix = (() => { const m = (form.subnet || '').match(/\/(\d+)$/); return m ? parseInt(m[1], 10) : null; })();
@@ -1211,6 +1223,12 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
           <option value="4">IPv4 only</option>
           <option value="6">IPv6 only</option>
         </select>
+        <input
+          value={subnetSearch}
+          onChange={e => setSubnetSearch(e.target.value)}
+          placeholder="Filter subnets by name or CIDR…"
+          className={`${INPUT} w-60`}
+        />
         <div className="flex gap-2 ml-auto flex-wrap">
           <button className="btn-secondary text-sm" onClick={exportSubnets}>Export CSV</button>
           <button className="btn-secondary text-sm" onClick={() => setImport(true)}>Import CSV</button>
@@ -1869,89 +1887,148 @@ function SectionsTab() {
 }
 
 // ---------------------------------------------------------------------------
-// Search tab — global IP search across all IPAM subnets
+// Search tab — global IP + subnet search across all IPAM data
 // ---------------------------------------------------------------------------
 function SearchTab({ onGoToSubnet }) {
   const [q, setQ] = useState('');
-  const [query_, setQuery] = useState('');
+  // Debounce the actual query so we don't hammer the API on every keystroke
+  const [debouncedQ, setDebouncedQ] = useState('');
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQ(q.trim()), 300);
+    return () => clearTimeout(t);
+  }, [q]);
 
-  const { data: results = [], isFetching } = useQuery({
-    queryKey: ['ipam-search', query_],
-    queryFn:  () => query_.length >= 2 ? api.get(`/ipam/search?q=${encodeURIComponent(query_)}`) : Promise.resolve([]),
-    enabled: query_.length >= 2,
+  const active = debouncedQ.length >= 2;
+  const { data, isFetching } = useQuery({
+    queryKey: ['ipam-search', debouncedQ],
+    queryFn:  () => api.get(`/ipam/search?q=${encodeURIComponent(debouncedQ)}`),
+    enabled:  active,
   });
 
-  const handleSearch = e => {
-    e.preventDefault();
-    setQuery(q);
-  };
+  const ips     = data?.ips     ?? [];
+  const subnets = data?.subnets ?? [];
 
   return (
-    <div className="space-y-4">
-      <form onSubmit={handleSearch} className="flex gap-2">
+    <div className="space-y-5 max-w-5xl">
+      {/* Search input */}
+      <div className="relative">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">🔍</span>
         <input
+          autoFocus
           value={q}
           onChange={e => setQ(e.target.value)}
-          placeholder="Search by IP, hostname, MAC address, owner…"
-          className={`${INPUT} max-w-lg`}
+          placeholder="Search by IP address, hostname, MAC, owner, device type, subnet name or CIDR…"
+          className={`${INPUT} pl-9 max-w-xl`}
         />
-        <button type="submit" className="btn-primary text-sm">Search</button>
-      </form>
+        {isFetching && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-slate-400">Searching…</span>
+        )}
+      </div>
 
-      {isFetching && <p className="text-sm text-slate-400">Searching…</p>}
+      {!active && (
+        <p className="text-sm text-slate-400">Type at least 2 characters to search across all documented IPs and subnets.</p>
+      )}
 
-      {!isFetching && query_.length >= 2 && (
-        <div className="overflow-x-auto rounded-lg border border-slate-200">
-          <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-              <tr>
-                {['IP Address', 'Hostname', 'Owner', 'MAC', 'Device', 'Status', 'Subnet', ''].map(h =>
-                  <th key={h} className="px-3 py-2 text-left">{h}</th>)}
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {results.map(r => (
-                <tr key={r.id} className="hover:bg-slate-50">
-                  <td className="px-3 py-2 font-mono text-slate-800">{r.ip}</td>
-                  <td className="px-3 py-2 text-slate-700">{r.hostname || '—'}</td>
-                  <td className="px-3 py-2 text-xs text-slate-600">{r.owner || '—'}</td>
-                  <td className="px-3 py-2 font-mono text-xs text-slate-500">
-                    {r.mac_address || '—'}
-                    {r.mac_vendor && <div className="text-[10px] text-slate-400 font-sans">{r.mac_vendor}</div>}
-                  </td>
-                  <td className="px-3 py-2 text-xs text-slate-500 capitalize">{r.device_type || '—'}</td>
-                  <td className="px-3 py-2">
-                    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-600'}`}>
-                      {r.status || '—'}
-                    </span>
-                  </td>
-                  <td className="px-3 py-2 text-xs">
-                    {r.subnet_name
-                      ? <span><span className="font-mono">{r.subnet}</span> <span className="text-slate-400">{r.subnet_name}</span></span>
-                      : <span className="font-mono text-slate-500">{r.subnet || '—'}</span>}
-                  </td>
-                  <td className="px-3 py-2">
-                    {r.subnet_id && (
-                      <button onClick={() => onGoToSubnet(r.subnet_id)}
-                        className="text-xs text-primary-600 hover:underline">
-                        View subnet
-                      </button>
-                    )}
-                  </td>
+      {active && !isFetching && !ips.length && !subnets.length && (
+        <p className="text-sm text-slate-400">No results for <strong>"{debouncedQ}"</strong>.</p>
+      )}
+
+      {/* Matching subnets */}
+      {subnets.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+            Subnets ({subnets.length})
+          </h3>
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+                <tr>
+                  {['CIDR', 'Name', 'Description', 'Section', 'IPs documented', ''].map(h =>
+                    <th key={h} className="px-3 py-2 text-left">{h}</th>)}
                 </tr>
-              ))}
-              {!results.length && (
-                <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-400">
-                  No results for "{query_}"
-                </td></tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {subnets.map(s => (
+                  <tr key={s.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 font-mono text-slate-800">{s.subnet}</td>
+                    <td className="px-3 py-2 text-slate-700">{s.name || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500 max-w-xs truncate">{s.description || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{s.section_name || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-slate-500">{s.ip_count}</td>
+                    <td className="px-3 py-2">
+                      <button onClick={() => onGoToSubnet(s.id)}
+                        className="text-xs text-primary-600 hover:underline whitespace-nowrap">
+                        View IPs →
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
 
-      {query_.length < 2 && !isFetching && (
-        <p className="text-sm text-slate-400">Enter at least 2 characters and press Search.</p>
+      {/* Matching IP addresses */}
+      {ips.length > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">
+            IP Addresses ({ips.length}{ips.length === 200 ? '+' : ''})
+          </h3>
+          <div className="overflow-x-auto rounded-lg border border-slate-200">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+                <tr>
+                  {['IP Address', 'Hostname', 'Owner', 'MAC', 'Device', 'Tags', 'Status', 'Subnet', ''].map(h =>
+                    <th key={h} className="px-3 py-2 text-left">{h}</th>)}
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {ips.map(r => (
+                  <tr key={r.id} className="hover:bg-slate-50">
+                    <td className="px-3 py-2 font-mono text-slate-800">{r.ip}</td>
+                    <td className="px-3 py-2 text-slate-700">{r.hostname || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-slate-600">{r.owner || '—'}</td>
+                    <td className="px-3 py-2 font-mono text-xs text-slate-500">
+                      {r.mac_address || '—'}
+                      {r.mac_vendor && <div className="text-[10px] text-slate-400 font-sans">{r.mac_vendor}</div>}
+                    </td>
+                    <td className="px-3 py-2 text-xs text-slate-500 capitalize">{r.device_type || '—'}</td>
+                    <td className="px-3 py-2">
+                      <div className="flex flex-wrap gap-1 max-w-[120px]">
+                        {(r.tags || []).map(t => (
+                          <span key={t} className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded-full">{t}</span>
+                        ))}
+                        {!r.tags?.length && <span className="text-slate-300">—</span>}
+                      </div>
+                    </td>
+                    <td className="px-3 py-2">
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STATUS_COLOR[r.status] || 'bg-slate-100 text-slate-600'}`}>
+                        {r.status || '—'}
+                      </span>
+                    </td>
+                    <td className="px-3 py-2 text-xs">
+                      <span className="font-mono text-slate-600">{r.subnet || '—'}</span>
+                      {r.subnet_name && <div className="text-slate-400">{r.subnet_name}</div>}
+                      {r.section_name && <div className="text-[10px] text-slate-400">{r.section_name}</div>}
+                    </td>
+                    <td className="px-3 py-2 whitespace-nowrap">
+                      {r.subnet_id && (
+                        <button onClick={() => onGoToSubnet(r.subnet_id)}
+                          className="text-xs text-primary-600 hover:underline">
+                          View subnet →
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {ips.length === 200 && (
+            <p className="text-xs text-slate-400 mt-2 text-right">Showing first 200 matches — refine your search to narrow results.</p>
+          )}
+        </div>
       )}
     </div>
   );
