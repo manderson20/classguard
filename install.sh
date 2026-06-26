@@ -87,7 +87,15 @@ fi
 # ---------------------------------------------------------------------------
 section "Step 1 — System packages"
 apt-get update -qq
-apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl iproute2 jq
+apt-get install -y -qq curl ca-certificates gnupg lsb-release openssl iproute2 jq lvm2 e2fsprogs
+
+# ---------------------------------------------------------------------------
+# 1b. Disk expansion — claim any unallocated space in the root LVM VG.
+# No-op if already fully expanded, so re-running install.sh after a VM disk
+# resize (e.g. hypervisor allocates more storage) is all that's needed.
+# ---------------------------------------------------------------------------
+section "Step 1b — Disk expansion"
+bash "$REPO_DIR/infrastructure/disk/expand-disk.sh" || warn "Disk expansion skipped or failed — check manually"
 
 # ---------------------------------------------------------------------------
 # 2. Docker Engine + Compose plugin
