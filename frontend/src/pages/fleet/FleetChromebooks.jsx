@@ -75,6 +75,20 @@ function LicenseWarningChip() {
   );
 }
 
+function GoogleStatusBadge({ status }) {
+  if (!status || status === 'ACTIVE') return null;
+  const map = {
+    DISABLED:      { cls: 'bg-slate-200 text-slate-600',  label: 'Disabled'      },
+    DEPROVISIONED: { cls: 'bg-red-100 text-red-600',       label: 'Deprovisioned' },
+  };
+  const { cls, label } = map[status] || { cls: 'bg-slate-100 text-slate-500', label: status };
+  return (
+    <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${cls}`}>
+      {label}
+    </span>
+  );
+}
+
 function fmtDate(iso) {
   if (!iso) return '—';
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
@@ -238,8 +252,10 @@ export default function FleetChromebooks() {
     },
   });
 
+  const isSelectable = (d) => !!d.googleDeviceId && d.googleStatus === 'ACTIVE';
+
   const toggleAll = () => {
-    const selectable = displayedDevices.map(d => d.googleDeviceId).filter(Boolean);
+    const selectable = displayedDevices.filter(isSelectable).map(d => d.googleDeviceId);
     if (selected.size === selectable.length && selectable.length > 0) {
       setSelected(new Set());
     } else {
@@ -255,7 +271,7 @@ export default function FleetChromebooks() {
   };
 
   const selectAllExpired = () => {
-    setSelected(new Set(expiredDevices.map(d => d.googleDeviceId)));
+    setSelected(new Set(expiredDevices.filter(isSelectable).map(d => d.googleDeviceId)));
   };
 
   const handleConfirm = (deprovisionReason) => {
@@ -437,10 +453,10 @@ export default function FleetChromebooks() {
                   <th className="px-4 py-2 text-left w-8">
                     <input
                       type="checkbox"
-                      checked={
-                        selected.size === displayedDevices.filter(d => d.googleDeviceId).length &&
-                        displayedDevices.filter(d => d.googleDeviceId).length > 0
-                      }
+                      checked={(() => {
+                        const s = displayedDevices.filter(isSelectable);
+                        return s.length > 0 && selected.size === s.length;
+                      })()}
                       onChange={toggleAll}
                       className="rounded"
                     />
@@ -448,6 +464,7 @@ export default function FleetChromebooks() {
                   <th className="px-4 py-2 text-left">Device</th>
                   <th className="px-4 py-2 text-left">Serial</th>
                   <th className="px-4 py-2 text-left">Model</th>
+                  <th className="px-4 py-2 text-left">Admin Status</th>
                   <th className="px-4 py-2 text-left">AUP Status</th>
                   <th className="px-4 py-2 text-left">OS Version</th>
                   <th className="px-4 py-2 text-left">Assigned</th>
@@ -455,35 +472,50 @@ export default function FleetChromebooks() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {displayedDevices.map(d => (
-                  <tr key={d.serialNumber} className="hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-2">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(d.googleDeviceId)}
-                        onChange={() => toggleOne(d.googleDeviceId)}
-                        disabled={!d.googleDeviceId}
-                        className="rounded"
-                      />
-                    </td>
-                    <td className="px-4 py-2 font-medium text-slate-900">{d.deviceName || '—'}</td>
-                    <td className="px-4 py-2 font-mono text-xs text-slate-600">{d.serialNumber}</td>
-                    <td className="px-4 py-2 text-slate-600">{d.deviceModel || '—'}</td>
-                    <td className="px-4 py-2">
-                      <div className="flex flex-wrap items-center gap-y-1">
-                        <AupBadge status={d.aupStatus} />
-                        {d.aupDate && (
-                          <span className="text-slate-600 ml-1.5 text-xs">{fmtDate(d.aupDate)}</span>
-                        )}
-                        <AupSourceChip source={d.aupSource} />
-                        {d.requiresLicense && <LicenseWarningChip />}
-                      </div>
-                    </td>
-                    <td className="px-4 py-2 text-slate-600">{d.osVersion || '—'}</td>
-                    <td className="px-4 py-2 text-xs text-slate-600">{d.assignedEmail || '—'}</td>
-                    <td className="px-4 py-2 text-xs text-slate-600">{d.assetTag || '—'}</td>
-                  </tr>
-                ))}
+                {displayedDevices.map(d => {
+                  const active = d.googleStatus === 'ACTIVE' || !d.googleStatus;
+                  return (
+                    <tr
+                      key={d.serialNumber}
+                      className={`transition-colors ${
+                        active ? 'hover:bg-slate-50' : 'opacity-60 bg-slate-50/60'
+                      }`}
+                    >
+                      <td className="px-4 py-2">
+                        <input
+                          type="checkbox"
+                          checked={selected.has(d.googleDeviceId)}
+                          onChange={() => isSelectable(d) && toggleOne(d.googleDeviceId)}
+                          disabled={!isSelectable(d)}
+                          title={!active ? `Cannot select — device is ${d.googleStatus?.toLowerCase()} in Google Admin` : undefined}
+                          className="rounded"
+                        />
+                      </td>
+                      <td className="px-4 py-2 font-medium text-slate-900">{d.deviceName || '—'}</td>
+                      <td className="px-4 py-2 font-mono text-xs text-slate-600">{d.serialNumber}</td>
+                      <td className="px-4 py-2 text-slate-600">{d.deviceModel || '—'}</td>
+                      <td className="px-4 py-2">
+                        {active
+                          ? <span className="text-xs text-green-700 font-medium">Active</span>
+                          : <GoogleStatusBadge status={d.googleStatus} />
+                        }
+                      </td>
+                      <td className="px-4 py-2">
+                        <div className="flex flex-wrap items-center gap-y-1">
+                          <AupBadge status={d.aupStatus} />
+                          {d.aupDate && (
+                            <span className="text-slate-600 ml-1.5 text-xs">{fmtDate(d.aupDate)}</span>
+                          )}
+                          <AupSourceChip source={d.aupSource} />
+                          {d.requiresLicense && <LicenseWarningChip />}
+                        </div>
+                      </td>
+                      <td className="px-4 py-2 text-slate-600">{d.osVersion || '—'}</td>
+                      <td className="px-4 py-2 text-xs text-slate-600">{d.assignedEmail || '—'}</td>
+                      <td className="px-4 py-2 text-xs text-slate-600">{d.assetTag || '—'}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

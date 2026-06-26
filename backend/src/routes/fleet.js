@@ -185,7 +185,7 @@ router.get('/chromebooks', async (req, res) => {
     pool.query(
       `SELECT id.id, id.external_id, id.serial_number, id.device_name, id.device_model,
               id.os_version, id.assigned_email, id.asset_tag, id.synced_at,
-              id.aup_date, id.aup_source, id.source
+              id.aup_date, id.aup_source, id.source, id.status
        FROM integration_devices id
        WHERE id.os_type = 'ChromeOS'`
     ),
@@ -233,6 +233,7 @@ router.get('/chromebooks', async (req, res) => {
       assignedEmail:   googleRow.assigned_email,
       assetTag:        rows.find(r => r.asset_tag)?.asset_tag || null,
       googleDeviceId:  rows.find(r => r.source === 'google_admin')?.external_id || null,
+      googleStatus:    googleRow.status || 'ACTIVE',
       aupDate:         aupDate || null,
       aupSource,
       aupStatus:       status,
@@ -265,6 +266,11 @@ router.post('/chromebooks/disable', async (req, res) => {
   for (const id of deviceIds) {
     try {
       await google.setChromeDeviceAction(id, 'disable', req.user.userId);
+      await pool.query(
+        `UPDATE integration_devices SET status = 'DISABLED', synced_at = NOW()
+         WHERE source = 'google_admin' AND external_id = $1`,
+        [id]
+      );
       disabled++;
     } catch (err) {
       errors.push(`${id}: ${err.message}`);
