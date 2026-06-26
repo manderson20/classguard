@@ -483,6 +483,38 @@ async function setChromeDeviceAction(deviceId, action, actorId) {
 }
 
 // ---------------------------------------------------------------------------
+// Deprovision a Chromebook — irreversible, frees the Chrome Education Upgrade
+// license. Requires the same write scope as setChromeDeviceAction. Valid
+// deprovisionReason values (Google API): different_model_replacement,
+// retiring_device, upgrade_transfer, other.
+// ---------------------------------------------------------------------------
+async function deprovisionChromeDevice(deviceId, deprovisionReason, actorId) {
+  const VALID_REASONS = ['different_model_replacement', 'retiring_device', 'upgrade_transfer', 'other'];
+  if (!VALID_REASONS.includes(deprovisionReason)) {
+    throw new Error(`Invalid deprovision reason: ${deprovisionReason}`);
+  }
+
+  const auth  = await getServiceAccountAuth(['https://www.googleapis.com/auth/admin.directory.device.chromeos']);
+  const admin = google.admin({ version: 'directory_v1', auth });
+
+  const { rows: [customerSetting] } = await pool.query(
+    `SELECT value FROM settings WHERE key = 'google_customer_id'`
+  );
+
+  try {
+    await admin.chromeosdevices.action({
+      customerId:  customerSetting?.value || process.env.GOOGLE_CUSTOMER_ID || 'my_customer',
+      deviceId,
+      requestBody: { action: 'deprovision', deprovisionReason },
+    });
+    await _auditLog(actorId, 'chromebook_deprovision', { deviceId, deprovisionReason, result: 'success' });
+  } catch (err) {
+    await _auditLog(actorId, 'chromebook_deprovision', { deviceId, deprovisionReason, result: 'error', error: err.message });
+    throw err;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Internal audit log helper
 // ---------------------------------------------------------------------------
 async function _auditLog(actorId, action, details) {
@@ -516,5 +548,5 @@ async function updateChromebookAssetId(deviceId, assetTag) {
 module.exports = {
   initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits, getServiceAccountAuth,
   getOuRoleRules, resolveRoleFromOu, backfillRolesFromOu, syncDevices, setChromeDeviceAction,
-  updateChromebookAssetId,
+  deprovisionChromeDevice, updateChromebookAssetId,
 };

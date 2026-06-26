@@ -23,6 +23,7 @@ const { invalidatePolicy } = require('./policyResolver');
 const events = require('../events');
 const { syncController } = require('../routes/network');
 const { pool } = require('../db');
+const { syncAppleOsVersions } = require('./appleOsSync');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -387,6 +388,11 @@ function startScheduler() {
   // (offsite devices on home networks are correctly skipped, not errored).
   cron.schedule('*/15 * * * *', () => {
     integrationDeviceIpamSync.run().catch(err => console.error('[scheduler] integration-device-ipam-sync error:', err.message));
+  });
+
+  // Apple OS version sync — daily 3am, pulls latest iOS/iPadOS/macOS from SOFA feed
+  cron.schedule('0 3 * * *', () => {
+    syncAppleOsVersions().catch(err => console.error('[scheduler] apple-os-sync error:', err.message));
   });
 
   // Category list sync — weekly Sunday 3am (UT1 + Shallalist)

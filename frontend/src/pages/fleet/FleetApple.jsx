@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import MdiIcon from '@mdi/react';
 import {
   mdiTablet, mdiPencil, mdiCertificateOutline, mdiCheckCircle,
-  mdiAlertCircle, mdiDownload, mdiCalendar, mdiAutorenew,
+  mdiAlertCircle, mdiDownload, mdiCalendar, mdiAutorenew, mdiSync,
 } from '@mdi/js';
 import api from '../../lib/api';
 
@@ -73,7 +73,7 @@ function OsRefModal({ onClose }) {
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
-          <h2 className="font-bold text-slate-900">Update OS Reference Versions</h2>
+          <h2 className="font-bold text-slate-900">Override OS Reference Versions</h2>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-700 text-xl">×</button>
         </div>
         <div className="px-6 py-4 space-y-4">
@@ -518,6 +518,8 @@ export default function FleetApple() {
   const [osFilter,      setOsFilter]      = useState('');
   const [updateFilter,  setUpdateFilter]  = useState('');
   const [showRefModal,  setShowRefModal]  = useState(false);
+  const [syncResult,    setSyncResult]    = useState(null);
+  const qc = useQueryClient();
 
   const params = new URLSearchParams();
   if (osFilter)     params.set('os',           osFilter);
@@ -530,9 +532,19 @@ export default function FleetApple() {
     enabled: activeView === 'devices',
   });
 
+  const syncMutation = useMutation({
+    mutationFn: () => api.post('/fleet/apple/os-reference/sync'),
+    onSuccess: (result) => {
+      setSyncResult(result);
+      qc.invalidateQueries({ queryKey: ['fleet-apple'] });
+      qc.invalidateQueries({ queryKey: ['fleet-apple-os-ref'] });
+      setTimeout(() => setSyncResult(null), 8000);
+    },
+  });
+
   return (
     <div className="p-6">
-      <div className="mb-5 flex items-start justify-between gap-4">
+      <div className="mb-5 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <MdiIcon path={mdiTablet} size="1.2em" className="text-primary-600" />
@@ -543,15 +555,46 @@ export default function FleetApple() {
           </p>
         </div>
         {activeView === 'devices' && (
-          <button
-            className="btn btn-secondary flex items-center gap-1.5 flex-shrink-0"
-            onClick={() => setShowRefModal(true)}
-          >
-            <MdiIcon path={mdiPencil} size="0.9em" />
-            Update Reference Versions
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+            <button
+              className="btn btn-secondary flex items-center gap-1.5"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+              title="Fetch latest iOS/iPadOS/macOS versions from the SOFA feed (Mac Admins community)"
+            >
+              <MdiIcon path={mdiSync} size="0.9em" className={syncMutation.isPending ? 'animate-spin' : ''} />
+              {syncMutation.isPending ? 'Syncing…' : 'Sync from Apple'}
+            </button>
+            <button
+              className="btn btn-secondary flex items-center gap-1.5"
+              onClick={() => setShowRefModal(true)}
+            >
+              <MdiIcon path={mdiPencil} size="0.9em" />
+              Override Versions
+            </button>
+          </div>
         )}
       </div>
+
+      {/* Sync success banner */}
+      {syncResult && (
+        <div className="mb-4 bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-green-800">
+            <span className="font-semibold">SOFA feed synced.</span>{' '}
+            {[
+              syncResult.ios   && `iOS/iPadOS: ${syncResult.ios}`,
+              syncResult.macos && `macOS: ${syncResult.macos}`,
+            ].filter(Boolean).join(' · ') || 'No versions returned from feed.'}
+          </p>
+          <button onClick={() => setSyncResult(null)} className="text-green-500 hover:text-green-700 text-lg leading-none flex-shrink-0">×</button>
+        </div>
+      )}
+
+      {syncMutation.isError && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 text-sm text-red-800">
+          Sync failed: {syncMutation.error?.message || 'Unknown error'}
+        </div>
+      )}
 
       {/* View tabs */}
       <div className="flex gap-1 mb-5 border-b border-slate-200">

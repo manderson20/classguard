@@ -7,6 +7,7 @@ import {
   mdiMonitor,
   mdiShieldCheckOutline,
   mdiInformationOutline,
+  mdiDeleteOutline,
 } from '@mdi/js';
 import api from '../../lib/api';
 
@@ -16,6 +17,13 @@ const STATUS_TABS = [
   { value: 'expiring', label: 'Expiring Soon (<12 mo)'  },
   { value: 'ok',       label: 'Current'                 },
   { value: 'unknown',  label: 'Unknown'                 },
+];
+
+const DEPROVISION_REASONS = [
+  { value: 'retiring_device',             label: 'Retiring device (end of life)'   },
+  { value: 'different_model_replacement', label: 'Replacing with different model'  },
+  { value: 'upgrade_transfer',            label: 'Upgrade or transfer'             },
+  { value: 'other',                       label: 'Other'                           },
 ];
 
 function AupBadge({ status }) {
@@ -72,14 +80,28 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
 }
 
-function ConfirmModal({ count, onConfirm, onCancel, loading, result }) {
+// Unified modal for both disable and deprovision actions.
+function ActionModal({ action, count, onConfirm, onCancel, loading, result }) {
+  const [deprovisionReason, setDeprovisionReason] = useState(DEPROVISION_REASONS[0].value);
+
+  const isDeprovision = action === 'deprovision';
+  const title = isDeprovision
+    ? `Deprovision ${count} Chromebook${count !== 1 ? 's' : ''}?`
+    : `Disable ${count} Chromebook${count !== 1 ? 's' : ''}?`;
+
+  const resultKey = isDeprovision ? 'deprovisioned' : 'disabled';
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-md">
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
           <h2 className="font-bold text-slate-900 flex items-center gap-2">
-            <MdiIcon path={mdiAlertCircleOutline} size="1em" className="text-red-500" />
-            Disable {count} Chromebook{count !== 1 ? 's' : ''}?
+            <MdiIcon
+              path={isDeprovision ? mdiDeleteOutline : mdiAlertCircleOutline}
+              size="1em"
+              className={isDeprovision ? 'text-slate-700' : 'text-red-500'}
+            />
+            {title}
           </h2>
           <button onClick={onCancel} className="text-slate-400 hover:text-slate-700 text-xl">×</button>
         </div>
@@ -87,7 +109,7 @@ function ConfirmModal({ count, onConfirm, onCancel, loading, result }) {
           {result ? (
             <div>
               <p className="text-sm text-green-700 font-medium mb-2">
-                Disabled: {result.disabled}
+                {isDeprovision ? 'Deprovisioned' : 'Disabled'}: {result[resultKey]}
               </p>
               {result.errors?.length > 0 && (
                 <div className="text-sm text-red-600">
@@ -101,20 +123,56 @@ function ConfirmModal({ count, onConfirm, onCancel, loading, result }) {
             </div>
           ) : (
             <>
-              <p className="text-sm text-slate-600 mb-4">
-                This will disable {count} selected Chromebook{count !== 1 ? 's' : ''} in Google Admin.
-                Students will not be able to sign in until you re-enable them.
-              </p>
+              {isDeprovision ? (
+                <>
+                  <div className="mb-4 bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-800">
+                    <p className="font-semibold mb-1">This action is irreversible.</p>
+                    <p>
+                      The device will be removed from Google MDM and its Chrome Education Upgrade
+                      license will be freed. You cannot undo this from ClassGuard — the device
+                      would need to be re-enrolled from scratch.
+                    </p>
+                  </div>
+                  <label className="block mb-4">
+                    <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide block mb-1">
+                      Deprovision Reason
+                    </span>
+                    <select
+                      className="input w-full"
+                      value={deprovisionReason}
+                      onChange={e => setDeprovisionReason(e.target.value)}
+                    >
+                      {DEPROVISION_REASONS.map(r => (
+                        <option key={r.value} value={r.value}>{r.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              ) : (
+                <p className="text-sm text-slate-600 mb-4">
+                  This will disable {count} selected Chromebook{count !== 1 ? 's' : ''} in Google Admin.
+                  Students will not be able to sign in until you re-enable them. The device stays
+                  enrolled and licensed — this is reversible.
+                </p>
+              )}
               <div className="flex gap-3">
                 <button className="btn btn-secondary flex-1" onClick={onCancel} disabled={loading}>
                   Cancel
                 </button>
                 <button
-                  className="btn flex-1 bg-red-600 hover:bg-red-700 text-white"
-                  onClick={onConfirm}
+                  className={`btn flex-1 text-white ${
+                    isDeprovision
+                      ? 'bg-slate-800 hover:bg-slate-900'
+                      : 'bg-red-600 hover:bg-red-700'
+                  }`}
+                  onClick={() => onConfirm(isDeprovision ? deprovisionReason : null)}
                   disabled={loading}
                 >
-                  {loading ? 'Disabling…' : `Disable ${count} device${count !== 1 ? 's' : ''}`}
+                  {loading
+                    ? (isDeprovision ? 'Deprovisioning…' : 'Disabling…')
+                    : (isDeprovision
+                        ? `Deprovision ${count} device${count !== 1 ? 's' : ''}`
+                        : `Disable ${count} device${count !== 1 ? 's' : ''}`)}
                 </button>
               </div>
             </>
@@ -129,8 +187,8 @@ export default function FleetChromebooks() {
   const [statusFilter,    setStatusFilter]    = useState('');
   const [showLicenseOnly, setShowLicenseOnly] = useState(false);
   const [selected,        setSelected]        = useState(new Set());
-  const [showConfirm,     setShowConfirm]     = useState(false);
-  const [disableResult,   setDisableResult]   = useState(null);
+  const [pendingAction,   setPendingAction]   = useState(null); // 'disable' | 'deprovision' | null
+  const [actionResult,    setActionResult]    = useState(null);
   const [bannerDismissed, setBannerDismissed] = useState(false);
   const qc = useQueryClient();
 
@@ -154,10 +212,26 @@ export default function FleetChromebooks() {
     [allDevices, statusFilter, showLicenseOnly]
   );
 
+  const expiredDevices = useMemo(
+    () => allDevices.filter(d => d.aupStatus === 'expired' && d.googleDeviceId),
+    [allDevices]
+  );
+
   const disableMutation = useMutation({
     mutationFn: (deviceIds) => api.post('/fleet/chromebooks/disable', { deviceIds }),
     onSuccess: (result) => {
-      setDisableResult(result);
+      setActionResult(result);
+      setSelected(new Set());
+      qc.invalidateQueries({ queryKey: ['fleet-chromebooks'] });
+      qc.invalidateQueries({ queryKey: ['fleet-summary'] });
+    },
+  });
+
+  const deprovisionMutation = useMutation({
+    mutationFn: ({ deviceIds, reason }) =>
+      api.post('/fleet/chromebooks/deprovision', { deviceIds, reason }),
+    onSuccess: (result) => {
+      setActionResult(result);
       setSelected(new Set());
       qc.invalidateQueries({ queryKey: ['fleet-chromebooks'] });
       qc.invalidateQueries({ queryKey: ['fleet-summary'] });
@@ -180,19 +254,29 @@ export default function FleetChromebooks() {
     setSelected(next);
   };
 
-  const handleDisable = () => {
-    disableMutation.mutate([...selected]);
+  const selectAllExpired = () => {
+    setSelected(new Set(expiredDevices.map(d => d.googleDeviceId)));
   };
 
-  const handleCloseConfirm = () => {
-    setShowConfirm(false);
-    setDisableResult(null);
+  const handleConfirm = (deprovisionReason) => {
+    if (pendingAction === 'deprovision') {
+      deprovisionMutation.mutate({ deviceIds: [...selected], reason: deprovisionReason });
+    } else {
+      disableMutation.mutate([...selected]);
+    }
   };
+
+  const handleCloseModal = () => {
+    setPendingAction(null);
+    setActionResult(null);
+  };
+
+  const isMutationPending = disableMutation.isPending || deprovisionMutation.isPending;
 
   return (
     <div className="p-6">
       {/* Page header */}
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
         <div>
           <h1 className="text-2xl font-bold text-slate-900 flex items-center gap-2">
             <MdiIcon path={mdiMonitor} size="1.2em" className="text-primary-600" />
@@ -205,13 +289,22 @@ export default function FleetChromebooks() {
           </p>
         </div>
         {selected.size > 0 && (
-          <button
-            className="btn flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white flex-shrink-0"
-            onClick={() => setShowConfirm(true)}
-          >
-            <MdiIcon path={mdiAlertCircleOutline} size="1em" />
-            Disable Selected ({selected.size})
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0 flex-wrap">
+            <button
+              className="btn flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white"
+              onClick={() => setPendingAction('disable')}
+            >
+              <MdiIcon path={mdiAlertCircleOutline} size="1em" />
+              Disable Selected ({selected.size})
+            </button>
+            <button
+              className="btn flex items-center gap-1.5 bg-slate-800 hover:bg-slate-900 text-white"
+              onClick={() => setPendingAction('deprovision')}
+            >
+              <MdiIcon path={mdiDeleteOutline} size="1em" />
+              Deprovision Selected ({selected.size})
+            </button>
+          </div>
         )}
       </div>
 
@@ -306,6 +399,23 @@ export default function FleetChromebooks() {
         </button>
       </div>
 
+      {/* Expired AUP action bar */}
+      {statusFilter === 'expired' && expiredDevices.length > 0 && (
+        <div className="mb-4 bg-red-50 border border-red-200 rounded-lg px-4 py-3 flex items-center gap-3 flex-wrap">
+          <MdiIcon path={mdiAlertCircleOutline} size="1.1em" className="text-red-600 flex-shrink-0" />
+          <p className="text-sm text-red-800 flex-1">
+            <span className="font-semibold">{expiredDevices.length} device{expiredDevices.length !== 1 ? 's' : ''}</span>{' '}
+            have expired AUP — select devices above to disable or deprovision.
+          </p>
+          <button
+            className="btn btn-sm bg-red-100 hover:bg-red-200 text-red-800 flex-shrink-0"
+            onClick={selectAllExpired}
+          >
+            Select All Expired
+          </button>
+        </div>
+      )}
+
       {/* Table */}
       <div className="card overflow-hidden">
         {isLoading ? (
@@ -380,13 +490,14 @@ export default function FleetChromebooks() {
         )}
       </div>
 
-      {showConfirm && (
-        <ConfirmModal
+      {pendingAction && (
+        <ActionModal
+          action={pendingAction}
           count={selected.size}
-          onConfirm={handleDisable}
-          onCancel={handleCloseConfirm}
-          loading={disableMutation.isPending}
-          result={disableResult}
+          onConfirm={handleConfirm}
+          onCancel={handleCloseModal}
+          loading={isMutationPending}
+          result={actionResult}
         />
       )}
     </div>

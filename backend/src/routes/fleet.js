@@ -275,6 +275,38 @@ router.post('/chromebooks/disable', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /fleet/chromebooks/deprovision  body: { deviceIds: string[], reason: string }
+// ---------------------------------------------------------------------------
+router.post('/chromebooks/deprovision', async (req, res) => {
+  const { deviceIds, reason } = req.body;
+  if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
+    return res.status(400).json({ error: 'deviceIds array required' });
+  }
+  if (!reason) {
+    return res.status(400).json({ error: 'reason required' });
+  }
+
+  let deprovisioned = 0;
+  const errors = [];
+
+  for (const id of deviceIds) {
+    try {
+      await google.deprovisionChromeDevice(id, reason, req.user.userId);
+      await pool.query(
+        `UPDATE integration_devices SET status = 'DEPROVISIONED', synced_at = NOW()
+         WHERE source = 'google_admin' AND external_id = $1`,
+        [id]
+      );
+      deprovisioned++;
+    } catch (err) {
+      errors.push(`${id}: ${err.message}`);
+    }
+  }
+
+  res.json({ deprovisioned, errors });
+});
+
+// ---------------------------------------------------------------------------
 // GET /fleet/apple
 // ---------------------------------------------------------------------------
 router.get('/apple', async (req, res) => {
@@ -356,6 +388,19 @@ router.put('/apple/os-reference/:family', async (req, res) => {
   );
   if (!row) return res.status(404).json({ error: 'OS family not found' });
   res.json(row);
+});
+
+// ---------------------------------------------------------------------------
+// POST /fleet/apple/os-reference/sync  — pull latest versions from SOFA feed
+// ---------------------------------------------------------------------------
+router.post('/apple/os-reference/sync', async (req, res) => {
+  try {
+    const { syncAppleOsVersions } = require('../services/appleOsSync');
+    const result = await syncAppleOsVersions();
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ---------------------------------------------------------------------------
