@@ -1215,6 +1215,9 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
     return !isNaN(p) && (currentPrefix === null || p < currentPrefix);
   });
 
+  const parentIds = new Set(subnets.filter(s => s.parent_id).map(s => s.parent_id));
+  const allCollapsed = parentIds.size > 0 && [...parentIds].every(id => collapsed.has(id));
+
   return (
     <>
       <div className="flex items-center gap-3 mb-3 flex-wrap">
@@ -1229,6 +1232,13 @@ function SubnetsTab({ sections, vrfs, vlans, onSelect }) {
           placeholder="Filter subnets by name or CIDR…"
           className={`${INPUT} w-60`}
         />
+        {parentIds.size > 0 && (
+          <button
+            className="btn-secondary text-sm"
+            onClick={() => setCollapsed(allCollapsed ? new Set() : new Set(parentIds))}>
+            {allCollapsed ? 'Expand All' : 'Collapse All'}
+          </button>
+        )}
         <div className="flex gap-2 ml-auto flex-wrap">
           <button className="btn-secondary text-sm" onClick={exportSubnets}>Export CSV</button>
           <button className="btn-secondary text-sm" onClick={() => setImport(true)}>Import CSV</button>
