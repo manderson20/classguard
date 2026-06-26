@@ -31,7 +31,7 @@ router.put('/settings', ...auth, async (req, res) => {
   const { base_url, api_key } = req.body;
   try {
     const pairs = [
-      ['infoseciq_base_url', base_url || 'https://api.infosecinstitute.com/iqv2'],
+      ['infoseciq_base_url', base_url || 'https://securityiq.infosecinstitute.com/api/v2'],
     ];
     if (api_key && api_key !== '***') pairs.push(['infoseciq_api_key', api_key]);
     for (const [key, value] of pairs) {
