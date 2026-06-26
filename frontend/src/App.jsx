@@ -70,6 +70,7 @@ import InfosecIqDashboard      from './pages/admin/infoseciq/InfosecIqDashboard'
 import InfosecIqLearners       from './pages/admin/infoseciq/InfosecIqLearners';
 import InfosecIqCampaigns      from './pages/admin/infoseciq/InfosecIqCampaigns';
 import InfosecIqCampaignDetail from './pages/admin/infoseciq/InfosecIqCampaignDetail';
+import InfosecIqGradeCards     from './pages/admin/infoseciq/InfosecIqGradeCards';
 
 // Fleet pages
 import FleetOverview    from './pages/fleet/FleetOverview';
@@ -224,6 +225,7 @@ export default function App() {
           <Route path="/admin/infoseciq/learners"           element={<InfosecIqLearners />} />
           <Route path="/admin/infoseciq/campaigns"          element={<InfosecIqCampaigns />} />
           <Route path="/admin/infoseciq/campaigns/:id"      element={<InfosecIqCampaignDetail />} />
+          <Route path="/admin/infoseciq/grade-cards"        element={<InfosecIqGradeCards />} />
         </Route>
       </Route>
 

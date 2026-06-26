@@ -76,6 +76,109 @@ router.post('/sync/campaigns', ...auth, async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Grade cards — per-learner security score cards
+// ---------------------------------------------------------------------------
+
+router.get('/grade-cards', ...auth, async (req, res) => {
+  const { q, dept, grade, sort = 'last_name', order = 'asc', limit = 200, offset = 0 } = req.query;
+  const allowed = ['last_name','first_name','letter_grade','grade_score','training_completion_pct',
+                   'phished_count','modules_completed','training_time_minutes','last_activity_at'];
+  const col = allowed.includes(sort) ? sort : 'last_name';
+  const dir = order === 'desc' ? 'DESC' : 'ASC';
+
+  try {
+    const conditions = [];
+    const params     = [];
+
+    if (q) {
+      params.push(`%${q}%`);
+      conditions.push(`(first_name ILIKE $${params.length} OR last_name ILIKE $${params.length} OR email ILIKE $${params.length})`);
+    }
+    if (dept) {
+      params.push(dept);
+      conditions.push(`department = $${params.length}`);
+    }
+    if (grade) {
+      params.push(grade.toUpperCase());
+      conditions.push(`letter_grade = $${params.length}`);
+    }
+
+    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    params.push(parseInt(limit) || 200);
+    params.push(parseInt(offset) || 0);
+
+    const { rows } = await pool.query(
+      `SELECT id, email, first_name, last_name, department,
+              letter_grade, grade_score, phished_count, data_entry_count,
+              training_time_minutes, modules_enrolled, modules_completed,
+              assessments_passed, assessments_failed,
+              training_completion_pct, last_activity_at, last_synced_at
+       FROM infoseciq_learners
+       ${where}
+       ORDER BY ${col} ${dir} NULLS LAST, last_name ASC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    const { rows: [cnt] } = await pool.query(
+      `SELECT COUNT(*) AS total FROM infoseciq_learners ${where}`,
+      params.slice(0, -2)
+    );
+
+    const { rows: depts } = await pool.query(
+      `SELECT DISTINCT department FROM infoseciq_learners WHERE department IS NOT NULL ORDER BY department`
+    );
+
+    // Grade distribution for the filter bar
+    const { rows: dist } = await pool.query(
+      `SELECT letter_grade, COUNT(*) AS cnt FROM infoseciq_learners
+       GROUP BY letter_grade ORDER BY letter_grade`
+    );
+
+    res.json({
+      gradeCards:   rows,
+      total:        parseInt(cnt.total),
+      departments:  depts.map(d => d.department),
+      distribution: dist,
+    });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// CSV export
+router.get('/grade-cards/export.csv', ...auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT last_name, first_name, email, department,
+              letter_grade, grade_score, phished_count, data_entry_count,
+              training_completion_pct, modules_enrolled, modules_completed,
+              training_time_minutes, assessments_passed, assessments_failed,
+              last_activity_at
+       FROM infoseciq_learners
+       ORDER BY last_name, first_name`
+    );
+    const header = [
+      'Last Name','First Name','Email','Department',
+      'Letter Grade','Grade Score','Times Phished','Data Entry Events',
+      'Training Completion %','Modules Assigned','Modules Completed',
+      'Training Time (min)','Assessments Passed','Assessments Failed',
+      'Last Activity',
+    ].join(',');
+    const csv = [header, ...rows.map(r => [
+      r.last_name, r.first_name, r.email, r.department,
+      r.letter_grade, r.grade_score, r.phished_count, r.data_entry_count,
+      r.training_completion_pct, r.modules_enrolled, r.modules_completed,
+      r.training_time_minutes, r.assessments_passed, r.assessments_failed,
+      r.last_activity_at ? new Date(r.last_activity_at).toLocaleDateString() : '',
+    ].map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(','))].join('\n');
+
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', 'attachment; filename="security-grade-cards.csv"');
+    res.send(csv);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------------------------------------------------------------------------
 // Dashboard summary
 // ---------------------------------------------------------------------------
 
