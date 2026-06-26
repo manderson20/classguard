@@ -4,14 +4,17 @@ const { pool } = require('../db');
 async function getConfig() {
   const { rows } = await pool.query(
     `SELECT key, value FROM settings WHERE key IN
-       ('snipeit_url','snipeit_token','snipeit_client_id','snipeit_client_secret')`
+       ('snipeit_url','snipeit_token','snipeit_client_id','snipeit_client_secret','snipeit_mac_fields')`
   );
   const cfg = Object.fromEntries(rows.map(r => [r.key, r.value]));
+  let macFields = [];
+  try { macFields = JSON.parse(cfg.snipeit_mac_fields || '[]'); } catch { /* ignore */ }
   return {
     url:          process.env.SNIPEIT_URL           || cfg.snipeit_url           || null,
     token:        process.env.SNIPEIT_TOKEN         || cfg.snipeit_token         || null,
     clientId:     process.env.SNIPEIT_CLIENT_ID      || cfg.snipeit_client_id     || null,
     clientSecret: process.env.SNIPEIT_CLIENT_SECRET  || cfg.snipeit_client_secret || null,
+    macFields,
   };
 }
 
@@ -128,9 +131,39 @@ async function getAsset(id) {
 }
 
 // ---------------------------------------------------------------------------
+// Discover custom field definitions from Snipe-IT.
+// Tries GET /fields first (requires a token with sufficient scope); falls back
+// to sampling a few assets and collecting their custom_fields keys, which
+// works with any read-only token.
+// ---------------------------------------------------------------------------
+async function listCustomFields() {
+  const http = await getClient();
+  try {
+    const res  = await http.get('/fields');
+    const rows = res.data?.rows || [];
+    return rows.map(f => ({
+      key:    f.db_column_name,
+      label:  f.name,
+      format: f.format || null,
+    })).filter(f => f.key);
+  } catch {
+    // /fields may 403 for limited-scope tokens — sample assets instead
+    const sample = await listAssets();
+    const seen   = new Map();
+    for (const a of sample.slice(0, 30)) {
+      for (const [k, v] of Object.entries(a.custom_fields || {})) {
+        if (!seen.has(k)) seen.set(k, { key: k, label: v.field || k, format: v.field_format || null });
+      }
+    }
+    return [...seen.values()];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Sync Snipe-IT assets into integration_devices
 // ---------------------------------------------------------------------------
 async function syncAssets() {
+  const cfg    = await getConfig();
   const assets = await listAssets();
   let count = 0;
 
@@ -142,12 +175,21 @@ async function syncAssets() {
     const status  = a.status_label?.name || null;
     const osType  = a.category?.name || null;
 
-    // Snipe-IT has no first-class MAC field — most districts track it in a
-    // custom field instead (naming varies, hence the fuzzy match on the
-    // field label rather than a fixed key).
-    const customMac = Object.values(a.custom_fields || {})
-      .find(f => /mac/i.test(f.field || '') && f.value)?.value;
-    const macs = [a.mac_address, customMac].filter(Boolean);
+    // Build MAC list from admin-configured custom field keys.
+    // Each field value may contain multiple MACs (comma/semicolon/newline-separated).
+    // Falls back to a fuzzy label match if the admin hasn't configured any fields yet.
+    let macs = [];
+    if (cfg.macFields.length > 0) {
+      for (const fieldKey of cfg.macFields) {
+        const raw = a.custom_fields?.[fieldKey]?.value;
+        if (raw) macs.push(...String(raw).split(/[,;\n]+/).map(s => s.trim()).filter(Boolean));
+      }
+    } else {
+      const customMac = Object.values(a.custom_fields || {})
+        .find(f => /mac/i.test(f.field || '') && f.value)?.value;
+      if (customMac) macs.push(customMac);
+    }
+    if (a.mac_address) macs.unshift(a.mac_address);
 
     await pool.query(
       `INSERT INTO integration_devices
@@ -174,4 +216,4 @@ async function syncAssets() {
   return count;
 }
 
-module.exports = { getConfig, listAssets, getAsset, syncAssets };
+module.exports = { getConfig, listAssets, getAsset, syncAssets, listCustomFields };

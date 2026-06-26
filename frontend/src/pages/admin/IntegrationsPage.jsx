@@ -557,11 +557,109 @@ function ZammadSection({ status }) {
 }
 
 // ---------------------------------------------------------------------------
+// Device detail modal — shows Snipe-IT custom fields (with MAC fields
+// highlighted) and a summary of all sources for a unified device record.
+// ---------------------------------------------------------------------------
+const SOURCE_LABEL_MAP = { snipeit: 'Snipe-IT', mosyle: 'Mosyle', google_admin: 'Google' };
+
+function DeviceDetailModal({ device, onClose, snipeitMacFields = [] }) {
+  const macKeySet      = new Set(snipeitMacFields);
+  const snipeitSource  = device.sources.find(s => s.source === 'snipeit');
+
+  const { data: snipeitDetail, isLoading: loadingDetail } = useQuery({
+    queryKey: ['device-detail', snipeitSource?.id],
+    queryFn:  () => api.get(`/integrations/devices/${snipeitSource.id}`),
+    enabled:  !!snipeitSource,
+  });
+
+  const customFields = snipeitDetail?.raw_data?.custom_fields || {};
+  // MAC-mapped fields first, then everything else; skip blank values
+  const fieldEntries = Object.entries(customFields)
+    .filter(([, f]) => f.value)
+    .sort(([ka], [kb]) => (macKeySet.has(kb) ? 1 : 0) - (macKeySet.has(ka) ? 1 : 0));
+
+  const infoRows = [
+    ['Serial',      device.serialNumber,                         true],
+    ['Model',       device.deviceModel,                          false],
+    ['OS',          device.osType,                               false],
+    ['Status',      device.status,                               false],
+    ['Assigned To', device.assignedEmail || device.assignedUser, false],
+    device.network ? ['Network', `${device.network.ip || ''}${device.network.apName ? ' · '+device.network.apName : ''}`.trim(), false] : null,
+  ].filter(Boolean).filter(([, v]) => v);
+
+  return (
+    <Modal title={device.deviceName || 'Device Detail'} onClose={onClose}>
+      <div className="flex flex-col gap-5 text-sm">
+        {/* Core info */}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+          {infoRows.map(([label, value, mono]) => (
+            <div key={label}>
+              <div className="text-[11px] text-slate-400 uppercase font-medium mb-0.5">{label}</div>
+              <div className={mono ? 'font-mono text-xs text-slate-700' : 'text-slate-800'}>{value}</div>
+            </div>
+          ))}
+        </div>
+
+        {/* MAC addresses */}
+        {device.macAddresses?.length > 0 && (
+          <div>
+            <div className="text-[11px] text-slate-400 uppercase font-medium mb-1">MAC Addresses</div>
+            <div className="flex flex-wrap gap-1.5">
+              {device.macAddresses.map(m => (
+                <span key={m} className="font-mono text-xs px-2 py-0.5 bg-slate-100 rounded text-slate-700">{m}</span>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Snipe-IT custom fields */}
+        {snipeitSource && (
+          <div>
+            <div className="text-[11px] text-slate-400 uppercase font-medium mb-2">Snipe-IT Custom Fields</div>
+            {loadingDetail ? (
+              <p className="text-xs text-slate-400">Loading…</p>
+            ) : fieldEntries.length > 0 ? (
+              <div className="flex flex-col gap-1 max-h-64 overflow-y-auto">
+                {fieldEntries.map(([key, f]) => {
+                  const isMac = macKeySet.has(key);
+                  return (
+                    <div key={key} className={`flex items-center gap-3 px-2.5 py-1.5 rounded text-xs ${isMac ? 'bg-green-50 border border-green-200' : 'bg-slate-50'}`}>
+                      <span className="text-slate-500 flex-1 min-w-0 truncate">{f.field || key}</span>
+                      <span className={`font-mono truncate max-w-[200px] ${isMac ? 'text-green-800 font-semibold' : 'text-slate-700'}`}>{f.value}</span>
+                      {isMac && <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium shrink-0">MAC</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="text-xs text-slate-400 italic">No custom field values on this asset.</p>
+            )}
+          </div>
+        )}
+
+        {/* Sources */}
+        <div>
+          <div className="text-[11px] text-slate-400 uppercase font-medium mb-1">Sources</div>
+          <div className="flex flex-wrap gap-2">
+            {device.sources.map(s => (
+              <span key={s.source} className="text-xs text-slate-500 bg-slate-100 px-2 py-1 rounded">
+                {SOURCE_LABEL_MAP[s.source] || s.source}{s.syncedAt ? ` · ${new Date(s.syncedAt).toLocaleDateString()}` : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Devices table (shared for Google, Mosyle, Snipe-IT)
 // ---------------------------------------------------------------------------
-function DevicesTable({ source, search }) {
-  const [page, setPage]   = useState(1);
-  const [limit, setLimit] = useState(50);
+function DevicesTable({ source, search, snipeitMacFields = [] }) {
+  const [page, setPage]           = useState(1);
+  const [limit, setLimit]         = useState(50);
+  const [selectedDevice, setSelectedDevice] = useState(null);
 
   useEffect(() => { setPage(1); }, [source, search]); // reset paging when the filter changes
 
@@ -593,7 +691,7 @@ function DevicesTable({ source, search }) {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {devices.map(d=>(
-              <tr key={d.key} className="hover:bg-slate-50">
+              <tr key={d.key} className="hover:bg-slate-50 cursor-pointer" onClick={()=>setSelectedDevice(d)}>
                 <td className="px-3 py-2 font-medium text-slate-800 text-xs">{d.deviceName||'—'}</td>
                 <td className="px-3 py-2 text-xs text-slate-500">{d.deviceModel||'—'}</td>
                 <td className="px-3 py-2">
@@ -652,6 +750,13 @@ function DevicesTable({ source, search }) {
             </button>
           </div>
         </div>
+      )}
+      {selectedDevice && (
+        <DeviceDetailModal
+          device={selectedDevice}
+          onClose={()=>setSelectedDevice(null)}
+          snipeitMacFields={snipeitMacFields}
+        />
       )}
     </div>
   );
@@ -1730,17 +1835,60 @@ function MosyleSection({ status }) {
 // ---------------------------------------------------------------------------
 function SnipeitSection({ status }) {
   const qc = useQueryClient();
-  const [modal, setModal] = useState(null);
-  const [form, setForm]   = useState({ snipeit_url:'', snipeit_token:'', snipeit_client_id:'', snipeit_client_secret:'' });
+  const [modal, setModal]   = useState(null);
+  const [form, setForm]     = useState({ snipeit_url:'', snipeit_token:'', snipeit_client_id:'', snipeit_client_secret:'' });
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState(null);
-  const configured = status?.snipeit?.configured;
+  // MAC field mapping
+  const [macFieldKeys, setMacFieldKeys]       = useState(new Set());
+  const [discoveredFields, setDiscoveredFields] = useState([]);
+  const [loadingFields, setLoadingFields]     = useState(false);
+  const [fieldError, setFieldError]           = useState(null);
+  const configured  = status?.snipeit?.configured;
+  const savedMacFields = status?.snipeit?.macFields || [];
+
+  // Initialise MAC selection from saved status whenever the modal opens
+  useEffect(() => {
+    if (modal) {
+      setMacFieldKeys(new Set(savedMacFields));
+      setDiscoveredFields([]);
+      setFieldError(null);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modal]);
+
+  const discoverFields = async () => {
+    setLoadingFields(true);
+    setFieldError(null);
+    try {
+      const fields = await api.get('/integrations/snipeit/custom-fields');
+      setDiscoveredFields(fields);
+    } catch (e) {
+      setFieldError(e.message || 'Failed to load fields from Snipe-IT');
+    } finally {
+      setLoadingFields(false);
+    }
+  };
+
+  const toggleMacField = (key) => {
+    setMacFieldKeys(prev => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  };
+
+  // Before discovery runs, show already-saved keys as placeholder rows so the
+  // admin can see (and deselect) what was previously configured.
+  const displayFields = discoveredFields.length > 0
+    ? discoveredFields
+    : savedMacFields.map(k => ({ key: k, label: k, format: null }));
 
   const save = async () => {
     setSaving(true);
     setSaveError(null);
     try {
-      await api.put('/settings', form);
+      await api.put('/settings', { ...form, snipeit_mac_fields: JSON.stringify([...macFieldKeys]) });
       qc.invalidateQueries({queryKey:['integrations-status']});
       setModal(null);
     } catch (e) {
@@ -1760,8 +1908,18 @@ function SnipeitSection({ status }) {
           {configured && <SyncButton label="Sync inventory" endpoint="/integrations/sync/snipeit"/>}
         </div>
       </div>
+      {configured && savedMacFields.length === 0 && (
+        <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          No MAC address fields configured — open Settings to map which custom fields hold MAC addresses.
+        </p>
+      )}
+      {configured && savedMacFields.length > 0 && (
+        <p className="text-xs text-slate-500">
+          {savedMacFields.length} MAC field{savedMacFields.length !== 1 ? 's' : ''} configured
+        </p>
+      )}
       <ErrorBanner message={status?.snipeit?.lastError}/>
-      {configured && <DevicesTable source="snipeit"/>}
+      {configured && <DevicesTable source="snipeit" snipeitMacFields={savedMacFields}/>}
       {modal && (
         <Modal title="Snipe-IT Settings" onClose={()=>setModal(null)}>
           <div className="flex flex-col gap-3">
@@ -1778,6 +1936,49 @@ function SnipeitSection({ status }) {
                 <Field label="OAuth Client ID"><input className={INPUT} value={form.snipeit_client_id} onChange={e=>setForm(f=>({...f,snipeit_client_id:e.target.value}))}/></Field>
                 <Field label="OAuth Client Secret"><input type="password" className={INPUT} value={form.snipeit_client_secret} onChange={e=>setForm(f=>({...f,snipeit_client_secret:e.target.value}))}/></Field>
               </div>
+            </div>
+
+            {/* MAC Address Field Mapping */}
+            <div className="border-t border-slate-200 pt-3 mt-1">
+              <div className="flex items-center justify-between mb-1">
+                <p className="text-xs font-semibold text-slate-500 uppercase">MAC Address Fields</p>
+                <button
+                  onClick={discoverFields}
+                  disabled={loadingFields}
+                  className="text-xs text-primary-600 hover:text-primary-800 underline disabled:opacity-50"
+                >
+                  {loadingFields ? 'Loading…' : discoveredFields.length > 0 ? 'Reload fields' : 'Discover custom fields'}
+                </button>
+              </div>
+              <p className="text-[11px] text-slate-400 mb-3">
+                Select every custom field that holds a MAC address. Multiple fields are supported (e.g. one for wired NIC, one for wireless).
+              </p>
+              {fieldError && <p className="text-xs text-red-500 mb-2">{fieldError}</p>}
+              {displayFields.length > 0 ? (
+                <div className="flex flex-col gap-1 max-h-52 overflow-y-auto border border-slate-200 rounded-lg p-2">
+                  {displayFields.map(f => (
+                    <label key={f.key} className="flex items-center gap-2 cursor-pointer hover:bg-slate-50 rounded px-1 py-0.5">
+                      <input
+                        type="checkbox"
+                        checked={macFieldKeys.has(f.key)}
+                        onChange={() => toggleMacField(f.key)}
+                        className="rounded border-slate-300 accent-primary-600"
+                      />
+                      <span className="text-xs text-slate-700 flex-1">{f.label}</span>
+                      {f.format && (
+                        <span className={`text-[10px] px-1.5 py-0.5 rounded font-mono ${f.format === 'MAC' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {f.format}
+                        </span>
+                      )}
+                    </label>
+                  ))}
+                </div>
+              ) : !fieldError && (
+                <p className="text-[11px] text-slate-400 italic">
+                  Click "Discover custom fields" to pull your Snipe-IT field list.
+                  {!configured && ' Save your connection settings first.'}
+                </p>
+              )}
             </div>
           </div>
           {saveError && <p className="text-red-500 text-xs mt-2">{saveError}</p>}
@@ -1920,7 +2121,7 @@ function IpamImportSection() {
 // ---------------------------------------------------------------------------
 // All-devices view
 // ---------------------------------------------------------------------------
-function AllDevicesTab() {
+function AllDevicesTab({ snipeitMacFields = [] }) {
   const [sourceFilter, setSourceFilter] = useState('');
   const [search, setSearch] = useState('');
 
@@ -1943,7 +2144,7 @@ function AllDevicesTab() {
           placeholder="Search name, serial, or assigned user…"
           className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm flex-1 max-w-sm focus:outline-none focus:ring-1 focus:ring-primary-500"/>
       </div>
-      <DevicesTable source={sourceFilter||null} search={search||null}/>
+      <DevicesTable source={sourceFilter||null} search={search||null} snipeitMacFields={snipeitMacFields}/>
     </div>
   );
 }
@@ -2024,7 +2225,7 @@ export default function IntegrationsPage() {
         </div>
       )}
 
-      {tab==='All Devices'        && <AllDevicesTab/>}
+      {tab==='All Devices'        && <AllDevicesTab snipeitMacFields={status?.snipeit?.macFields || []}/>}
       {tab==='Google Workspace'   && <GoogleWorkspaceTab status={status}/>}
       {tab==='Mosyle'             && <MosyleSection status={status}/>}
       {tab==='Snipe-IT'           && <SnipeitSection status={status}/>}

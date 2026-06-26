@@ -28,7 +28,8 @@ router.get('/status', ...auth, async (req, res) => {
          'last_mosyle_error','last_snipeit_error','last_zammad_error','last_google_error',
          'last_google_devices_sync','last_google_devices_error',
          'google_client_id','google_client_secret',
-         'google_service_account_json','google_superadmin_email'
+         'google_service_account_json','google_superadmin_email',
+         'snipeit_mac_fields'
        )`
     ),
     pool.query(`SELECT source, COUNT(*) AS count FROM integration_devices GROUP BY source`),
@@ -49,7 +50,7 @@ router.get('/status', ...auth, async (req, res) => {
   res.json({
     zammad:   { configured: !!(cfg.zammad_url && cfg.zammad_token),    lastSync: cfg.last_zammad_sync  || null, lastError: cfg.last_zammad_error  || null },
     mosyle:   { configured: !!(cfg.mosyle_access_token && cfg.mosyle_email && cfg.mosyle_password), lastSync: cfg.last_mosyle_sync  || null, lastError: cfg.last_mosyle_error  || null, deviceCount: deviceCount.mosyle  ?? 0 },
-    snipeit:  { configured: !!(cfg.snipeit_url && (cfg.snipeit_token || (cfg.snipeit_client_id && cfg.snipeit_client_secret))), lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0 },
+    snipeit:  { configured: !!(cfg.snipeit_url && (cfg.snipeit_token || (cfg.snipeit_client_id && cfg.snipeit_client_secret))), lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0, macFields: (() => { try { return JSON.parse(cfg.snipeit_mac_fields || '[]'); } catch { return []; } })() },
     google:   { configured: googleSyncConfigured, lastSync: cfg.last_google_sync || null, lastError: cfg.last_google_error || null },
     googleDevices: { configured: googleSyncConfigured, lastSync: cfg.last_google_devices_sync || null, lastError: cfg.last_google_devices_error || null, deviceCount: deviceCount.google_admin ?? 0 },
   });
@@ -113,6 +114,20 @@ router.get('/devices/:id', ...auth, async (req, res) => {
     res.json({ ...rows[0], tickets });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Snipe-IT — discover custom fields so the admin can mark which ones hold MACs
+// ---------------------------------------------------------------------------
+
+// GET /api/v1/integrations/snipeit/custom-fields
+router.get('/snipeit/custom-fields', ...auth, async (req, res) => {
+  try {
+    const fields = await snipeit.listCustomFields();
+    res.json(fields);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
   }
 });
 

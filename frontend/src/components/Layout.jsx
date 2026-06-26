@@ -591,7 +591,7 @@ export default function Layout() {
         {isStaff && <FilterBypassBanner socket={socket} navigate={navigate} />}
         {isStaff && <InternetHealthBanner socket={socket} navigate={navigate} />}
         {isSuperAdmin && <HaAutoPromoteBanner socket={socket} navigate={navigate} />}
-        <main className="flex-1 overflow-auto bg-slate-100">
+        <main className="flex-1 overflow-auto bg-slate-100 pb-20">
           <Outlet />
         </main>
         <ContextualHelpButton navigate={navigate} />
