@@ -392,9 +392,11 @@ async function detectCertDate() {
 router.get('/apple/cert-status', async (req, res) => {
   try {
     const { rows: settingRows } = await pool.query(
-      `SELECT value FROM settings WHERE key = 'apns_cert_replaced_on'`
+      `SELECT key, value FROM settings WHERE key IN ('apns_cert_replaced_on','apns_cert_apple_id')`
     );
-    const manualDate = settingRows[0]?.value || null;
+    const settings   = Object.fromEntries(settingRows.map(r => [r.key, r.value]));
+    const manualDate = settings.apns_cert_replaced_on || null;
+    const appleId    = settings.apns_cert_apple_id    || null;
 
     let certDate     = manualDate;
     let autoDetected = false;
@@ -404,7 +406,7 @@ router.get('/apple/cert-status', async (req, res) => {
     }
 
     if (!certDate) {
-      return res.json({ certDate: null, autoDetected: false, summary: null, oldCertDevices: [] });
+      return res.json({ certDate: null, autoDetected: false, appleId, summary: null, oldCertDevices: [] });
     }
 
     const { rows: devices } = await pool.query(`
@@ -442,7 +444,7 @@ router.get('/apple/cert-status', async (req, res) => {
       }
     }
 
-    res.json({ certDate, autoDetected, summary, oldCertDevices });
+    res.json({ certDate, autoDetected, appleId, summary, oldCertDevices });
   } catch (err) {
     console.error('[fleet] cert-status:', err);
     res.status(500).json({ error: err.message });
@@ -451,7 +453,7 @@ router.get('/apple/cert-status', async (req, res) => {
 
 router.put('/apple/cert-status/threshold', async (req, res) => {
   try {
-    const { certDate } = req.body;
+    const { certDate, appleId } = req.body;
     if (certDate && !/^\d{4}-\d{2}-\d{2}$/.test(certDate)) {
       return res.status(400).json({ error: 'Invalid date format (YYYY-MM-DD)' });
     }
@@ -460,6 +462,13 @@ router.put('/apple/cert-status/threshold', async (req, res) => {
        ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
       [certDate || null]
     );
+    if (appleId !== undefined) {
+      await pool.query(
+        `INSERT INTO settings (key, value, updated_at) VALUES ('apns_cert_apple_id',$1,NOW())
+         ON CONFLICT (key) DO UPDATE SET value=$1, updated_at=NOW()`,
+        [appleId || null]
+      );
+    }
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

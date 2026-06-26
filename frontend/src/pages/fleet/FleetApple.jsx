@@ -171,9 +171,11 @@ function exportCsv(devices, certDate) {
 
 function CertStatusView() {
   const qc = useQueryClient();
-  const [dateInput, setDateInput] = useState('');
-  const [osFilter,  setOsFilter]  = useState('');
-  const [search,    setSearch]    = useState('');
+  const [dateInput,    setDateInput]    = useState('');
+  const [appleIdInput, setAppleIdInput] = useState('');
+  const [osFilter,     setOsFilter]     = useState('');
+  const [search,       setSearch]       = useState('');
+  const [showHelp,     setShowHelp]     = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['fleet-apple-cert'],
@@ -182,20 +184,19 @@ function CertStatusView() {
   });
 
   const saveMutation = useMutation({
-    mutationFn: (certDate) => api.put('/fleet/apple/cert-status/threshold', { certDate }),
+    mutationFn: ({ certDate, appleId }) => api.put('/fleet/apple/cert-status/threshold', { certDate, appleId }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['fleet-apple-cert'] });
       setDateInput('');
+      setAppleIdInput('');
     },
   });
 
   const certDate     = data?.certDate     || null;
   const autoDetected = data?.autoDetected || false;
+  const appleId      = data?.appleId      || null;
   const summary      = data?.summary      || null;
   const allOld       = data?.oldCertDevices || [];
-
-  // Initialise date input from loaded value when not editing
-  const displayDate = dateInput || certDate || '';
 
   const filtered = allOld.filter(d => {
     if (osFilter && d.osType !== osFilter) return false;
@@ -211,82 +212,162 @@ function CertStatusView() {
     return true;
   });
 
+  const handleSave = () => {
+    saveMutation.mutate({
+      certDate: dateInput || certDate || null,
+      appleId:  appleIdInput !== '' ? appleIdInput : appleId,
+    });
+  };
+
   return (
     <div className="space-y-5">
 
-      {/* Threshold setting */}
+      {/* Renew vs Replace explainer */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
+        <button
+          className="w-full flex items-start justify-between gap-3 text-left"
+          onClick={() => setShowHelp(h => !h)}
+        >
+          <div className="flex items-start gap-2">
+            <MdiIcon path={mdiCertificateOutline} size="1.1em" className="text-blue-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold text-blue-900 text-sm">Renewed vs. Replaced — not the same thing</p>
+              <p className="text-blue-700 text-xs mt-0.5">
+                Only a certificate <span className="font-semibold">replacement</span> requires wiping all devices. Click for details.
+              </p>
+            </div>
+          </div>
+          <span className="text-blue-600 text-lg flex-shrink-0">{showHelp ? '▲' : '▼'}</span>
+        </button>
+
+        {showHelp && (
+          <div className="mt-3 pt-3 border-t border-blue-200 grid sm:grid-cols-2 gap-4 text-sm">
+            <div className="bg-white/70 rounded-lg p-3">
+              <p className="font-semibold text-green-700 mb-1">✓ Renewed (same push topic)</p>
+              <p className="text-slate-600 text-xs">
+                You clicked <strong>Renew</strong> on an existing certificate in the Apple Push Certificates Portal.
+                The push topic stays the same — all enrolled devices continue to receive MDM commands normally.
+                No device action required.
+              </p>
+            </div>
+            <div className="bg-white/70 rounded-lg p-3">
+              <p className="font-semibold text-red-700 mb-1">⚠ Replaced (new push topic)</p>
+              <p className="text-slate-600 text-xs">
+                You created a <strong>new</strong> certificate (different Apple ID, or the old one expired/was revoked and you
+                couldn't renew it). The push topic changes — Mosyle can no longer send MDM commands to any
+                previously-enrolled device. Every device must be wiped and re-enrolled.
+              </p>
+            </div>
+            <div className="sm:col-span-2 bg-white/70 rounded-lg p-3">
+              <p className="font-semibold text-slate-700 mb-1">Where to find the date and Apple ID</p>
+              <p className="text-slate-600 text-xs">
+                Go to <strong>Mosyle Manager → Settings → MDM Settings</strong> and look for the Push Certificate section —
+                it shows the Apple ID and creation/expiry dates. You can also check the
+                <strong> Apple Push Certificates Portal</strong> (identity.apple.com/pushcert) — the certificate history
+                shows exactly when each cert was created and under which Apple ID. Use the <strong>Created</strong> date
+                of your current certificate as the replacement date below.
+              </p>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Cert date + Apple ID setting */}
       <div className="card p-5">
-        <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="flex items-start justify-between gap-4 flex-wrap mb-4">
           <div>
             <h3 className="font-semibold text-slate-900 flex items-center gap-2">
-              <MdiIcon path={mdiCertificateOutline} size="1em" className="text-primary-600" />
-              Push Certificate Replacement Date
+              Certificate Details
             </h3>
-            <p className="text-sm text-slate-500 mt-1 max-w-xl">
-              Devices enrolled on or after this date are on your current APNS certificate and can receive
-              MDM push commands. Devices enrolled before this date need to be wiped and re-enrolled.
+            <p className="text-sm text-slate-500 mt-0.5">
+              Enter the date your current APNS certificate was <em>created</em> (not renewed) and the Apple ID used.
             </p>
           </div>
           {certDate && (
-            <div className={`text-xs font-semibold px-2.5 py-1 rounded-full flex items-center gap-1 ${
-              autoDetected ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700'
+            <div className={`text-xs font-semibold px-2.5 py-1 rounded-full flex items-center gap-1 flex-shrink-0 ${
+              autoDetected ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'
             }`}>
-              <MdiIcon path={autoDetected ? mdiAutorenew : mdiCheckCircle} size="0.8em" />
-              {autoDetected ? 'Auto-detected' : 'Manually set'}
+              <MdiIcon path={autoDetected ? mdiAlertCircle : mdiCheckCircle} size="0.8em" />
+              {autoDetected ? 'Estimated — verify this date' : 'Manually set'}
             </div>
           )}
         </div>
 
-        <div className="mt-4 flex items-center gap-3 flex-wrap">
-          <div className="flex items-center gap-2 flex-1 min-w-48 max-w-64">
-            <MdiIcon path={mdiCalendar} size="1em" className="text-slate-400 flex-shrink-0" />
+        <div className="grid sm:grid-cols-2 gap-4">
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+              Certificate Created On
+            </span>
+            <div className="flex items-center gap-2">
+              <MdiIcon path={mdiCalendar} size="1em" className="text-slate-400 flex-shrink-0" />
+              <input
+                type="date"
+                className="input flex-1"
+                value={dateInput || certDate || ''}
+                onChange={e => setDateInput(e.target.value)}
+              />
+            </div>
+            {autoDetected && certDate && !dateInput && (
+              <p className="text-xs text-amber-600">
+                Estimated from enrollment spike — may not be accurate. Verify against your cert portal.
+              </p>
+            )}
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-xs font-semibold text-slate-600 uppercase tracking-wide">
+              Apple ID Used to Create Cert
+            </span>
             <input
-              type="date"
-              className="input flex-1"
-              value={displayDate}
-              onChange={e => setDateInput(e.target.value)}
-              placeholder="YYYY-MM-DD"
+              type="email"
+              className="input"
+              placeholder="e.g. mdm-admin@district.org"
+              value={appleIdInput || appleId || ''}
+              onChange={e => setAppleIdInput(e.target.value)}
             />
-          </div>
+            <p className="text-xs text-slate-400">
+              The Apple ID shown in Mosyle MDM Settings or the Push Certificates Portal.
+            </p>
+          </label>
+        </div>
+
+        <div className="mt-4 flex items-center gap-3 flex-wrap">
           <button
             className="btn btn-primary btn-sm"
-            disabled={!dateInput || saveMutation.isPending}
-            onClick={() => saveMutation.mutate(dateInput)}
+            disabled={(!dateInput && !appleIdInput) || saveMutation.isPending}
+            onClick={handleSave}
           >
-            {saveMutation.isPending ? 'Saving…' : 'Set Date'}
+            {saveMutation.isPending ? 'Saving…' : 'Save'}
           </button>
           {certDate && (
             <button
               className="btn btn-secondary btn-sm"
               disabled={saveMutation.isPending}
-              onClick={() => { setDateInput(''); saveMutation.mutate(null); }}
+              onClick={() => {
+                setDateInput('');
+                setAppleIdInput('');
+                saveMutation.mutate({ certDate: null, appleId: null });
+              }}
             >
-              Reset to Auto-Detect
+              Clear
             </button>
-          )}
-          {autoDetected && certDate && !dateInput && (
-            <span className="text-sm text-blue-600 font-medium">
-              Auto-detected: {new Date(certDate).toLocaleDateString()}
-            </span>
-          )}
-          {!autoDetected && certDate && !dateInput && (
-            <span className="text-sm text-green-700 font-medium">
-              Cert replaced: {new Date(certDate).toLocaleDateString()}
-            </span>
           )}
         </div>
 
-        {autoDetected && (
-          <p className="mt-3 text-xs text-blue-600 bg-blue-50 rounded-lg px-3 py-2">
-            Auto-detection found the first significant enrollment spike in your Mosyle history.
-            If this date looks wrong, enter the actual cert replacement date above and click Set Date.
-          </p>
-        )}
-        {!certDate && !isLoading && (
-          <p className="mt-3 text-xs text-amber-700 bg-amber-50 rounded-lg px-3 py-2">
-            No enrollment spike detected yet — Mosyle sync may not have run, or all devices are enrolled
-            at roughly the same rate. Enter the cert replacement date manually to proceed.
-          </p>
+        {/* Current saved values summary */}
+        {certDate && !dateInput && (
+          <div className="mt-4 pt-4 border-t border-slate-100 flex flex-wrap gap-4 text-sm">
+            <div>
+              <span className="text-xs text-slate-400 uppercase tracking-wide">Cert created</span>
+              <p className="font-semibold text-slate-800 mt-0.5">{new Date(certDate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
+            </div>
+            {appleId && (
+              <div>
+                <span className="text-xs text-slate-400 uppercase tracking-wide">Apple ID</span>
+                <p className="font-semibold text-slate-800 mt-0.5">{appleId}</p>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
