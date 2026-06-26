@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
@@ -30,6 +30,85 @@ function UtilBar({ used, total }) {
       <span className="text-xs text-slate-500">
         {total != null ? `${used ?? 0}/${total}` : '—'}
       </span>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Router setup checklist — collapsible, remembers dismissed state
+// ---------------------------------------------------------------------------
+const STEPS = [
+  {
+    n: 1,
+    title: 'Enable IPv6 on your router/LAN',
+    detail: `In your router's IPv6 settings, choose "DHCPv6" or "Stateful DHCPv6" mode for the LAN (not SLAAC-only). The router handles routing and RA; ClassGuard handles address assignment and DNS.`,
+  },
+  {
+    n: 2,
+    title: 'Set the Managed flag (M-flag) in Router Advertisements',
+    detail: 'This is the critical step. The M-flag tells IPv6 clients "use DHCPv6 to get your address" instead of self-assigning via SLAAC. Without it, devices will pick their own addresses and ignore ClassGuard\'s DHCPv6 server entirely. In UniFi: IPv6 → LAN → RA → Mode: Managed.',
+  },
+  {
+    n: 3,
+    title: 'Point the DHCPv6 DNS server to ClassGuard\'s IPv6 address',
+    detail: 'In each subnet you create below, set DNS Servers to ClassGuard\'s own IPv6 address (the address this server is reachable on over IPv6). This is what routes clients\' DNS queries through ClassGuard\'s filter. Without this, clients will use a different DNS server and bypass filtering for IPv6 traffic.',
+  },
+  {
+    n: 4,
+    title: 'Verify with a client device',
+    detail: 'After saving a subnet and syncing to Kea, connect a device and check its IPv6 configuration. It should show a DHCPv6-assigned address (not a privacy/SLAAC address) and ClassGuard\'s IPv6 address as its DNS server. The Active Leases tab will show the device\'s lease once it connects.',
+  },
+];
+
+function RouterSetupNotice() {
+  const storageKey = 'dhcpv6-setup-notice-dismissed';
+  const [open, setOpen] = useState(() => localStorage.getItem(storageKey) !== '1');
+
+  function dismiss() {
+    localStorage.setItem(storageKey, '1');
+    setOpen(false);
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => { localStorage.removeItem(storageKey); setOpen(true); }}
+        className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 mb-4 hover:bg-amber-100 transition-colors">
+        <span className="font-medium">Router setup required</span>
+        <span className="text-amber-500">— click to review checklist</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="bg-amber-50 border border-amber-300 rounded-xl p-5 mb-5 shadow-sm">
+      <div className="flex items-start justify-between gap-4 mb-3">
+        <div>
+          <h3 className="font-semibold text-amber-900 text-base">Router Setup Required</h3>
+          <p className="text-xs text-amber-700 mt-0.5">
+            ClassGuard handles address assignment and DNS — your router stays in charge of routing.
+            Complete these steps before DHCPv6 will work on client devices.
+          </p>
+        </div>
+        <button onClick={dismiss}
+          className="text-xs text-amber-600 hover:text-amber-900 flex-shrink-0 underline underline-offset-2 mt-0.5">
+          Dismiss
+        </button>
+      </div>
+
+      <ol className="space-y-3">
+        {STEPS.map(s => (
+          <li key={s.n} className="flex gap-3">
+            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-amber-200 text-amber-900 text-xs font-bold flex items-center justify-center mt-0.5">
+              {s.n}
+            </span>
+            <div>
+              <p className="text-sm font-medium text-amber-900">{s.title}</p>
+              <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">{s.detail}</p>
+            </div>
+          </li>
+        ))}
+      </ol>
     </div>
   );
 }
@@ -640,11 +719,7 @@ export default function DhcpV6Management() {
         </button>
       </div>
 
-      <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-3 mb-4">
-        <p className="text-xs text-blue-800">
-          <strong>Router setup required:</strong> Your router must send IPv6 Router Advertisements with the Managed (M) flag set so clients request addresses via DHCPv6 instead of self-assigning via SLAAC. The DNS server address clients receive here must be ClassGuard's own IPv6 address — set it per-subnet in the Subnets tab.
-        </p>
-      </div>
+      <RouterSetupNotice />
 
       <div className="flex gap-1 border-b border-slate-200 mb-4">
         {TABS.map(t => (
