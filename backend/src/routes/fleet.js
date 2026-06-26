@@ -631,22 +631,24 @@ router.post('/apple/cert-status/import-csv', upload.single('file'), async (req, 
     // This lets re-enrolled devices rejoin the main 802.1X network without a
     // separate manual unblock step.
     const { rows: newlyConverted } = await pool.query(
-      `SELECT raw_data->>'wifi_mac_address' as wifi_mac
+      `SELECT raw_data->>'wifi_mac_address'     as wifi_mac,
+              raw_data->>'ethernet_mac_address' as eth_mac
        FROM integration_devices
        WHERE source = 'mosyle' AND apns_cert_ok = true`
     );
 
     let unblocked = 0;
     for (const d of newlyConverted) {
-      const mac = normaliseMac(d.wifi_mac);
-      if (!mac) continue;
-      const { rowCount: ub } = await pool.query(
-        `UPDATE radius_devices
-         SET status = 'approved', notes = 'Re-enrolled under new APNS certificate', updated_at = NOW()
-         WHERE mac_address = $1 AND status = 'blocked' AND notes LIKE 'APNS%'`,
-        [mac]
-      );
-      unblocked += ub;
+      const macs = [normaliseMac(d.wifi_mac), normaliseMac(d.eth_mac)].filter(Boolean);
+      for (const mac of macs) {
+        const { rowCount: ub } = await pool.query(
+          `UPDATE radius_devices
+           SET status = 'approved', notes = 'Re-enrolled under new APNS certificate', updated_at = NOW()
+           WHERE mac_address = $1 AND status = 'blocked' AND notes LIKE 'APNS%'`,
+          [mac]
+        );
+        unblocked += ub;
+      }
     }
 
     const { rows: totals } = await pool.query(
@@ -734,7 +736,9 @@ function normaliseMac(raw) {
 router.post('/apple/cert-status/block-wifi', async (req, res) => {
   try {
     const { rows: devices } = await pool.query(
-      `SELECT id, device_name, os_type, raw_data->>'wifi_mac_address' as wifi_mac
+      `SELECT id, device_name, os_type,
+              raw_data->>'wifi_mac_address'     as wifi_mac,
+              raw_data->>'ethernet_mac_address' as eth_mac
        FROM integration_devices
        WHERE source = 'mosyle' AND apns_cert_ok = false`
     );
@@ -742,20 +746,22 @@ router.post('/apple/cert-status/block-wifi', async (req, res) => {
     let blocked = 0, skipped = 0;
 
     for (const d of devices) {
-      const mac = normaliseMac(d.wifi_mac);
-      if (!mac) { skipped++; continue; }
+      const macs = [normaliseMac(d.wifi_mac), normaliseMac(d.eth_mac)].filter(Boolean);
+      if (!macs.length) { skipped++; continue; }
 
-      await pool.query(
-        `INSERT INTO radius_devices
-           (mac_address, device_name, device_type, status, source, source_device_id, notes)
-         VALUES ($1,$2,$3,'blocked','mosyle',$4,'APNS certificate expired — re-enrollment required')
-         ON CONFLICT (mac_address) DO UPDATE SET
-           status = 'blocked',
-           notes  = 'APNS certificate expired — re-enrollment required',
-           updated_at = NOW()`,
-        [mac, d.device_name, osTypeToDeviceType(d.os_type), d.id]
-      );
-      blocked++;
+      for (const mac of macs) {
+        await pool.query(
+          `INSERT INTO radius_devices
+             (mac_address, device_name, device_type, status, source, source_device_id, notes)
+           VALUES ($1,$2,$3,'blocked','mosyle',$4,'APNS certificate expired — re-enrollment required')
+           ON CONFLICT (mac_address) DO UPDATE SET
+             status = 'blocked',
+             notes  = 'APNS certificate expired — re-enrollment required',
+             updated_at = NOW()`,
+          [mac, d.device_name, osTypeToDeviceType(d.os_type), d.id]
+        );
+        blocked++;
+      }
     }
 
     res.json({ ok: true, blocked, skipped });
@@ -773,25 +779,24 @@ router.post('/apple/cert-status/block-wifi', async (req, res) => {
 router.post('/apple/cert-status/unblock-wifi', async (req, res) => {
   try {
     const { rows: devices } = await pool.query(
-      `SELECT raw_data->>'wifi_mac_address' as wifi_mac
+      `SELECT raw_data->>'wifi_mac_address'     as wifi_mac,
+              raw_data->>'ethernet_mac_address' as eth_mac
        FROM integration_devices
        WHERE source = 'mosyle' AND apns_cert_ok = true`
     );
 
     let unblocked = 0;
     for (const d of devices) {
-      const mac = normaliseMac(d.wifi_mac);
-      if (!mac) continue;
-
-      const { rowCount } = await pool.query(
-        `UPDATE radius_devices
-         SET status = 'approved', notes = 'Re-enrolled under new APNS certificate', updated_at = NOW()
-         WHERE mac_address = $1
-           AND status = 'blocked'
-           AND notes LIKE 'APNS%'`,
-        [mac]
-      );
-      unblocked += rowCount;
+      const macs = [normaliseMac(d.wifi_mac), normaliseMac(d.eth_mac)].filter(Boolean);
+      for (const mac of macs) {
+        const { rowCount } = await pool.query(
+          `UPDATE radius_devices
+           SET status = 'approved', notes = 'Re-enrolled under new APNS certificate', updated_at = NOW()
+           WHERE mac_address = $1 AND status = 'blocked' AND notes LIKE 'APNS%'`,
+          [mac]
+        );
+        unblocked += rowCount;
+      }
     }
 
     res.json({ ok: true, unblocked });

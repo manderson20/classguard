@@ -134,7 +134,7 @@ async function syncDevices() {
     const os      = d.os_version    || d.OSVersion      || null;
     const user    = d.user_email    || null;
     const status  = d.device_status || d.status         || null;
-    const macs    = [d.wifi_mac_address, d.bluetooth_mac].filter(Boolean);
+    const macs    = [d.wifi_mac_address, d.ethernet_mac_address, d.bluetooth_mac_address].filter(Boolean);
     const ips     = [d.last_ip_address].filter(Boolean);
 
     // Mosyle returns os='mac' for Macs, os='ios' for both iPhones and iPads (differentiated by name)
