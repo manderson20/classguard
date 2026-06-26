@@ -66,6 +66,10 @@ import VpnPage             from './pages/admin/VpnPage';
 import StaffAnalyticsPage  from './pages/admin/StaffAnalyticsPage';
 import ScreenTimePage      from './pages/admin/ScreenTimePage';
 import BellSchedulePage    from './pages/admin/BellSchedulePage';
+import InfosecIqDashboard      from './pages/admin/infoseciq/InfosecIqDashboard';
+import InfosecIqLearners       from './pages/admin/infoseciq/InfosecIqLearners';
+import InfosecIqCampaigns      from './pages/admin/infoseciq/InfosecIqCampaigns';
+import InfosecIqCampaignDetail from './pages/admin/infoseciq/InfosecIqCampaignDetail';
 
 // Fleet pages
 import FleetOverview    from './pages/fleet/FleetOverview';
@@ -189,6 +193,12 @@ export default function App() {
           <Route path="/fleet/cross-sync"   element={<FleetCrossSync />} />
           <Route path="/fleet/offline"      element={<FleetOffline />} />
           <Route path="/fleet/lifecycle"    element={<FleetLifecycle />} />
+
+          {/* Infosec IQ */}
+          <Route path="/admin/infoseciq"                    element={<InfosecIqDashboard />} />
+          <Route path="/admin/infoseciq/learners"           element={<InfosecIqLearners />} />
+          <Route path="/admin/infoseciq/campaigns"          element={<InfosecIqCampaigns />} />
+          <Route path="/admin/infoseciq/campaigns/:id"      element={<InfosecIqCampaignDetail />} />
         </Route>
       </Route>
 

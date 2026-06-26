@@ -51,6 +51,7 @@ import {
   mdiWifiOff,
   mdiCalendarClock,
   mdiMonitor,
+  mdiShieldCheckOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -382,6 +383,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/safety-alerts',     icon: mdiBellAlertOutline, label: 'Safety Alerts',   permissionKey: 'safety_alerts' },
       { to: '/admin/filter-bypass',     icon: mdiWifiAlert,     label: 'Filter Bypass Alerts', permissionKey: 'safety_alerts' },
       { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true, permissionKey: 'unblock_requests' },
+      { to: '/admin/infoseciq',         icon: mdiShieldCheckOutline, label: 'Infosec IQ' },
     ],
   },
   {
