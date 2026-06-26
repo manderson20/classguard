@@ -2117,6 +2117,11 @@ function IpamSearchResults({ query, onGoToSubnet }) {
     },
   });
 
+  const deleteIp = useMutation({
+    mutationFn: r => api.delete(`/ipam/ipam-subnets/${r.subnet_id}/addresses/${r.id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ipam-search', query] }),
+  });
+
   const ips     = data?.ips     ?? [];
   const subnets = data?.subnets ?? [];
 
@@ -2213,6 +2218,11 @@ function IpamSearchResults({ query, onGoToSubnet }) {
                       <button onClick={() => openEdit(r)}
                         className="text-xs text-primary-600 hover:underline mr-3">
                         Edit
+                      </button>
+                      <button
+                        onClick={() => { if (confirm(`Delete ${r.ip}?`)) deleteIp.mutate(r); }}
+                        className="text-xs text-red-500 hover:underline mr-3">
+                        Delete
                       </button>
                       <button onClick={() => onGoToSubnet(r.subnet_id)}
                         className="text-xs text-slate-400 hover:text-slate-600 hover:underline">
