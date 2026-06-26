@@ -442,12 +442,12 @@ export default function FleetChromebooks() {
         </div>
       )}
 
-      {/* Filter bar */}
+      {/* AUP filter bar */}
       <div className="flex flex-wrap gap-1 mb-4 items-center">
         {STATUS_TABS.map(tab => (
           <button
             key={tab.value}
-            onClick={() => { setStatusFilter(tab.value); setSelected(new Set()); }}
+            onClick={() => { setStatusFilter(tab.value); setShowLicenseOnly(false); setSelected(new Set()); }}
             className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               statusFilter === tab.value && !showLicenseOnly
                 ? 'bg-primary-600 text-white'
@@ -459,7 +459,7 @@ export default function FleetChromebooks() {
         ))}
         <span className="w-px h-5 bg-slate-200 mx-1" />
         <button
-          onClick={() => { setShowLicenseOnly(v => !v); setSelected(new Set()); }}
+          onClick={() => { setShowLicenseOnly(v => !v); setStatusFilter(''); setSelected(new Set()); }}
           className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors flex items-center gap-1 ${
             showLicenseOnly
               ? 'bg-orange-500 text-white'
@@ -483,7 +483,7 @@ export default function FleetChromebooks() {
         {GOOGLE_STATUS_TABS.map(tab => (
           <button
             key={tab.value}
-            onClick={() => { setGoogleStatusFilter(tab.value); setSelected(new Set()); }}
+            onClick={() => { setGoogleStatusFilter(tab.value); setShowLicenseOnly(false); setSelected(new Set()); }}
             className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
               googleStatusFilter === tab.value
                 ? 'bg-slate-700 text-white'
