@@ -210,11 +210,31 @@ router.post('/sync/google-devices', ...auth, async (req, res) => {
 // Zammad tickets
 // ---------------------------------------------------------------------------
 
-// GET /api/v1/integrations/tickets?state=&page=
+// GET /api/v1/integrations/zammad/test — verify credentials
+router.get('/zammad/test', ...auth, async (req, res) => {
+  try {
+    const info = await zammad.testConnection();
+    res.json({ ok: true, ...info });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.response?.data?.error || err.message });
+  }
+});
+
+// GET /api/v1/integrations/zammad/groups — list available groups for ticket creation
+router.get('/zammad/groups', ...auth, async (req, res) => {
+  try {
+    const groups = await zammad.getGroups();
+    res.json(groups);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// GET /api/v1/integrations/tickets?page=
 router.get('/tickets', ...auth, async (req, res) => {
   try {
-    const { page = 1, state } = req.query;
-    const rows = await zammad.listTickets({ page: parseInt(page, 10), state });
+    const { page = 1 } = req.query;
+    const rows = await zammad.listTickets({ page: parseInt(page, 10) });
     res.json(rows);
   } catch (err) {
     res.status(502).json({ error: err.message });

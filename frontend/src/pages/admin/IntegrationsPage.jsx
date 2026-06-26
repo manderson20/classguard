@@ -93,95 +93,230 @@ function SyncButton({ label, endpoint }) {
 // ---------------------------------------------------------------------------
 // Zammad tab
 // ---------------------------------------------------------------------------
+const STATE_COLOR = {
+  new:               'bg-blue-100 text-blue-700',
+  open:              'bg-green-100 text-green-700',
+  'pending reminder':'bg-amber-100 text-amber-700',
+  'pending close':   'bg-amber-100 text-amber-700',
+  closed:            'bg-slate-100 text-slate-500',
+  merged:            'bg-purple-100 text-purple-700',
+};
+
 function ZammadSection({ status }) {
   const qc = useQueryClient();
-  const [modal, setModal] = useState(null);
-  const [form, setForm]   = useState({ title:'', customer_email:'', description:'' });
+  const [modal, setModal]     = useState(null);
+  const [form, setForm]       = useState({ title:'', customer:'', body:'', group:'Users', priority:'2 normal' });
   const [settings, setSettings] = useState({ zammad_url:'', zammad_token:'' });
-  const [saving, setSaving] = useState(false);
+  const [testResult, setTestResult] = useState(null);
+  const [testing, setTesting] = useState(false);
+  const [saving, setSaving]   = useState(false);
   const [saveError, setSaveError] = useState(null);
   const configured = status?.zammad?.configured;
+  const fmtDate = d => d ? new Date(d).toLocaleString() : '—';
 
-  const { data: tickets = [] } = useQuery({ queryKey:['tickets'], queryFn:()=>api.get('/integrations/tickets'), enabled: !!configured });
-
-  const create = useMutation({
-    mutationFn: () => api.post('/integrations/tickets', form),
-    onSuccess: () => { qc.invalidateQueries({queryKey:['tickets']}); setModal(null); },
+  const { data: tickets = [], isFetching: ticketsFetching } = useQuery({
+    queryKey: ['zammad-tickets'],
+    queryFn:  () => api.get('/integrations/tickets'),
+    enabled:  !!configured,
   });
 
-  const saveSettings = async () => {
+  const { data: groups = [] } = useQuery({
+    queryKey: ['zammad-groups'],
+    queryFn:  () => api.get('/integrations/zammad/groups'),
+    enabled:  !!configured,
+  });
+
+  const create = useMutation({
+    mutationFn: () => api.post('/integrations/tickets', {
+      title:         form.title,
+      body:          form.body,
+      customerEmail: form.customer,
+      group:         form.group,
+      priority:      form.priority,
+    }),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['zammad-tickets']}); setModal(null); },
+  });
+
+  function openSettings() {
+    // Load current saved values
+    api.get('/settings').then(s => {
+      setSettings({ zammad_url: s.zammad_url || '', zammad_token: s.zammad_token || '' });
+    }).catch(() => {});
+    setTestResult(null);
+    setModal('settings');
+  }
+
+  async function testConnection() {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      // Test with the values currently in the form (may not be saved yet)
+      await api.put('/settings', settings);
+      const result = await api.get('/integrations/zammad/test');
+      setTestResult({ ok: true, message: `Connected as ${result.name} (${result.email})` });
+      qc.invalidateQueries({ queryKey: ['integrations-status'] });
+    } catch (e) {
+      setTestResult({ ok: false, message: e.response?.data?.error || e.message || 'Connection failed' });
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function saveSettings() {
     setSaving(true);
     setSaveError(null);
     try {
       await api.put('/settings', settings);
-      qc.invalidateQueries({queryKey:['integrations-status']});
+      qc.invalidateQueries({ queryKey: ['integrations-status'] });
       setModal(null);
     } catch (e) {
       setSaveError(e.message || 'Save failed');
     } finally {
       setSaving(false);
     }
-  };
-
-  const fmtDate = d => d ? new Date(d).toLocaleString() : '—';
+  }
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex items-center gap-3">
+      {/* Status bar */}
+      <div className="flex items-center gap-3 flex-wrap">
         <StatusDot ok={configured}/>
         <span className="text-sm text-slate-600">{configured ? 'Connected' : 'Not configured'}</span>
-        <div className="ml-auto flex gap-2">
-          <button onClick={()=>{setModal('settings')}} className="text-xs text-slate-500 hover:text-slate-700 underline">Settings</button>
+        <div className="ml-auto flex gap-2 flex-wrap">
+          <button onClick={openSettings} className="btn-secondary text-xs">Settings</button>
           {configured && <SyncButton label="Sync tickets" endpoint="/integrations/sync/tickets"/>}
-          {configured && <button onClick={()=>{setForm({title:'',customer_email:'',description:''});setModal('create')}} className="btn-primary text-xs">+ New Ticket</button>}
+          {configured && (
+            <button onClick={() => { setForm({ title:'', customer:'', body:'', group: groups[0]?.name || 'Users', priority:'2 normal' }); setModal('create'); }}
+              className="btn-primary text-xs">
+              + New Ticket
+            </button>
+          )}
         </div>
       </div>
+
       <ErrorBanner message={status?.zammad?.lastError}/>
+
+      {!configured && (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-5 text-sm text-slate-500 space-y-2">
+          <p className="font-medium text-slate-700">How to connect Zammad</p>
+          <ol className="list-decimal list-inside space-y-1 text-xs">
+            <li>In Zammad, go to <strong>Profile → Token Access</strong> and create a new personal access token</li>
+            <li>Copy the token — it's only shown once</li>
+            <li>Click <strong>Settings</strong> above, paste your Zammad URL and token, then click <strong>Test Connection</strong></li>
+          </ol>
+        </div>
+      )}
+
+      {/* Ticket list */}
       {configured && (
         <div className="overflow-x-auto rounded-lg border border-slate-200">
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
-              <tr>{['#','Title','State','Priority','Customer','Updated'].map(h=><th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+              <tr>{['#','Title','Group','State','Priority','Customer','Updated'].map(h =>
+                <th key={h} className="px-3 py-2 text-left">{h}</th>)}
+              </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
-              {tickets.map(t=>(
+              {ticketsFetching && !tickets.length && (
+                <tr><td colSpan={7} className="text-center text-slate-400 py-6 text-xs">Loading…</td></tr>
+              )}
+              {tickets.map(t => (
                 <tr key={t.id} className="hover:bg-slate-50">
-                  <td className="px-3 py-2 text-slate-400 text-xs">{t.number}</td>
-                  <td className="px-3 py-2 font-medium text-slate-800 text-xs">{t.title}</td>
-                  <td className="px-3 py-2 text-xs"><span className="bg-blue-100 text-blue-700 px-2 py-0.5 rounded">{t.state}</span></td>
-                  <td className="px-3 py-2 text-xs text-slate-500">{t.priority}</td>
-                  <td className="px-3 py-2 text-xs text-slate-500">{t.customer_email}</td>
-                  <td className="px-3 py-2 text-xs text-slate-400">{fmtDate(t.updated_at)}</td>
+                  <td className="px-3 py-2 text-slate-400 text-xs font-mono">{t.number}</td>
+                  <td className="px-3 py-2 font-medium text-slate-800 text-xs max-w-xs truncate">{t.title}</td>
+                  <td className="px-3 py-2 text-xs text-slate-500">{t.group || '—'}</td>
+                  <td className="px-3 py-2 text-xs">
+                    <span className={`px-2 py-0.5 rounded-full font-medium ${STATE_COLOR[t.state?.toLowerCase()] || 'bg-slate-100 text-slate-600'}`}>
+                      {t.state || '—'}
+                    </span>
+                  </td>
+                  <td className="px-3 py-2 text-xs text-slate-500">{t.priority || '—'}</td>
+                  <td className="px-3 py-2 text-xs text-slate-500">{t.customer || '—'}</td>
+                  <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{fmtDate(t.updated_at)}</td>
                 </tr>
               ))}
-              {!tickets.length && <tr><td colSpan={6} className="text-center text-slate-400 py-6">No tickets synced</td></tr>}
+              {!ticketsFetching && !tickets.length && (
+                <tr><td colSpan={7} className="text-center text-slate-400 py-6 text-xs">No tickets found</td></tr>
+              )}
             </tbody>
           </table>
         </div>
       )}
-      {modal==='create' && (
-        <Modal title="Create Zammad Ticket" onClose={()=>setModal(null)}>
+
+      {/* Create ticket modal */}
+      {modal === 'create' && (
+        <Modal title="New Zammad Ticket" onClose={() => setModal(null)}>
           <div className="flex flex-col gap-3">
-            <Field label="Title"><input className={INPUT} value={form.title} onChange={e=>setForm(f=>({...f,title:e.target.value}))}/></Field>
-            <Field label="Customer Email"><input className={INPUT} value={form.customer_email} onChange={e=>setForm(f=>({...f,customer_email:e.target.value}))}/></Field>
-            <Field label="Description"><textarea rows={4} className={INPUT} value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))}/></Field>
+            <Field label="Title">
+              <input className={INPUT} value={form.title} onChange={e => setForm(f => ({...f, title: e.target.value}))}/>
+            </Field>
+            <Field label="Customer email">
+              <input type="email" className={INPUT} value={form.customer} onChange={e => setForm(f => ({...f, customer: e.target.value}))} placeholder="user@example.com"/>
+            </Field>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Group">
+                <select className={INPUT} value={form.group} onChange={e => setForm(f => ({...f, group: e.target.value}))}>
+                  {groups.length ? groups.map(g => <option key={g.id} value={g.name}>{g.name}</option>)
+                    : <option value="Users">Users</option>}
+                </select>
+              </Field>
+              <Field label="Priority">
+                <select className={INPUT} value={form.priority} onChange={e => setForm(f => ({...f, priority: e.target.value}))}>
+                  <option value="1 low">Low</option>
+                  <option value="2 normal">Normal</option>
+                  <option value="3 high">High</option>
+                </select>
+              </Field>
+            </div>
+            <Field label="Description">
+              <textarea rows={4} className={INPUT} value={form.body} onChange={e => setForm(f => ({...f, body: e.target.value}))}/>
+            </Field>
           </div>
+          {create.isError && <p className="text-red-500 text-xs mt-2">{create.error?.message}</p>}
           <div className="flex justify-end gap-2 mt-4">
-            <button onClick={()=>setModal(null)} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={()=>create.mutate()} disabled={create.isPending} className="btn-primary text-sm">{create.isPending?'Creating…':'Create'}</button>
+            <button onClick={() => setModal(null)} className="btn-secondary text-sm">Cancel</button>
+            <button onClick={() => create.mutate()} disabled={create.isPending || !form.title || !form.customer}
+              className="btn-primary text-sm">{create.isPending ? 'Creating…' : 'Create Ticket'}</button>
           </div>
         </Modal>
       )}
-      {modal==='settings' && (
-        <Modal title="Zammad Settings" onClose={()=>setModal(null)}>
+
+      {/* Settings modal */}
+      {modal === 'settings' && (
+        <Modal title="Zammad Settings" onClose={() => setModal(null)}>
           <div className="flex flex-col gap-3">
-            <Field label="Zammad URL (e.g. https://support.example.com)"><input className={INPUT} value={settings.zammad_url} onChange={e=>setSettings(s=>({...s,zammad_url:e.target.value}))}/></Field>
-            <Field label="API Token"><input type="password" className={INPUT} value={settings.zammad_token} onChange={e=>setSettings(s=>({...s,zammad_token:e.target.value}))}/></Field>
+            <Field label="Zammad URL" hint="e.g. https://helpdesk.example.com">
+              <input className={INPUT} value={settings.zammad_url}
+                onChange={e => { setSettings(s => ({...s, zammad_url: e.target.value})); setTestResult(null); }}
+                placeholder="https://helpdesk.example.com"/>
+            </Field>
+            <Field label="API Token" hint="Profile → Token Access → New token">
+              <input type="password" className={INPUT} value={settings.zammad_token}
+                onChange={e => { setSettings(s => ({...s, zammad_token: e.target.value})); setTestResult(null); }}
+                placeholder="Paste token here"/>
+            </Field>
           </div>
+
+          {testResult && (
+            <div className={`mt-3 px-3 py-2 rounded-lg text-xs border ${testResult.ok
+              ? 'bg-green-50 border-green-200 text-green-700'
+              : 'bg-red-50 border-red-200 text-red-600'}`}>
+              {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
+            </div>
+          )}
           {saveError && <p className="text-red-500 text-xs mt-2">{saveError}</p>}
-          <div className="flex justify-end gap-2 mt-4">
-            <button onClick={()=>setModal(null)} className="btn-secondary text-sm">Cancel</button>
-            <button onClick={saveSettings} disabled={saving} className="btn-primary text-sm">{saving ? 'Saving…' : 'Save'}</button>
+
+          <div className="flex items-center justify-between mt-4">
+            <button onClick={testConnection} disabled={testing || !settings.zammad_url || !settings.zammad_token}
+              className="btn-secondary text-sm disabled:opacity-40">
+              {testing ? 'Testing…' : 'Test Connection'}
+            </button>
+            <div className="flex gap-2">
+              <button onClick={() => setModal(null)} className="btn-secondary text-sm">Cancel</button>
+              <button onClick={saveSettings} disabled={saving} className="btn-primary text-sm">
+                {saving ? 'Saving…' : 'Save'}
+              </button>
+            </div>
           </div>
         </Modal>
       )}
