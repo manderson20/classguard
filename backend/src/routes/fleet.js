@@ -383,7 +383,7 @@ async function detectCertDate() {
     SELECT d AS cert_date
     FROM with_baseline
     WHERE cnt >= GREATEST(10, avg_30d * 3)
-    ORDER BY d
+    ORDER BY CASE WHEN avg_30d > 0 THEN cnt / avg_30d ELSE cnt END DESC
     LIMIT 1
   `);
   return rows[0]?.cert_date || null;
