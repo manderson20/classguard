@@ -19,6 +19,20 @@ updates:
       interval: "weekly"
     open-pull-requests-limit: 10
 
+  # DNS engine and Chrome extension dependencies are separate lockfiles from
+  # the backend/frontend apps, so they need their own Dependabot coverage.
+  - package-ecosystem: "npm"
+    directory: "/dns-engine"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: "npm"
+    directory: "/chrome-extension"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
   # Docker base images (node:20-alpine, nginx, etc. pinned in each Dockerfile)
   - package-ecosystem: "docker"
     directory: "/backend"
@@ -30,6 +44,22 @@ updates:
       interval: "weekly"
   - package-ecosystem: "docker"
     directory: "/dns-engine"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/chrome-extension"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/infrastructure/kea"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/infrastructure/vpn"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/infrastructure/scep"
     schedule:
       interval: "weekly"
 

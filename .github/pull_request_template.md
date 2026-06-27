@@ -22,6 +22,16 @@ Closes #
 - [ ] Tested locally (describe how below)
 - [ ] No secrets or credentials committed
 
+## Impact review
+
+- [ ] Security implications reviewed
+- [ ] Performance implications reviewed
+- [ ] DHCP impact reviewed or not applicable
+- [ ] DNS impact reviewed or not applicable
+- [ ] VPN impact reviewed or not applicable
+- [ ] RADIUS impact reviewed or not applicable
+- [ ] Web UI impact reviewed or not applicable
+
 ## How I tested this
 
 <!-- Describe the steps you took to verify the change works. -->

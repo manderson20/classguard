@@ -412,7 +412,12 @@ const ADMIN_SECTIONS = [
       { to: '/admin/safety-alerts',     icon: mdiBellAlertOutline, label: 'Safety Alerts',   permissionKey: 'safety_alerts' },
       { to: '/admin/filter-bypass',     icon: mdiWifiAlert,     label: 'Filter Bypass Alerts', permissionKey: 'safety_alerts' },
       { to: '/admin/unblock-requests',  icon: mdiEmailOutline,   label: 'Unblock Requests', badge: true, permissionKey: 'unblock_requests' },
-      { to: '/admin/infoseciq',         icon: mdiShieldCheckOutline, label: 'Infosec IQ' },
+      { to: '/admin/infoseciq',         icon: mdiShieldCheckOutline, label: 'Infosec IQ', children: [
+        { to: '/admin/infoseciq',              label: 'Dashboard'    },
+        { to: '/admin/infoseciq/grade-cards',  label: 'Grade Cards'  },
+        { to: '/admin/infoseciq/learners',     label: 'Learners'     },
+        { to: '/admin/infoseciq/campaigns',    label: 'Campaigns'    },
+      ]},
     ],
   },
   {
@@ -453,7 +458,51 @@ const ADMIN_SECTIONS = [
 // ---------------------------------------------------------------------------
 // NavItem
 // ---------------------------------------------------------------------------
-function NavItem({ to, icon, label, end = false, badgeCount }) {
+function NavItem({ to, icon, label, end = false, badgeCount, children }) {
+  const location = useLocation();
+  const isParentActive = children && location.pathname.startsWith(to);
+
+  if (children) {
+    return (
+      <div>
+        <NavLink
+          to={to}
+          end
+          className={({ isActive }) =>
+            `flex items-center gap-2.5 px-3 py-[7px] rounded-md text-[13px] font-medium transition-all duration-100 ${
+              isActive || isParentActive
+                ? 'bg-primary-600 text-white shadow-sm'
+                : 'text-slate-400 hover:text-slate-100 hover:bg-slate-800'
+            }`
+          }
+        >
+          <Icon path={icon} />
+          <span className="flex-1">{label}</span>
+        </NavLink>
+        {isParentActive && (
+          <div className="ml-4 mt-0.5 flex flex-col gap-0.5 border-l border-slate-700 pl-2">
+            {children.map(child => (
+              <NavLink
+                key={child.to}
+                to={child.to}
+                end={child.to === to}
+                className={({ isActive }) =>
+                  `px-2 py-[5px] rounded text-[12px] font-medium transition-all duration-100 ${
+                    isActive
+                      ? 'text-white bg-slate-700'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800'
+                  }`
+                }
+              >
+                {child.label}
+              </NavLink>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
     <NavLink
       to={to}

@@ -2206,7 +2206,16 @@ function InfosecIqSection() {
     setTestResult(null);
     try {
       const result = await api.post('/infoseciq/test');
-      setTestResult({ ok: result.ok, message: result.ok ? `Connected — status ${result.status}` : `Failed (status ${result.status})` });
+      if (result.ok) {
+        setTestResult({ ok: true, message: `Connected — HTTP ${result.status}`, url: result.urlTested });
+      } else {
+        setTestResult({
+          ok: false,
+          message: result.status ? `HTTP ${result.status}` : (result.error || 'Connection failed'),
+          url: result.urlTested,
+          detail: result.detail || null,
+        });
+      }
     } catch (e) {
       setTestResult({ ok: false, message: e.message || 'Connection failed' });
     } finally {
@@ -2250,7 +2259,7 @@ function InfosecIqSection() {
             className={INPUT}
             value={settings.base_url}
             onChange={e => { setSettings(s => ({ ...s, base_url: e.target.value })); setTestResult(null); }}
-            placeholder="https://api.infosecinstitute.com/iqv2"
+            placeholder="https://securityiq.infosecinstitute.com/api/v2"
           />
         </Field>
         <Field label={hasKey ? 'API Key (leave blank to keep current)' : 'API Key'} hint="Your Infosec IQ API key">
@@ -2265,10 +2274,12 @@ function InfosecIqSection() {
       </div>
 
       {testResult && (
-        <div className={`px-3 py-2 rounded-lg text-xs border ${testResult.ok
+        <div className={`px-3 py-2 rounded-lg text-xs border flex flex-col gap-1 ${testResult.ok
           ? 'bg-green-50 border-green-200 text-green-700'
           : 'bg-red-50 border-red-200 text-red-600'}`}>
-          {testResult.ok ? '✓ ' : '✗ '}{testResult.message}
+          <span>{testResult.ok ? '✓ ' : '✗ '}{testResult.message}</span>
+          {testResult.url && <span className="font-mono opacity-70 break-all">URL: {testResult.url}</span>}
+          {testResult.detail && <span className="font-mono opacity-70 break-all whitespace-pre-wrap">{testResult.detail}</span>}
         </div>
       )}
       {saveError && <p className="text-red-500 text-xs">{saveError}</p>}

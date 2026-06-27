@@ -120,6 +120,13 @@ export default function UserDetail() {
     },
   });
 
+  const { data: infosecData } = useQuery({
+    queryKey: ['user-infoseciq', user?.email],
+    queryFn:  () => api.get(`/infoseciq/learners/by-email/${encodeURIComponent(user.email)}`),
+    enabled:  !!user?.email,
+    retry:    false,
+  });
+
   if (uLoading) {
     return <div className="p-6 text-slate-400 text-sm">Loading…</div>;
   }
@@ -377,6 +384,113 @@ export default function UserDetail() {
             </div>
           )}
         </div>
+        {/* Infosec IQ grade card — only shown for users who are Infosec IQ learners */}
+        {infosecData && (
+          <div className="card p-5 lg:col-span-3">
+            <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
+              <h2 className="text-sm font-semibold text-slate-700">Security Awareness — Infosec IQ</h2>
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={() => {
+                    const token = localStorage.getItem('cg_token');
+                    fetch(`/api/v1/infoseciq/exit-ticket/${encodeURIComponent(user.email)}`, {
+                      headers: { Authorization: `Bearer ${token}` },
+                    }).then(r => r.blob()).then(blob => {
+                      const a = document.createElement('a');
+                      a.href = URL.createObjectURL(blob);
+                      a.download = `exit-ticket-${(user.full_name || user.email).replace(/\s+/g, '-')}.pdf`;
+                      a.click();
+                    });
+                  }}
+                  className="text-xs px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium"
+                >
+                  Exit Ticket PDF
+                </button>
+                <a href="/admin/infoseciq/grade-cards" className="text-xs text-primary-600 hover:underline">
+                  View all →
+                </a>
+              </div>
+            </div>
+
+            <div className="flex gap-6 flex-wrap items-start">
+              {/* Grade badge */}
+              <div className="flex flex-col items-center gap-1 flex-shrink-0">
+                <div className={`w-16 h-16 rounded-xl flex items-center justify-center text-3xl font-bold border-2 ${
+                  infosecData.letter_grade === 'A' ? 'bg-green-50  border-green-300  text-green-700' :
+                  infosecData.letter_grade === 'B' ? 'bg-blue-50   border-blue-300   text-blue-700'  :
+                  infosecData.letter_grade === 'C' ? 'bg-yellow-50 border-yellow-300 text-yellow-700':
+                  infosecData.letter_grade === 'D' ? 'bg-orange-50 border-orange-300 text-orange-700':
+                  infosecData.letter_grade === 'F' ? 'bg-red-50    border-red-300    text-red-700'   :
+                  'bg-slate-50 border-slate-200 text-slate-400'
+                }`}>
+                  {infosecData.letter_grade || '—'}
+                </div>
+                <span className="text-xs text-slate-400">Grade</span>
+              </div>
+
+              {/* Stats grid */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 flex-1">
+                {[
+                  { label: 'Grade Score',      value: infosecData.grade_score ? `${infosecData.grade_score}/100` : '—' },
+                  { label: 'Training Complete', value: `${Math.round(infosecData.training_completion_pct || 0)}%` },
+                  { label: 'Times Phished',    value: infosecData.phished_count ?? 0,
+                    cls: (infosecData.phished_count > 2) ? 'text-red-600' : (infosecData.phished_count > 0) ? 'text-orange-600' : 'text-green-600' },
+                  { label: 'Data Entry Events',value: infosecData.data_entry_count ?? 0,
+                    cls: (infosecData.data_entry_count > 0) ? 'text-red-600' : '' },
+                  { label: 'Modules Assigned', value: infosecData.modules_enrolled ?? infosecData.courses_assigned ?? 0 },
+                  { label: 'Modules Completed',value: infosecData.modules_completed ?? infosecData.courses_completed ?? 0 },
+                  { label: 'Time Trained',     value: infosecData.training_time_minutes ? `${infosecData.training_time_minutes} min` : '—' },
+                  { label: 'Last Activity',    value: infosecData.last_activity_at ? new Date(infosecData.last_activity_at).toLocaleDateString() : '—' },
+                ].map(s => (
+                  <div key={s.label} className="bg-slate-50 rounded-lg px-3 py-2">
+                    <div className="text-xs text-slate-400 uppercase tracking-wide">{s.label}</div>
+                    <div className={`font-semibold text-sm mt-0.5 ${s.cls || 'text-slate-800'}`}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Training completion bar */}
+            <div className="mt-4">
+              <div className="flex justify-between text-xs text-slate-500 mb-1">
+                <span>Training Completion</span>
+                <span>{infosecData.modules_completed ?? 0} / {infosecData.modules_enrolled ?? 0} modules</span>
+              </div>
+              <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${
+                    (infosecData.training_completion_pct || 0) >= 80 ? 'bg-green-500' :
+                    (infosecData.training_completion_pct || 0) >= 50 ? 'bg-yellow-400' : 'bg-red-400'
+                  }`}
+                  style={{ width: `${Math.min(100, infosecData.training_completion_pct || 0)}%` }}
+                />
+              </div>
+            </div>
+
+            {/* Phishing history */}
+            {infosecData.phishing_history?.length > 0 && (
+              <div className="mt-4 border-t border-slate-100 pt-4">
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Recent Phishing Campaigns</h3>
+                <div className="space-y-1">
+                  {infosecData.phishing_history.slice(0, 5).map((h, i) => (
+                    <div key={i} className="flex items-center gap-3 text-xs py-1 border-b border-slate-50 last:border-0">
+                      <span className="flex-1 font-medium text-slate-700 truncate">{h.campaign_name}</span>
+                      <div className="flex gap-1.5 flex-shrink-0">
+                        {h.clicked_at  && <span className="px-1.5 py-0.5 rounded bg-red-100    text-red-700    font-medium">Clicked</span>}
+                        {h.opened_at && !h.clicked_at && <span className="px-1.5 py-0.5 rounded bg-yellow-100 text-yellow-700 font-medium">Opened</span>}
+                        {h.reported_at && <span className="px-1.5 py-0.5 rounded bg-green-100  text-green-700  font-medium">Reported</span>}
+                        {!h.clicked_at && !h.opened_at && !h.reported_at && <span className="text-slate-400">No action</span>}
+                      </div>
+                      <span className="text-slate-400 w-20 text-right flex-shrink-0">
+                        {h.sent_at ? new Date(h.sent_at).toLocaleDateString() : '—'}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {liveViewOpen && (
