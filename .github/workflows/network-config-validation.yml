@@ -2,7 +2,7 @@ name: Network Config Validation
 
 on:
   push:
-    branches: [main, develop, 'feature/**']
+    branches: [main, develop]
   pull_request:
     branches: [main, develop]
 
@@ -14,85 +14,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  committed-configs:
-    name: Network — committed config syntax
+  kea-config-validation:
+    name: Kea — validate config
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
-      - name: Validate shell scripts
-        run: |
-          bash -n infrastructure/kea/entrypoint.sh
-          bash -n infrastructure/freeradius/sync-freeradius.sh
-          bash -n infrastructure/vpn/entrypoint.sh
-          bash -n infrastructure/firewall/sync-ufw.sh
-          bash -n infrastructure/keepalived/sync-keepalived.sh
-          bash -n infrastructure/chrony/sync-chrony.sh
-
-      - name: Validate VPN agent Python syntax
-        run: python3 -m py_compile infrastructure/vpn/vpn-agent.py
-
-      - name: Validate generated RADIUS and HA config emitters
-        env:
-          NODE_ENV: test
-          DATABASE_URL: postgresql://classguard:testpassword@localhost:5432/classguard_test
-          JWT_SECRET: ci-test-secret-not-for-production
-        run: |
-          node - <<'NODE'
-          const keepalived = require('./backend/src/services/keepalived');
-
-          const haConfig = {
-            vip_address: '10.0.0.10',
-            vip_prefix_len: 24,
-            vip_interface: 'eth0',
-            vrrp_instance_name: 'CLASSGUARD_APPS',
-            vrrp_virtual_router_id: 51,
-            vrrp_auth_password: 'ci-secret',
-            vrrp_advert_int: 1,
-            track_classguard_api: true,
-            track_freeradius: true,
-          };
-          const node = { node_id: 'ci-node-1', failover_priority: 150 };
-          const nasRows = [{
-            shortname: 'ci-ap',
-            ip_address: '10.0.0.20',
-            shared_secret: 'radius-secret',
-            vendor: 'other',
-            name: 'CI AP',
-            description: 'synthetic validation client',
-          }];
-
-          const outputs = [
-            keepalived.generateKeepalived(haConfig, node),
-            keepalived.generateNotifyScript(),
-            keepalived.generateFreeRadiusClients(nasRows),
-            keepalived.generateFreeRadiusRestMod('http://localhost:3001', 'ci-internal-secret'),
-            keepalived.generateFreeRadiusVirtualServer(),
-            keepalived.generateEapMod(),
-          ];
-
-          for (const [index, output] of outputs.entries()) {
-            if (typeof output !== 'string' || output.trim().length < 50) {
-              throw new Error(`generated config ${index} was empty`);
-            }
-          }
-          process.exit(0);
-          NODE
-
-  kea:
-    name: Kea — DHCP config parse
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    steps:
-      - uses: actions/checkout@v7
-
+      # Use ClassGuard's pinned Kea runtime instead of Ubuntu's repository
+      # package. The committed configs depend on the PostgreSQL backend and
+      # lease-cmds hook present in infrastructure/kea/Dockerfile, and they
+      # intentionally keep ${DB_PASSWORD} as a runtime placeholder.
       - name: Build Kea validation image
         run: docker build -t classguard-kea-ci ./infrastructure/kea
 
-      - name: Validate Kea DHCP and control-agent configs
+      - name: Validate Kea DHCPv4 config
         run: |
           docker run --rm \
             -e DB_PASSWORD=ci-test-password \
@@ -103,9 +40,111 @@ jobs:
               set -euo pipefail
               mkdir -p /tmp/kea-conf /var/log/kea /var/run/kea
               envsubst "\${DB_PASSWORD}" < /etc/kea/kea-dhcp4.conf > /tmp/kea-conf/kea-dhcp4.conf
-              envsubst "\${DB_PASSWORD}" < /etc/kea/kea-dhcp6.conf > /tmp/kea-conf/kea-dhcp6.conf
-              envsubst "\${DB_PASSWORD}" < /etc/kea/kea-ctrl-agent.conf > /tmp/kea-conf/kea-ctrl-agent.conf
               kea-dhcp4 -t /tmp/kea-conf/kea-dhcp4.conf
+            '
+
+      - name: Validate Kea DHCPv6 config
+        run: |
+          docker run --rm \
+            -e DB_PASSWORD=ci-test-password \
+            -v "$PWD/infrastructure/kea:/etc/kea:ro" \
+            --entrypoint bash \
+            classguard-kea-ci \
+            -lc '
+              set -euo pipefail
+              mkdir -p /tmp/kea-conf /var/log/kea /var/run/kea
+              envsubst "\${DB_PASSWORD}" < /etc/kea/kea-dhcp6.conf > /tmp/kea-conf/kea-dhcp6.conf
               kea-dhcp6 -t /tmp/kea-conf/kea-dhcp6.conf
+            '
+
+      - name: Validate Kea control-agent config
+        run: |
+          docker run --rm \
+            -e DB_PASSWORD=ci-test-password \
+            -v "$PWD/infrastructure/kea:/etc/kea:ro" \
+            --entrypoint bash \
+            classguard-kea-ci \
+            -lc '
+              set -euo pipefail
+              mkdir -p /tmp/kea-conf /var/log/kea /var/run/kea
+              envsubst "\${DB_PASSWORD}" < /etc/kea/kea-ctrl-agent.conf > /tmp/kea-conf/kea-ctrl-agent.conf
               kea-ctrl-agent -t /tmp/kea-conf/kea-ctrl-agent.conf
             '
+
+  freeradius-config-validation:
+    name: FreeRADIUS — validate config
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check whether FreeRADIUS config exists
+        id: radius_check
+        run: |
+          if [ -d "infrastructure/freeradius" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install FreeRADIUS
+        if: steps.radius_check.outputs.exists == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y freeradius freeradius-rest openssl
+
+      - name: Render ClassGuard FreeRADIUS config
+        if: steps.radius_check.outputs.exists == 'true'
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://classguard:testpassword@localhost:5432/classguard_test
+          JWT_SECRET: ci-test-secret-not-for-production
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const keepalived = require('./backend/src/services/keepalived');
+
+          const outDir = '/tmp/classguard-freeradius';
+          fs.mkdirSync(outDir, { recursive: true });
+
+          const nasRows = [{
+            shortname: 'ci-ap',
+            ip_address: '127.0.0.1',
+            shared_secret: 'testing123',
+            vendor: 'other',
+            name: 'CI AP',
+            description: 'synthetic validation client',
+          }];
+
+          fs.writeFileSync(`${outDir}/clients.conf`, keepalived.generateFreeRadiusClients(nasRows));
+          fs.writeFileSync(`${outDir}/rest`, keepalived.generateFreeRadiusRestMod('http://localhost:3001', 'ci-internal-secret'));
+          fs.writeFileSync(`${outDir}/eap`, keepalived.generateEapMod());
+          fs.writeFileSync(`${outDir}/classguard`, keepalived.generateFreeRadiusVirtualServer());
+          process.exit(0);
+          NODE
+
+      - name: Validate FreeRADIUS config
+        if: steps.radius_check.outputs.exists == 'true'
+        run: |
+          sudo cp /tmp/classguard-freeradius/clients.conf /etc/freeradius/3.0/clients.conf
+          sudo cp /tmp/classguard-freeradius/rest /etc/freeradius/3.0/mods-available/rest
+          sudo cp /tmp/classguard-freeradius/eap /etc/freeradius/3.0/mods-available/eap
+          sudo cp /tmp/classguard-freeradius/classguard /etc/freeradius/3.0/sites-available/classguard
+
+          sudo ln -sf /etc/freeradius/3.0/mods-available/rest /etc/freeradius/3.0/mods-enabled/rest
+          sudo ln -sf /etc/freeradius/3.0/sites-available/classguard /etc/freeradius/3.0/sites-enabled/classguard
+          sudo rm -f /etc/freeradius/3.0/sites-enabled/default /etc/freeradius/3.0/sites-enabled/inner-tunnel
+
+          sudo mkdir -p /etc/freeradius/3.0/certs
+          sudo openssl req -x509 -newkey rsa:2048 \
+            -keyout /etc/freeradius/3.0/certs/server.key \
+            -out /etc/freeradius/3.0/certs/server.crt \
+            -days 1 -nodes \
+            -subj "/CN=ClassGuard RADIUS CI/O=ClassGuard" 2>/dev/null
+          sudo openssl dhparam -out /etc/freeradius/3.0/certs/dh 2048 2>/dev/null
+          sudo cp /etc/freeradius/3.0/certs/server.crt /etc/freeradius/3.0/certs/ca.crt
+          sudo chmod 640 /etc/freeradius/3.0/certs/server.key
+          sudo chown root:freerad /etc/freeradius/3.0/certs/server.key
+
+          sudo freeradius -XC

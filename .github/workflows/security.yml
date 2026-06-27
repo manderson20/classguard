@@ -17,7 +17,7 @@ concurrency:
 
 jobs:
   secret-scan:
-    name: Security — secret scan
+    name: Security — scan
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
