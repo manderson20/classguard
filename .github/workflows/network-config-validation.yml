@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Use ClassGuard's pinned Kea runtime instead of Ubuntu's repository
       # package. The committed configs depend on the PostgreSQL backend and
@@ -77,7 +77,7 @@ jobs:
     timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Check whether FreeRADIUS config exists
         id: radius_check
