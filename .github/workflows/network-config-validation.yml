@@ -1,0 +1,56 @@
+name: Network Config Validation
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  kea-config-validation:
+    name: Kea — validate config
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Kea
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y kea-dhcp4-server kea-dhcp6-server
+
+      - name: Validate Kea DHCPv4 config
+        run: |
+          sudo kea-dhcp4 -t infrastructure/kea/kea-dhcp4.conf
+
+      - name: Validate Kea DHCPv6 config
+        run: |
+          sudo kea-dhcp6 -t infrastructure/kea/kea-dhcp6.conf
+
+  freeradius-config-validation:
+    name: FreeRADIUS — validate config
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check whether FreeRADIUS config exists
+        id: radius_check
+        run: |
+          if [ -d "infrastructure/freeradius" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install FreeRADIUS
+        if: steps.radius_check.outputs.exists == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y freeradius
+
+      - name: Validate FreeRADIUS config
+        if: steps.radius_check.outputs.exists == 'true'
+        run: |
+          sudo cp -r infrastructure/freeradius/* /etc/freeradius/3.0/
+          sudo freeradius -XC
