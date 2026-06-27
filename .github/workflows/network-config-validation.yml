@@ -22,10 +22,10 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # Use ClassGuard's pinned Kea runtime instead of Ubuntu's repository
-      # package. The committed configs depend on the PostgreSQL backend and
-      # lease-cmds hook present in infrastructure/kea/Dockerfile, and they
-      # intentionally keep ${DB_PASSWORD} as a runtime placeholder.
+      # Use ClassGuard's pinned Ubuntu 26.04 Kea runtime. The committed configs
+      # depend on the PostgreSQL backend and lease-cmds hook present in
+      # infrastructure/kea/Dockerfile, and they intentionally keep
+      # ${DB_PASSWORD} as a runtime placeholder.
       - name: Build Kea validation image
         run: docker build -t classguard-kea-ci ./infrastructure/kea
 
@@ -38,7 +38,9 @@ jobs:
             classguard-kea-ci \
             -lc '
               set -euo pipefail
-              mkdir -p /tmp/kea-conf /var/log/kea /var/run/kea
+              mkdir -p /tmp/kea-conf /var/log/kea /var/lib/kea /run/kea
+              chown -R _kea:_kea /var/log/kea /var/lib/kea /run/kea
+              chmod 750 /run/kea
               envsubst "\${DB_PASSWORD}" < /etc/kea/kea-dhcp4.conf > /tmp/kea-conf/kea-dhcp4.conf
               kea-dhcp4 -t /tmp/kea-conf/kea-dhcp4.conf
             '
@@ -52,7 +54,9 @@ jobs:
             classguard-kea-ci \
             -lc '
               set -euo pipefail
-              mkdir -p /tmp/kea-conf /var/log/kea /var/run/kea
+              mkdir -p /tmp/kea-conf /var/log/kea /var/lib/kea /run/kea
+              chown -R _kea:_kea /var/log/kea /var/lib/kea /run/kea
+              chmod 750 /run/kea
               envsubst "\${DB_PASSWORD}" < /etc/kea/kea-dhcp6.conf > /tmp/kea-conf/kea-dhcp6.conf
               kea-dhcp6 -t /tmp/kea-conf/kea-dhcp6.conf
             '
@@ -66,7 +70,9 @@ jobs:
             classguard-kea-ci \
             -lc '
               set -euo pipefail
-              mkdir -p /tmp/kea-conf /var/log/kea /var/run/kea
+              mkdir -p /tmp/kea-conf /var/log/kea /var/lib/kea /run/kea
+              chown -R _kea:_kea /var/log/kea /var/lib/kea /run/kea
+              chmod 750 /run/kea
               envsubst "\${DB_PASSWORD}" < /etc/kea/kea-ctrl-agent.conf > /tmp/kea-conf/kea-ctrl-agent.conf
               kea-ctrl-agent -t /tmp/kea-conf/kea-ctrl-agent.conf
             '

@@ -1,29 +1,23 @@
-FROM ubuntu:22.04
+FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Pinned to the exact Kea version currently deployed. Without an explicit
-# version, every image rebuild pulls whatever ISC's kea-2-6 channel has
-# published most recently with zero diff to review - exactly the kind of
-# silent, unannounced behavior change in something we depend on (Kea's DHCP
-# config semantics, allocator behavior, etc.) we want to catch BEFORE it's
-# running, not after. Bumping KEA_VERSION is now a deliberate, reviewable
-# change; if that exact version ever ages out of the repo, the build fails
-# loudly instead of quietly installing something newer.
-ARG KEA_VERSION=2.6.5-isc20260313155734
+# Pinned to Ubuntu 26.04's native Kea package version. Without an explicit
+# version, every image rebuild pulls whatever Ubuntu has published most
+# recently with zero diff to review - exactly the kind of silent behavior
+# change in DHCP config semantics, allocator behavior, or database schema
+# handling that should fail loudly before it is running.
+ARG KEA_VERSION=3.0.3-1
 
-RUN apt-get update && apt-get install -y curl gnupg ca-certificates && \
-    curl -1sLf 'https://dl.cloudsmith.io/public/isc/kea-2-6/setup.deb.sh' | bash - && \
-    apt-get install -y \
-      isc-kea-dhcp4=${KEA_VERSION} \
-      isc-kea-dhcp6=${KEA_VERSION} \
-      isc-kea-ctrl-agent=${KEA_VERSION} \
-      isc-kea-admin=${KEA_VERSION} \
-      isc-kea-common=${KEA_VERSION} \
-      isc-kea-hooks=${KEA_VERSION} \
+RUN apt-get update && apt-get install -y \
+      kea-dhcp4-server=${KEA_VERSION} \
+      kea-dhcp6-server=${KEA_VERSION} \
+      kea-ctrl-agent=${KEA_VERSION} \
+      kea-admin=${KEA_VERSION} \
+      kea-common=${KEA_VERSION} \
       postgresql-client \
       gettext-base \
-    && apt-mark hold isc-kea-dhcp4 isc-kea-dhcp6 isc-kea-ctrl-agent isc-kea-admin isc-kea-common isc-kea-hooks \
+    && apt-mark hold kea-dhcp4-server kea-dhcp6-server kea-ctrl-agent kea-admin kea-common \
     && rm -rf /var/lib/apt/lists/*
 
 COPY entrypoint.sh /entrypoint.sh
