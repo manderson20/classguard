@@ -128,7 +128,7 @@ async function runCrossSync(actorId) {
   try {
     http = await snipeit.getClient();
   } catch (err) {
-    throw new Error(`Snipe-IT not reachable: ${err.message}`);
+    throw new Error(`Snipe-IT not reachable: ${err.message}`, { cause: err });
   }
 
   const { rows: allDevices } = await pool.query(
