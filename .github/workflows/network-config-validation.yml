@@ -94,6 +94,18 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y freeradius freeradius-rest openssl
 
+      - uses: actions/setup-node@v6
+        if: steps.radius_check.outputs.exists == 'true'
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install backend dependencies
+        if: steps.radius_check.outputs.exists == 'true'
+        working-directory: backend
+        run: npm ci
+
       - name: Render ClassGuard FreeRADIUS config
         if: steps.radius_check.outputs.exists == 'true'
         env:
