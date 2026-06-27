@@ -118,13 +118,22 @@ function parseLearner(raw) {
     // Grade card fields from learner_stat (only present on /learners/{id} response)
     letter_grade:            stat.letter_grade    ?? null,
     grade_score:             parseFloat(stat.grade ?? 0) || 0,
-    phished_count:           parseInt(stat.phished_count ?? 0) || 0,
-    data_entry_count:        parseInt(stat.data_entry_count ?? 0) || 0,
-    training_time_minutes:   parseInt(stat.total_time_trained ?? 0) || 0,
+    phished_count:           parseInt(stat.phished_count        ?? 0) || 0,
+    data_entry_count:        parseInt(stat.data_entry_count     ?? 0) || 0,
+    training_time_minutes:   parseInt(stat.total_time_trained   ?? 0) || 0,
     modules_enrolled:        enrolled,
     modules_completed:       completed,
-    assessments_passed:      parseInt(stat.assessment_passed_count ?? 0) || 0,
-    assessments_failed:      parseInt(stat.assessment_completed_count ?? 0) - parseInt(stat.assessment_passed_count ?? 0) || 0,
+    assessments_passed:      parseInt(stat.assessment_passed_count    ?? 0) || 0,
+    assessments_failed:      Math.max(0, (parseInt(stat.assessment_completed_count ?? 0) || 0) - (parseInt(stat.assessment_passed_count ?? 0) || 0)),
+    // Full PhishSim / training stats for exit ticket
+    replied_count:                   parseInt(stat.replied_count                    ?? 0) || 0,
+    matched_count:                   parseInt(stat.matched_count                    ?? 0) || 0,
+    attachment_count:                parseInt(stat.attachment_count                 ?? 0) || 0,
+    teachable_count:                 parseInt(stat.teachable_count                  ?? 0) || 0,
+    training_started_count:          parseInt(stat.training_started_count           ?? 0) || 0,
+    training_completed_count:        parseInt(stat.training_completed_count         ?? 0) || 0,
+    plugin_email_report_count:       parseInt(stat.plugin_email_report_count        ?? 0) || 0,
+    plugin_simulation_report_count:  parseInt(stat.plugin_simulation_report_count   ?? 0) || 0,
     // Legacy columns (kept for backwards compat)
     risk_score:              parseFloat(stat.grade ?? 0) || 0,
     training_completion_pct: compPct,
@@ -183,9 +192,12 @@ async function syncLearners() {
           letter_grade, grade_score, phished_count, data_entry_count,
           training_time_minutes, modules_enrolled, modules_completed,
           assessments_passed, assessments_failed,
+          replied_count, matched_count, attachment_count, teachable_count,
+          training_started_count, training_completed_count,
+          plugin_email_report_count, plugin_simulation_report_count,
           risk_score, training_completion_pct, courses_assigned, courses_completed,
           phishing_susceptibility, last_activity_at, raw_data, last_synced_at)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,NOW())
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,NOW())
        ON CONFLICT (id) DO UPDATE SET
          email = EXCLUDED.email, first_name = EXCLUDED.first_name,
          last_name = EXCLUDED.last_name, department = EXCLUDED.department,
@@ -194,6 +206,12 @@ async function syncLearners() {
          training_time_minutes = EXCLUDED.training_time_minutes,
          modules_enrolled = EXCLUDED.modules_enrolled, modules_completed = EXCLUDED.modules_completed,
          assessments_passed = EXCLUDED.assessments_passed, assessments_failed = EXCLUDED.assessments_failed,
+         replied_count = EXCLUDED.replied_count, matched_count = EXCLUDED.matched_count,
+         attachment_count = EXCLUDED.attachment_count, teachable_count = EXCLUDED.teachable_count,
+         training_started_count = EXCLUDED.training_started_count,
+         training_completed_count = EXCLUDED.training_completed_count,
+         plugin_email_report_count = EXCLUDED.plugin_email_report_count,
+         plugin_simulation_report_count = EXCLUDED.plugin_simulation_report_count,
          risk_score = EXCLUDED.risk_score, training_completion_pct = EXCLUDED.training_completion_pct,
          courses_assigned = EXCLUDED.courses_assigned, courses_completed = EXCLUDED.courses_completed,
          phishing_susceptibility = EXCLUDED.phishing_susceptibility,
@@ -203,6 +221,9 @@ async function syncLearners() {
        l.letter_grade, l.grade_score, l.phished_count, l.data_entry_count,
        l.training_time_minutes, l.modules_enrolled, l.modules_completed,
        l.assessments_passed, l.assessments_failed,
+       l.replied_count, l.matched_count, l.attachment_count, l.teachable_count,
+       l.training_started_count, l.training_completed_count,
+       l.plugin_email_report_count, l.plugin_simulation_report_count,
        l.risk_score, l.training_completion_pct, l.courses_assigned, l.courses_completed,
        l.phishing_susceptibility, l.last_activity_at, JSON.stringify(r)]
     );

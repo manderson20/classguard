@@ -389,9 +389,27 @@ export default function UserDetail() {
           <div className="card p-5 lg:col-span-3">
             <div className="flex items-center justify-between mb-4 flex-wrap gap-2">
               <h2 className="text-sm font-semibold text-slate-700">Security Awareness — Infosec IQ</h2>
-              <a href="/admin/infoseciq/grade-cards" className="text-xs text-primary-600 hover:underline">
-                View all grade cards →
-              </a>
+              <div className="flex gap-2 items-center">
+                <button
+                  onClick={() => {
+                    const token = localStorage.getItem('cg_token');
+                    fetch(`/api/v1/infoseciq/exit-ticket/${encodeURIComponent(user.email)}`, {
+                      headers: { Authorization: `Bearer ${token}` },
+                    }).then(r => r.blob()).then(blob => {
+                      const a = document.createElement('a');
+                      a.href = URL.createObjectURL(blob);
+                      a.download = `exit-ticket-${(user.full_name || user.email).replace(/\s+/g, '-')}.pdf`;
+                      a.click();
+                    });
+                  }}
+                  className="text-xs px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium"
+                >
+                  Exit Ticket PDF
+                </button>
+                <a href="/admin/infoseciq/grade-cards" className="text-xs text-primary-600 hover:underline">
+                  View all →
+                </a>
+              </div>
             </div>
 
             <div className="flex gap-6 flex-wrap items-start">

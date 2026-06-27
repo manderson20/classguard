@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const { authenticate }      = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const infoseciq = require('../services/infosecIq');
+const { buildExitTicketPdf } = require('../services/exitTicket');
 
 const auth = [authenticate, requirePermission('integrations')];
 
@@ -335,6 +336,86 @@ router.get('/campaigns/:id', ...auth, async (req, res) => {
     const reporters = results.filter(r => r.reported_at);
 
     res.json({ ...campaign, results, clickers, reporters });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// ---------------------------------------------------------------------------
+// Exit Ticket PDF
+// GET  /infoseciq/exit-ticket/:email   — single staff member
+// GET  /infoseciq/exit-ticket/bulk     — all Infosec IQ learners (alphabetical)
+// ---------------------------------------------------------------------------
+
+async function buildTicketData(email, requiredCourses) {
+  // Infosec IQ learner record
+  const { rows: [learner] } = await pool.query(
+    `SELECT * FROM infoseciq_learners WHERE LOWER(email) = LOWER($1) LIMIT 1`, [email]
+  );
+
+  // Devices from Snipe-IT
+  const { rows: devices } = await pool.query(
+    `SELECT device_name, asset_tag, device_model, device_type
+     FROM integration_devices
+     WHERE source = 'snipeit' AND LOWER(assigned_email) = LOWER($1)
+     ORDER BY device_name`, [email]
+  );
+
+  // Open Zammad tickets for this person
+  const { rows: tickets } = await pool.query(
+    `SELECT number, title, state, priority, created_at, group_name
+     FROM zammad_tickets
+     WHERE LOWER(customer_email) = LOWER($1)
+       AND state NOT IN ('closed', 'merged', 'removed')
+     ORDER BY created_at DESC
+     LIMIT 50`, [email]
+  );
+
+  // Look up their name from ClassGuard users table first, fallback to learner record
+  const { rows: [cgUser] } = await pool.query(
+    `SELECT full_name FROM users WHERE LOWER(email) = LOWER($1) LIMIT 1`, [email]
+  );
+  const staffName = cgUser?.full_name
+    || (learner ? `${learner.first_name || ''} ${learner.last_name || ''}`.trim() : email);
+
+  return { staffName, email, learner: learner || null, devices, tickets };
+}
+
+router.get('/exit-ticket/bulk', ...auth, async (req, res) => {
+  try {
+    const { rows: setting } = await pool.query(
+      `SELECT value FROM settings WHERE key = 'infoseciq_required_courses' LIMIT 1`
+    );
+    const required = parseInt(setting[0]?.value || '10') || 10;
+
+    const { rows: learners } = await pool.query(
+      `SELECT email FROM infoseciq_learners WHERE email IS NOT NULL ORDER BY last_name, first_name`
+    );
+    if (learners.length === 0) return res.status(404).json({ error: 'No learners found. Run a sync first.' });
+
+    const staffList = await Promise.all(
+      learners.map(l => buildTicketData(l.email, required))
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="exit-tickets-${new Date().toISOString().slice(0,10)}.pdf"`);
+    const doc = buildExitTicketPdf(staffList, required);
+    doc.pipe(res);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+router.get('/exit-ticket/:email', ...auth, async (req, res) => {
+  try {
+    const { rows: setting } = await pool.query(
+      `SELECT value FROM settings WHERE key = 'infoseciq_required_courses' LIMIT 1`
+    );
+    const required = parseInt(setting[0]?.value || '10') || 10;
+
+    const data = await buildTicketData(req.params.email, required);
+    const safeName = (data.staffName || data.email).replace(/[^a-z0-9]/gi, '-');
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="exit-ticket-${safeName}.pdf"`);
+    const doc = buildExitTicketPdf([data], required);
+    doc.pipe(res);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 

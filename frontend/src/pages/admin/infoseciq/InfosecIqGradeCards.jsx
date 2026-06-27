@@ -37,6 +37,18 @@ function PhishedBadge({ count }) {
   return <span className={`text-xs font-semibold ${color}`}>{count}×</span>;
 }
 
+function downloadExitTicket(email) {
+  const token = localStorage.getItem('cg_token');
+  fetch(`/api/v1/infoseciq/exit-ticket/${encodeURIComponent(email)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  }).then(r => r.blob()).then(blob => {
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `exit-ticket-${email}.pdf`;
+    a.click();
+  });
+}
+
 function GradeCardModal({ learner, onClose }) {
   const [history, setHistory] = useState(null);
 
@@ -77,6 +89,13 @@ function GradeCardModal({ learner, onClose }) {
               </span>
             )}
           </div>
+          <button
+            onClick={() => downloadExitTicket(learner.email)}
+            className="text-xs px-3 py-1.5 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium whitespace-nowrap"
+            title="Download exit ticket PDF for this staff member"
+          >
+            Exit Ticket PDF
+          </button>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-xl font-bold px-2">×</button>
         </div>
 
@@ -201,9 +220,27 @@ export default function InfosecIqGradeCards() {
           <h1 className="text-2xl font-bold text-slate-900">Security Grade Cards</h1>
           <p className="text-sm text-slate-500 mt-0.5">Per-staff security awareness grades from Infosec IQ</p>
         </div>
-        <button onClick={handleExport} className="btn btn-secondary text-sm">
-          Export CSV
-        </button>
+        <div className="flex gap-2">
+          <button onClick={handleExport} className="btn btn-secondary text-sm">
+            Export CSV
+          </button>
+          <button
+            onClick={() => {
+              const token = localStorage.getItem('cg_token');
+              fetch('/api/v1/infoseciq/exit-ticket/bulk', {
+                headers: { Authorization: `Bearer ${token}` },
+              }).then(r => r.blob()).then(blob => {
+                const a = document.createElement('a');
+                a.href = URL.createObjectURL(blob);
+                a.download = `exit-tickets-all-${new Date().toISOString().slice(0,10)}.pdf`;
+                a.click();
+              });
+            }}
+            className="btn btn-primary text-sm"
+          >
+            All Exit Tickets PDF
+          </button>
+        </div>
       </div>
 
       {/* Grade distribution */}
