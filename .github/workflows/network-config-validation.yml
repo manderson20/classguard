@@ -1,0 +1,111 @@
+name: Network Config Validation
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: network-config-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  committed-configs:
+    name: Network — committed config syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate shell scripts
+        run: |
+          bash -n infrastructure/kea/entrypoint.sh
+          bash -n infrastructure/freeradius/sync-freeradius.sh
+          bash -n infrastructure/vpn/entrypoint.sh
+          bash -n infrastructure/firewall/sync-ufw.sh
+          bash -n infrastructure/keepalived/sync-keepalived.sh
+          bash -n infrastructure/chrony/sync-chrony.sh
+
+      - name: Validate VPN agent Python syntax
+        run: python3 -m py_compile infrastructure/vpn/vpn-agent.py
+
+      - name: Validate generated RADIUS and HA config emitters
+        env:
+          NODE_ENV: test
+          DATABASE_URL: postgresql://classguard:testpassword@localhost:5432/classguard_test
+          JWT_SECRET: ci-test-secret-not-for-production
+        run: |
+          node - <<'NODE'
+          const keepalived = require('./backend/src/services/keepalived');
+
+          const haConfig = {
+            vip_address: '10.0.0.10',
+            vip_prefix_len: 24,
+            vip_interface: 'eth0',
+            vrrp_instance_name: 'CLASSGUARD_APPS',
+            vrrp_virtual_router_id: 51,
+            vrrp_auth_password: 'ci-secret',
+            vrrp_advert_int: 1,
+            track_classguard_api: true,
+            track_freeradius: true,
+          };
+          const node = { node_id: 'ci-node-1', failover_priority: 150 };
+          const nasRows = [{
+            shortname: 'ci-ap',
+            ip_address: '10.0.0.20',
+            shared_secret: 'radius-secret',
+            vendor: 'other',
+            name: 'CI AP',
+            description: 'synthetic validation client',
+          }];
+
+          const outputs = [
+            keepalived.generateKeepalived(haConfig, node),
+            keepalived.generateNotifyScript(),
+            keepalived.generateFreeRadiusClients(nasRows),
+            keepalived.generateFreeRadiusRestMod('http://localhost:3001', 'ci-internal-secret'),
+            keepalived.generateFreeRadiusVirtualServer(),
+            keepalived.generateEapMod(),
+          ];
+
+          for (const [index, output] of outputs.entries()) {
+            if (typeof output !== 'string' || output.trim().length < 50) {
+              throw new Error(`generated config ${index} was empty`);
+            }
+          }
+          process.exit(0);
+          NODE
+
+  kea:
+    name: Kea — DHCP config parse
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Kea validation image
+        run: docker build -t classguard-kea-ci ./infrastructure/kea
+
+      - name: Validate Kea DHCP and control-agent configs
+        run: |
+          docker run --rm \
+            -e DB_PASSWORD=ci-test-password \
+            -v "$PWD/infrastructure/kea:/etc/kea:ro" \
+            --entrypoint bash \
+            classguard-kea-ci \
+            -lc '
+              set -euo pipefail
+              mkdir -p /tmp/kea-conf /var/log/kea /var/run/kea
+              envsubst "\${DB_PASSWORD}" < /etc/kea/kea-dhcp4.conf > /tmp/kea-conf/kea-dhcp4.conf
+              envsubst "\${DB_PASSWORD}" < /etc/kea/kea-dhcp6.conf > /tmp/kea-conf/kea-dhcp6.conf
+              envsubst "\${DB_PASSWORD}" < /etc/kea/kea-ctrl-agent.conf > /tmp/kea-conf/kea-ctrl-agent.conf
+              kea-dhcp4 -t /tmp/kea-conf/kea-dhcp4.conf
+              kea-dhcp6 -t /tmp/kea-conf/kea-dhcp6.conf
+              kea-ctrl-agent -t /tmp/kea-conf/kea-ctrl-agent.conf
+            '
