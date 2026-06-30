@@ -74,6 +74,9 @@ import InfosecIqCampaigns      from './pages/admin/infoseciq/InfosecIqCampaigns'
 import InfosecIqCampaignDetail from './pages/admin/infoseciq/InfosecIqCampaignDetail';
 import InfosecIqGradeCards     from './pages/admin/infoseciq/InfosecIqGradeCards';
 
+// ClassPulse
+import StudentJoin from './pages/classpulse/StudentJoin';
+
 // Fleet pages
 import FleetOverview    from './pages/fleet/FleetOverview';
 import FleetDevices     from './pages/fleet/FleetDevices';
@@ -213,6 +216,9 @@ export default function App() {
           <Route path="/admin/infoseciq/grade-cards"        element={<InfosecIqGradeCards />} />
         </Route>
       </Route>
+
+      {/* Public student join page — outside RequireAuth, works on any Chromebook */}
+      <Route path="/pulse/:code" element={<StudentJoin />} />
 
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
