@@ -2,12 +2,10 @@ FROM ubuntu:26.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Pinned to the exact version available on jammy-updates at build time, same
-# reasoning as infrastructure/kea/Dockerfile's KEA_VERSION pin — IKEv2/IPsec
-# semantics changing out from under us on a routine rebuild is exactly the
-# kind of silent behavior change this whole pinning convention exists to
-# catch before it's running, not after.
-ARG STRONGSWAN_VERSION=5.9.5-2ubuntu2.7
+# Pinned to the exact version available on ubuntu 26.04 at build time.
+# strongswan 6.0.4 is a major-version bump from 5.9.5 (22.04) but the
+# swanctl config format is unchanged — existing tunnel configs work as-is.
+ARG STRONGSWAN_VERSION=6.0.4-1ubuntu3.1
 
 RUN apt-get update && apt-get install -y \
       strongswan=${STRONGSWAN_VERSION} \
