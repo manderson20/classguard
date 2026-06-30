@@ -184,4 +184,51 @@ async function syncDevices() {
   return count;
 }
 
-module.exports = { getConfig, listDevices, listAllDevices, syncDevices };
+// ---------------------------------------------------------------------------
+// Push asset tags from Snipe-IT back to Mosyle device records.
+// Mosyle API requires one request per OS family (ios covers both iOS + iPadOS).
+// Only updates the local integration_devices row on success so the cross-sync
+// can retry on next run if a device is temporarily unreachable.
+// ---------------------------------------------------------------------------
+function toMosyleOs(osType) {
+  if (osType === 'macOS') return 'mac';
+  if (osType === 'tvOS')  return 'tvos';
+  return 'ios'; // iOS and iPadOS both use 'ios' in Mosyle API
+}
+
+async function pushAssetTags(updates) {
+  // updates: [{ serialNumber, osType, assetTag }]
+  // Returns: [{ serialNumber, ok: bool, error: string|null }]
+  const byOs = new Map();
+  for (const u of updates) {
+    const os = toMosyleOs(u.osType || 'iOS');
+    if (!byOs.has(os)) byOs.set(os, []);
+    byOs.get(os).push({ serial_number: u.serialNumber, asset_tag: u.assetTag });
+  }
+
+  const out = [];
+  for (const [os, elements] of byOs) {
+    for (let i = 0; i < elements.length; i += 100) {
+      const batch = elements.slice(i, i + 100);
+      try {
+        const data      = await apiRequest('editdevice', { options: { os, elements: batch } });
+        const responses = Array.isArray(data.response) ? data.response : [];
+
+        if (responses.length > 0) {
+          for (const r of responses) {
+            const ok = r.status === 'DATA_OK' || r.status === 'OK';
+            out.push({ serialNumber: r.serial_number, ok, error: ok ? null : (r.message || r.status) });
+          }
+        } else {
+          // Mosyle returned a top-level OK with no per-item breakdown — treat all as success.
+          for (const el of batch) out.push({ serialNumber: el.serial_number, ok: true, error: null });
+        }
+      } catch (err) {
+        for (const el of batch) out.push({ serialNumber: el.serial_number, ok: false, error: err.message });
+      }
+    }
+  }
+  return out;
+}
+
+module.exports = { getConfig, listDevices, listAllDevices, syncDevices, pushAssetTags };
