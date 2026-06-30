@@ -268,7 +268,7 @@ router.post('/internal/sessions', authenticate, requireMinRole('superadmin'), as
     // Per-assigned-ip restriction list the agent applies as iptables rules
     // -- the tunnel itself stays full-reachability (local_ts = 0.0.0.0/0 in
     // swanctl.conf); this is the actual per-profile enforcement point.
-    const restrictions = {};
+    const restrictions = Object.create(null);
 
     for (const s of sessions) {
       if (!s.cert_cn) continue;

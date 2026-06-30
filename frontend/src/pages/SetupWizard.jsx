@@ -485,7 +485,7 @@ function StepDone({ onFinish }) {
 // --------------------------------------------------------------------------
 export default function SetupWizard() {
   const [step, setStep]     = useState(1);
-  const [saving, setSaving] = useState(false);
+  const [, setSaving] = useState(false);
   const { user, refreshUser } = useAuth();
   const navigate = useNavigate();
 

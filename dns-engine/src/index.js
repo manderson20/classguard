@@ -1,6 +1,7 @@
 require('dotenv').config();
 const DNS                    = require('dns2');
 const express                = require('express');
+const { rateLimit }          = require('express-rate-limit');
 const { resolveQuery, buildResponse } = require('./resolver');
 const { dohHandler }         = require('./doh');
 const { getCount }           = require('./blocklistLoader');
@@ -68,7 +69,8 @@ app.use('/dns-query', express.raw({ type: 'application/dns-message', limit: '16k
 app.use(express.json());
 
 // Health check
-app.get('/health', async (req, res) => {
+const healthLimiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
+app.get('/health', healthLimiter, async (req, res) => {
   try {
     await redis.ping();
     const blocklistCount = await getCount();

@@ -9,10 +9,7 @@
 
 const https = require('https');
 
-// Ignore self-signed certs on local UniFi controllers
-const agent = new https.Agent({ rejectUnauthorized: false });
-
-async function request(baseUrl, path, method, body, cookies) {
+async function request(baseUrl, path, method, body, cookies, agent) {
   const axios = require('axios');
   const url   = `${baseUrl.replace(/\/$/, '')}${path}`;
   const res   = await axios({
@@ -29,12 +26,12 @@ async function request(baseUrl, path, method, body, cookies) {
   return res;
 }
 
-async function login(baseUrl, username, password) {
+async function login(baseUrl, username, password, agent) {
   // Try UniFi OS endpoint first, fall back to legacy
   const failures = [];
   for (const path of ['/api/auth/login', '/api/login']) {
     try {
-      const res = await request(baseUrl, path, 'POST', { username, password });
+      const res = await request(baseUrl, path, 'POST', { username, password }, undefined, agent);
       const setCookie = res.headers['set-cookie'] || [];
       const cookies   = setCookie.map(c => c.split(';')[0]).join('; ');
       if (cookies) return { cookies, isOs: path.includes('auth') };
@@ -67,13 +64,13 @@ function sessionKey(baseUrl, username) {
   return `${baseUrl}|${username}`;
 }
 
-async function getSession(baseUrl, username, password, { forceFresh = false } = {}) {
+async function getSession(baseUrl, username, password, agent, { forceFresh = false } = {}) {
   const key = sessionKey(baseUrl, username);
   const cached = sessionCache.get(key);
   if (!forceFresh && cached && cached.expiresAt > Date.now()) {
     return cached;
   }
-  const session = await login(baseUrl, username, password);
+  const session = await login(baseUrl, username, password, agent);
   sessionCache.set(key, { ...session, expiresAt: Date.now() + SESSION_TTL_MS });
   return session;
 }
@@ -85,19 +82,21 @@ function isAuthError(err) {
 /**
  * Run an authenticated request, transparently retrying once with a fresh
  * login if the cached session turns out to be stale (401/403).
+ * Cert validation is controlled per-controller via extra_config.verify_ssl (default: off for LAN appliances).
  */
 async function withSession(config, fn) {
   const { base_url, username, password } = config;
   if (!base_url || !username || !password) throw new Error('UniFi: base_url, username, password required');
 
-  let session = await getSession(base_url, username, password);
+  const agent = new https.Agent({ rejectUnauthorized: !!(config.extra_config?.verify_ssl) });
+  let session = await getSession(base_url, username, password, agent);
   try {
-    return await fn(session);
+    return await fn(session, agent);
   } catch (err) {
     if (!isAuthError(err)) throw err;
     sessionCache.delete(sessionKey(base_url, username));
-    session = await getSession(base_url, username, password, { forceFresh: true });
-    return await fn(session);
+    session = await getSession(base_url, username, password, agent, { forceFresh: true });
+    return await fn(session, agent);
   }
 }
 
@@ -108,14 +107,15 @@ async function withSession(config, fn) {
 async function fetchClients(config) {
   const { base_url, site_id = 'default' } = config;
 
-  return withSession(config, async ({ cookies, isOs }) => {
+  return withSession(config, async ({ cookies, isOs }, agent) => {
     const apiBase = isOs ? '/proxy/network' : '';
     const res     = await request(
       base_url,
       `${apiBase}/api/s/${site_id}/stat/sta`,
       'GET',
       null,
-      cookies
+      cookies,
+      agent
     );
 
     const raw = res.data?.data || [];
@@ -154,14 +154,15 @@ async function fetchClients(config) {
 async function fetchDevices(config) {
   const { base_url, site_id = 'default' } = config;
 
-  return withSession(config, async ({ cookies, isOs }) => {
+  return withSession(config, async ({ cookies, isOs }, agent) => {
     const apiBase = isOs ? '/proxy/network' : '';
     const res     = await request(
       base_url,
       `${apiBase}/api/s/${site_id}/stat/device`,
       'GET',
       null,
-      cookies
+      cookies,
+      agent
     );
 
     const raw = res.data?.data || [];
@@ -181,9 +182,9 @@ async function fetchDevices(config) {
  */
 async function testConnection(config) {
   const { base_url } = config;
-  const sites = await withSession(config, async ({ cookies, isOs }) => {
+  const sites = await withSession(config, async ({ cookies, isOs }, agent) => {
     const apiBase = isOs ? '/proxy/network' : '';
-    const res     = await request(base_url, `${apiBase}/api/self/sites`, 'GET', null, cookies);
+    const res     = await request(base_url, `${apiBase}/api/self/sites`, 'GET', null, cookies, agent);
     return (res.data?.data || []).map(s => ({ id: s.name, desc: s.desc }));
   });
   return { ok: true, sites };

@@ -645,7 +645,7 @@ export default function SettingsPage() {
             Save
           </button>
           <a
-            href={`/metrics/zabbix-template?token=${zabbixToken}`}
+            href={`/metrics/zabbix-template?token=${encodeURIComponent(zabbixToken ?? '')}`}
             className="btn-secondary text-sm"
             target="_blank" rel="noreferrer"
           >

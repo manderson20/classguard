@@ -73,11 +73,15 @@ function makeTlsClient(cert, key, timeout = 10_000) {
  * e.g. @school.org staff and @students.school.org students in the same
  * Workspace org without needing a separate LDAP connection per domain.
  */
+function escapeLdapFilter(val) {
+  return String(val).replace(/[\\()*\x00]/g, c => `\\${c.charCodeAt(0).toString(16).padStart(2, '0')}`);
+}
+
 async function searchUserDn(client, baseDn, email) {
   return new Promise((resolve, reject) => {
     client.search(baseDn, {
       scope:  'sub',
-      filter: `(mail=${email.replace(/[()\\*\0]/g, '')})`,
+      filter: `(mail=${escapeLdapFilter(email)})`,
       attributes: ['dn'],
     }, (err, res) => {
       if (err) return reject(err);

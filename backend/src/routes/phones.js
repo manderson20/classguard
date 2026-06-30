@@ -1,6 +1,6 @@
 const express = require('express');
 const multer  = require('multer');
-const { query, pool } = require('../db');
+const { query } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const phoneSpreadsheetImport = require('../services/phoneSpreadsheetImport');

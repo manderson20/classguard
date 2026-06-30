@@ -33,7 +33,7 @@ async function getToken(source) {
   });
 
   const https  = require('https');
-  const agent  = new https.Agent({ rejectUnauthorized: false }); // IC sometimes uses self-signed
+  const agent  = new https.Agent({ rejectUnauthorized: !!(source.verify_ssl) });
   const axios  = require('axios');
 
   // Infinite Campus token URL is typically /api/oneroster/v1p1/token or /as/token
@@ -58,7 +58,7 @@ async function getToken(source) {
 async function orGet(source, path, params = {}) {
   const axios  = require('axios');
   const https  = require('https');
-  const agent  = new https.Agent({ rejectUnauthorized: false });
+  const agent  = new https.Agent({ rejectUnauthorized: !!(source.verify_ssl) });
   const token  = await getToken(source);
   const base   = source.base_url.replace(/\/$/, '');
   const results = [];

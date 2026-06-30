@@ -11,15 +11,18 @@
 const axios = require('axios');
 const https = require('https');
 
-const agent = new https.Agent({ rejectUnauthorized: false });
-
 function apiBase(config) {
   const flavor = config.extra_config?.flavor || 'smartzone';
   if (flavor === 'unleashed') return `${config.base_url}/ajaxplorer/i/rks/api`;
   return `${config.base_url}/wsg/api/public/v11_0`;
 }
 
-async function login(config) {
+// Cert validation controlled per-controller via extra_config.verify_ssl (default: off for LAN appliances)
+function makeAgent(config) {
+  return new https.Agent({ rejectUnauthorized: !!(config.extra_config?.verify_ssl) });
+}
+
+async function login(config, agent) {
   const { base_url, username, password } = config;
   if (!base_url || !username || !password) throw new Error('Ruckus: base_url, username, password required');
 
@@ -33,7 +36,7 @@ async function login(config) {
   return cookies;
 }
 
-async function logout(config, cookies) {
+async function logout(config, cookies, agent) {
   await axios.delete(
     `${apiBase(config)}/session`,
     { headers: { Cookie: cookies }, httpsAgent: agent }
@@ -41,7 +44,8 @@ async function logout(config, cookies) {
 }
 
 async function fetchClients(config) {
-  const cookies = await login(config);
+  const agent   = makeAgent(config);
+  const cookies = await login(config, agent);
   const results = [];
   let   index   = 0;
   const limit   = 100;
@@ -70,7 +74,7 @@ async function fetchClients(config) {
       index += limit;
     }
   } finally {
-    await logout(config, cookies);
+    await logout(config, cookies, agent);
   }
 
   return results.map(c => ({
@@ -96,8 +100,9 @@ async function fetchClients(config) {
 }
 
 async function testConnection(config) {
-  const cookies = await login(config);
-  await logout(config, cookies);
+  const agent   = makeAgent(config);
+  const cookies = await login(config, agent);
+  await logout(config, cookies, agent);
   return { ok: true, message: 'Ruckus SmartZone login successful' };
 }
 

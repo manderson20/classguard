@@ -1,7 +1,7 @@
 const readline = require('readline');
 const axios    = require('axios');
 const redis    = require('../redis');
-const { query, withTransaction } = require('../db');
+const { query } = require('../db');
 
 const MASTER_KEY  = 'classguard:blocklist';
 const BATCH_SIZE  = 1000;  // domains per SADD call

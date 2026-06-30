@@ -120,7 +120,7 @@ async function run(sqlText, commit) {
     await client.query('BEGIN');
 
     // --- Sections — reuse by name if this dump has already been imported once ---
-    const sectionIdMap = {}; // phpIPAM sections.id -> our ipam_sections.id
+    const sectionIdMap = Object.create(null); // phpIPAM sections.id -> our ipam_sections.id
     for (const s of sections) {
       const existing = await client.query('SELECT id FROM ipam_sections WHERE name = $1', [s.name]);
       if (existing.rows[0]) {
@@ -139,7 +139,7 @@ async function run(sqlText, commit) {
     // --- VLANs — our vlan_id (the 802.1Q tag) must be globally unique, but
     // PHPiPAM data can have the same tag reused under different vlanId PKs
     // (different sites/naming over the years) — merge those into one row. ---
-    const vlanIdMap = {}; // phpIPAM vlans.vlanId (PK) -> our vlans.id
+    const vlanIdMap = Object.create(null); // phpIPAM vlans.vlanId (PK) -> our vlans.id
     for (const v of vlans) {
       const number = toInt(v.number);
       if (!number) { warnings.push(`VLAN "${v.name}" has no tag number — skipped`); continue; }
@@ -165,11 +165,11 @@ async function run(sqlText, commit) {
     // CIDR — ClassGuard's ipam_subnets requires a real subnet, so folders are
     // skipped; any real subnet nested under one attaches to the section
     // directly instead of losing its place in the hierarchy.
-    const subnetIdMap    = {}; // phpIPAM subnets.id -> our ipam_subnets.id (real subnets only)
-    const subnetIsFolder = {};
-    const subnetMaster   = {};
-    const subnetVersion  = {};
-    const gatewayCandidate = {}; // our ipam_subnets.id -> gateway IP text, applied after addresses import
+    const subnetIdMap    = Object.create(null); // phpIPAM subnets.id -> our ipam_subnets.id (real subnets only)
+    const subnetIsFolder = Object.create(null);
+    const subnetMaster   = Object.create(null);
+    const subnetVersion  = Object.create(null);
+    const gatewayCandidate = Object.create(null); // our ipam_subnets.id -> gateway IP text, applied after addresses import
 
     for (const s of subnetsRaw) {
       subnetIsFolder[s.id] = toBool(s.isFolder) || !s.subnet || s.mask === '' || s.mask === null;

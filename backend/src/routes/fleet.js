@@ -80,7 +80,6 @@ router.get('/summary', async (req, res) => {
   let chromebooks = { total: 0, expired: 0, expiringSoon: 0, ok: 0, unknown: 0 };
   let apple       = { total: 0, upToDate: 0, updateAvailable: 0, unknown: 0 };
   let offlineCount = 0;
-  const snipeSerials = new Set(allDevices.filter(d => d.source === 'snipeit').map(d => d.serial_number?.trim().toUpperCase()).filter(Boolean));
   let gapCount = 0;
 
   for (const [, rows] of bySerial) {

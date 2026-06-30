@@ -34,10 +34,6 @@ function queryNtpServer(host, timeoutMs = 4000) {
         const txSec  = msg.readUInt32BE(40) - NTP_EPOCH;
         const txFrac = msg.readUInt32BE(44);
 
-        // Originate timestamp (bytes 24–31) — what we sent
-        // Reference timestamp (bytes 16–23)
-        const refSec = msg.readUInt32BE(16) - NTP_EPOCH;
-
         // Reference clock identifier (bytes 12–15)
         let refId;
         if (stratum <= 1) {

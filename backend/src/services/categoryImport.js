@@ -227,9 +227,7 @@ async function upsertDomains(pairs, source) {
   let inserted = 0;
   for (let i = 0; i < pairs.length; i += CHUNK) {
     const chunk = pairs.slice(i, i + CHUNK);
-    const domains = chunk.map(p => p.domain);
     const catIds  = chunk.map(p => catIdMap[p.slug]);
-    const sources = chunk.map(() => source);
 
     // Skip pairs where category doesn't exist
     const valid = chunk.filter((_, j) => catIds[j]);

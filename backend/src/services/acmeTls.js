@@ -364,9 +364,9 @@ async function renewIfNeeded() {
   // fs check, self-heals without waiting for the next actual renewal
   // (which could be months away).
   const markerPath = path.join(CERT_DIR, '.le-active');
-  if (cfg.cert_pem && !fs.existsSync(markerPath)) {
+  if (cfg.cert_pem) {
     fs.mkdirSync(CERT_DIR, { recursive: true });
-    fs.writeFileSync(markerPath, '');
+    try { fs.writeFileSync(markerPath, '', { flag: 'wx' }); } catch (e) { if (e.code !== 'EEXIST') throw e; }
   }
 
   if (!cfg.enabled || !cfg.cert_expires_at) return { renewed: false };

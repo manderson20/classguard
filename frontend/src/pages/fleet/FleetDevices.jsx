@@ -10,7 +10,6 @@ import {
 import api from '../../lib/api';
 
 const OS_OPTIONS   = ['', 'ChromeOS', 'macOS', 'iOS', 'iPadOS'];
-const SRC_OPTIONS  = ['', 'mosyle', 'snipeit', 'google_admin'];
 
 function useDebounced(value, delay = 300) {
   const [d, setD] = useState(value);

@@ -10,7 +10,6 @@ const SELECT = INPUT + ' bg-white';
 const BTN    = 'px-3 py-1.5 rounded-lg text-sm font-medium transition-colors';
 const BTN_PRIMARY = BTN + ' bg-primary-600 text-white hover:bg-primary-700';
 const BTN_GHOST   = BTN + ' text-slate-600 hover:bg-slate-100';
-const BTN_DANGER  = BTN + ' text-red-600 hover:bg-red-50';
 
 const RECORD_TYPES = ['A','AAAA','CNAME','MX','TXT','PTR','NS','SRV'];
 

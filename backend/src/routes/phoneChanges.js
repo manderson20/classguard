@@ -78,10 +78,10 @@ router.post('/change-task-templates', async (req, res) => {
     const { rows: [template] } = await client.query(
       'INSERT INTO phone_change_task_templates (name) VALUES ($1) RETURNING *', [name]
     );
-    for (let i = 0; i < items.length; i++) {
+    for (const [i, item] of items.slice(0, 500).entries()) {
       await client.query(
         'INSERT INTO phone_change_task_template_items (template_id, label, sort_order) VALUES ($1,$2,$3)',
-        [template.id, items[i], i]
+        [template.id, item, i]
       );
     }
     await client.query('COMMIT');
@@ -150,10 +150,10 @@ router.post('/change-periods/:periodId/changes', async (req, res) => {
       );
       taskLabels = items.map(i => i.label);
     }
-    for (let i = 0; i < taskLabels.length; i++) {
+    for (const [i, label] of taskLabels.slice(0, 500).entries()) {
       await client.query(
         'INSERT INTO phone_change_tasks (change_id, label, sort_order) VALUES ($1,$2,$3)',
-        [change.id, taskLabels[i], i]
+        [change.id, label, i]
       );
     }
     await client.query('COMMIT');

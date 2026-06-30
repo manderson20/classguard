@@ -709,7 +709,6 @@ function ChangePeriodDetail({ period, onBack }) {
 }
 
 function ChangeWorkflowTab() {
-  const qc = useQueryClient();
   const [selectedPeriod, setSelectedPeriod] = useState(null);
   const [showNewPeriod, setShowNewPeriod] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
