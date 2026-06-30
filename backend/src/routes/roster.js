@@ -5,7 +5,6 @@ const { authenticate }   = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const classroom  = require('../services/googleClassroom');
 const oneRoster  = require('../services/oneRoster');
-const { syncTechLabRoles } = require('../services/techLabSync');
 
 const auth = [authenticate, requirePermission('roster')];
 
@@ -120,7 +119,6 @@ router.post('/oneroster/sources/:id/test', ...auth, async (req, res) => {
 router.post('/sync/oneroster/:id', ...auth, async (req, res) => {
   res.json({ status: 'started' });
   oneRoster.syncOneRoster(req.params.id, msg => console.log('[oneroster]', msg))
-    .then(() => syncTechLabRoles().catch(e => console.error('[tech-lab] role sync:', e.message)))
     .catch(async err => {
       console.error('[oneroster] sync error:', err.message);
       await pool.query(
