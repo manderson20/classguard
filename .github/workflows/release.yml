@@ -21,20 +21,44 @@ jobs:
         id: version
         run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
 
-      - name: Extract changelog entry
-        id: changelog
+      - name: Build release body
+        id: body
         run: |
-          # Pull the section for this version out of CHANGELOG.md
           VERSION="${{ steps.version.outputs.version }}"
-          NOTES=$(awk "/^## \[$VERSION\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
-          echo "notes<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$NOTES" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          TAG="v${VERSION}"
+          BASE="https://github.com/${{ github.repository }}/blob/${TAG}"
+          WIKI="https://github.com/${{ github.repository }}/wiki"
+
+          # Extract this version's section from CHANGELOG.md
+          NOTES=$(awk "/^## \[${VERSION}\]/{found=1; next} found && /^## /{exit} found{print}" CHANGELOG.md)
+
+          # Write changelog notes + version-pinned doc links to a file
+          cat > /tmp/release_body.md <<RELEASE_EOF
+          ${NOTES}
+
+          ---
+
+          ## Documentation for v${VERSION}
+
+          These links are pinned to this exact release — safe to bookmark if you're staying on v${VERSION}.
+
+          | Document | Link |
+          |----------|------|
+          | Deployment Guide | [DEPLOYMENT.md](${BASE}/DEPLOYMENT.md) |
+          | Security Policy | [SECURITY.md](${BASE}/SECURITY.md) |
+          | Privacy Policy | [PRIVACY.md](${BASE}/PRIVACY.md) |
+          | Disclaimer | [DISCLAIMER.md](${BASE}/DISCLAIMER.md) |
+          | Full Changelog | [CHANGELOG.md](${BASE}/CHANGELOG.md) |
+
+          **Community docs** (always current): [Contributing Guide](${WIKI}/Contributing) · [Code of Conduct](${WIKI}/Code-of-Conduct)
+          RELEASE_EOF
+
+          echo "path=/tmp/release_body.md" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           name: "ClassGuard v${{ steps.version.outputs.version }}"
-          body: ${{ steps.changelog.outputs.notes }}
+          body_path: ${{ steps.body.outputs.path }}
           draft: false
           prerelease: ${{ contains(steps.version.outputs.version, '-') }}
