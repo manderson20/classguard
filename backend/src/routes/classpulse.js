@@ -4,6 +4,10 @@ const { authenticate } = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { requirePermissionIfAdmin } = require('../middleware/permissions');
 
+// Hard cap on options per question — prevents loop-bound injection from
+// unbounded user-supplied arrays and keeps the DB sane.
+const MAX_OPTIONS = 26;
+
 const router = Router();
 
 // All ClassPulse routes require at minimum a teacher login.
@@ -465,7 +469,8 @@ router.post('/pages/:pageId/questions', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  const { question_type, prompt, settings = {}, options = [] } = req.body;
+  const { question_type, prompt, settings = {} } = req.body;
+  const options = (req.body.options || []).slice(0, MAX_OPTIONS);
   if (!question_type) return res.status(400).json({ error: 'question_type is required' });
   if (!prompt?.trim()) return res.status(400).json({ error: 'prompt is required' });
 
@@ -517,7 +522,8 @@ router.put('/questions/:questionId', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  const { prompt, settings, options } = req.body;
+  const { prompt, settings } = req.body;
+  const options = Array.isArray(req.body.options) ? req.body.options.slice(0, MAX_OPTIONS) : null;
 
   await withTransaction(async client => {
     await client.query(
@@ -528,7 +534,7 @@ router.put('/questions/:questionId', async (req, res) => {
       [questionId, prompt || null, settings || null]
     );
 
-    if (Array.isArray(options)) {
+    if (options !== null) {
       await client.query(`DELETE FROM classpulse_question_options WHERE question_id = $1`, [questionId]);
       for (let i = 0; i < options.length; i++) {
         const o = options[i];
