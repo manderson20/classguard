@@ -121,13 +121,21 @@ async function getGaps() {
 // Run the cross-sync: create missing Snipe-IT assets + write back asset tags.
 // ---------------------------------------------------------------------------
 async function runCrossSync(actorId) {
-  const cfg = await getFleetSettings();
+  const cfg     = await getFleetSettings();
+  const results = { createdInSnipeit: 0, wroteBackToGoogle: 0, wroteBackToMosyle: 0, skipped: 0, errors: [] };
 
   let http;
   try {
     http = await snipeit.getClient();
   } catch (err) {
-    throw new Error(`Snipe-IT not reachable: ${err.message}`, { cause: err });
+    results.errors.push(`Snipe-IT not reachable: ${err.message}`);
+    await pool.query(
+      `INSERT INTO fleet_sync_log
+         (created_in_snipeit, wrote_back_to_mosyle, wrote_back_to_google, skipped, errors, triggered_by)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [0, 0, 0, 0, results.errors, actorId || null]
+    );
+    return results;
   }
 
   const { rows: allDevices } = await pool.query(
@@ -144,7 +152,6 @@ async function runCrossSync(actorId) {
     bySerial.get(s).push(d);
   }
 
-  const results = { createdInSnipeit: 0, wroteBackToGoogle: 0, wroteBackToMosyle: 0, skipped: 0, errors: [] };
   const mosylePushQueue = []; // [{ id, serialNumber, osType, assetTag }] — batched after main loop
 
   for (const [serial, deviceRows] of bySerial) {
