@@ -27,6 +27,7 @@ const { syncAppleOsVersions } = require('./appleOsSync');
 const mosyle    = require('./mosyle');
 const snipeit   = require('./snipeit');
 const fleetSync = require('./fleetSync');
+const mailer    = require('./mailer');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -368,6 +369,32 @@ async function runFleetNightlySync() {
     }));
   } catch (err) {
     console.error('[fleet-nightly] cross-sync error:', err.message);
+  }
+
+  // Alert superadmins if any devices are missing from Snipe-IT —
+  // but only when the count changes vs the last run, so it's signal not noise.
+  try {
+    const gaps = await fleetSync.getGaps();
+    const missingSnipe = gaps.filter(g => (g.missingFrom || []).includes('snipeit'));
+    const currentCount = missingSnipe.length;
+
+    const { rows } = await pool.query(`SELECT value FROM settings WHERE key='fleet_last_gap_count'`);
+    const lastCount = rows[0]?.value !== undefined ? parseInt(rows[0].value, 10) : null;
+
+    await pool.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('fleet_last_gap_count',$1,NOW())
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
+      [String(currentCount)]
+    );
+
+    if (currentCount > 0 && currentCount !== lastCount) {
+      const result = await mailer.sendFleetGapAlert(missingSnipe);
+      console.log(`[fleet-nightly] gap alert: ${currentCount} missing (prev ${lastCount ?? 'unknown'}) — sent:${result.sent}`);
+    } else {
+      console.log(`[fleet-nightly] gap alert: ${currentCount} missing (no change, no email)`);
+    }
+  } catch (err) {
+    console.error('[fleet-nightly] gap alert error:', err.message);
   }
 }
 

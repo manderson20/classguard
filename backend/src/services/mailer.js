@@ -63,4 +63,37 @@ async function sendFilterBypassAlert({ studentName, deviceName, ipAddress }) {
   return sendMail({ to: recipients.join(','), subject, text });
 }
 
-module.exports = { sendMail, sendSafetyAlert, sendFilterBypassAlert, getSmtpSettings };
+// Fleet gap alert — IT infrastructure, superadmins only, never the safety list.
+// gaps: array from fleetSync.getGaps() filtered to missingFrom=['snipeit'].
+async function sendFleetGapAlert(gaps) {
+  const { rows: admins } = await query(`SELECT email FROM users WHERE role = 'superadmin'`);
+  const recipients = admins.map(a => a.email).filter(Boolean);
+  if (!recipients.length) return { sent: false, reason: 'no superadmin recipients' };
+
+  const cfg = await getSmtpSettings();
+  if (!cfg.smtp_host) return { sent: false, reason: 'SMTP not configured' };
+
+  const bySource = {};
+  for (const g of gaps) {
+    const src = (g.presentIn || []).filter(s => s !== 'snipeit').join(', ') || 'unknown';
+    if (!bySource[src]) bySource[src] = [];
+    bySource[src].push(g);
+  }
+
+  const lines = [`${gaps.length} device(s) are in your MDM(s) but have no matching Snipe-IT asset:\n`];
+  for (const [src, devs] of Object.entries(bySource)) {
+    lines.push(`${src.toUpperCase()} (${devs.length}):`);
+    const shown = devs.slice(0, 50);
+    for (const d of shown) {
+      lines.push(`  • ${d.serial}  ${d.deviceName || ''}  ${d.deviceModel || ''}  ${d.osType || ''}`);
+    }
+    if (devs.length > 50) lines.push(`  …and ${devs.length - 50} more`);
+    lines.push('');
+  }
+  lines.push('See Fleet → Cross-Sync in ClassGuard for the full list and to run a sync.');
+
+  const subject = `[ClassGuard] ${gaps.length} device(s) missing from Snipe-IT inventory`;
+  return sendMail({ to: recipients.join(','), subject, text: lines.join('\n') });
+}
+
+module.exports = { sendMail, sendSafetyAlert, sendFilterBypassAlert, sendFleetGapAlert, getSmtpSettings };
