@@ -71,10 +71,13 @@ export default function UserDetail() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `parent-report-${(user?.full_name || 'student').replace(/\s+/g, '-')}.pdf`;
+      a.download = `parent-filter-report-${(user?.full_name || 'student').replace(/\s+/g, '-')}.pdf`;
+      document.body.appendChild(a);
       a.click();
+      document.body.removeChild(a);
       URL.revokeObjectURL(url);
       setReportOpen(false);
+      setReportError(null);
     } catch (err) {
       setReportError(err.message);
     } finally {
@@ -170,27 +173,12 @@ export default function UserDetail() {
 
           {user.role === 'student' && (
             <div className="mt-1">
-              {!reportOpen ? (
-                <button onClick={() => { setReportOpen(true); setReportError(null); }} className="btn-secondary text-sm w-full">
-                  Generate Parent Report
-                </button>
-              ) : (
-                <div className="space-y-2 border border-slate-200 rounded-lg p-3">
-                  <p className="text-xs text-slate-500">Screen time and flagged safety events only — no raw browsing history or screenshots.</p>
-                  <div className="flex items-center gap-2">
-                    <input type="date" className="input text-xs flex-1" value={reportFrom} onChange={e => setReportFrom(e.target.value)} />
-                    <span className="text-slate-400 text-xs">to</span>
-                    <input type="date" className="input text-xs flex-1" value={reportTo} onChange={e => setReportTo(e.target.value)} />
-                  </div>
-                  {reportError && <p className="text-xs text-red-600">{reportError}</p>}
-                  <div className="flex items-center gap-2">
-                    <button className="btn-primary text-sm" disabled={reportLoading} onClick={downloadParentReport}>
-                      {reportLoading ? 'Generating…' : 'Download PDF'}
-                    </button>
-                    <button className="text-xs text-slate-400 hover:text-slate-600" onClick={() => setReportOpen(false)}>Cancel</button>
-                  </div>
-                </div>
-              )}
+              <button
+                onClick={() => { setReportOpen(true); setReportError(null); }}
+                className="btn-secondary text-sm w-full"
+              >
+                Generate Parent Filter Report
+              </button>
             </div>
           )}
 
@@ -495,6 +483,68 @@ export default function UserDetail() {
 
       {liveViewOpen && (
         <LiveViewModal student={user} onClose={() => setLiveViewOpen(false)} />
+      )}
+
+      {/* Parent Filter Report modal */}
+      {reportOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full mx-4">
+            <h2 className="font-semibold text-slate-900 mb-1">Generate Parent Filter Report</h2>
+            <p className="text-xs text-slate-500 mb-4">
+              PDF report for parents showing device screen time and flagged safety events.
+              Does not include browsing history or screenshot images — those stay with school staff.
+            </p>
+            <div className="space-y-3 mb-4">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="label text-xs">Start date</label>
+                  <input
+                    type="date"
+                    className="input text-sm"
+                    value={reportFrom}
+                    max={reportTo}
+                    onChange={e => setReportFrom(e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label className="label text-xs">End date</label>
+                  <input
+                    type="date"
+                    className="input text-sm"
+                    value={reportTo}
+                    min={reportFrom}
+                    max={new Date().toISOString().slice(0, 10)}
+                    onChange={e => setReportTo(e.target.value)}
+                  />
+                </div>
+              </div>
+              <p className="text-xs text-slate-400">
+                Student: <strong className="text-slate-600">{user.full_name || user.email}</strong>
+              </p>
+            </div>
+            {reportError && (
+              <p className="text-xs text-red-600 mb-3 p-2 bg-red-50 rounded-lg border border-red-200">
+                {reportError}
+              </p>
+            )}
+            <div className="flex gap-3 justify-end">
+              <button
+                className="btn-secondary text-sm"
+                onClick={() => { setReportOpen(false); setReportError(null); }}
+                disabled={reportLoading}
+              >
+                Cancel
+              </button>
+              <button
+                className="btn-primary text-sm"
+                disabled={reportLoading || !reportFrom || !reportTo}
+                onClick={downloadParentReport}
+              >
+                {reportLoading ? 'Generating…' : 'Download PDF'}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

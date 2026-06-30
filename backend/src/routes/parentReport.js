@@ -8,10 +8,11 @@ const { requireMinRole } = require('../middleware/roles');
 const { requirePermissionIfAdmin } = require('../middleware/permissions');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
 const { generateParentReport } = require('../services/parentReport');
+const { query } = require('../db');
 
 const router = Router();
 
-router.get('/:studentId', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('screenshots'), async (req, res) => {
+router.get('/:studentId', authenticate, requireMinRole('teacher'), requirePermissionIfAdmin('reports'), async (req, res) => {
   const { studentId } = req.params;
 
   if (req.user.role === 'teacher' && !(await teacherOwnsStudent(req.user.userId, studentId))) {
@@ -19,19 +20,22 @@ router.get('/:studentId', authenticate, requireMinRole('teacher'), requirePermis
   }
 
   const from = req.query.from ? new Date(req.query.from) : new Date(Date.now() - 30 * 86400_000);
-  const to   = req.query.to   ? new Date(req.query.to)   : new Date();
-
-  try {
-    const pdfBuffer = await generateParentReport(studentId, { from, to });
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="parent-report-${studentId}.pdf"`,
-    });
-    res.send(pdfBuffer);
-  } catch (err) {
-    if (err.message === 'Student not found') return res.status(404).json({ error: err.message });
-    throw err;
+  // End-of-day inclusive: if caller passes 2026-06-30, include the full day
+  let to = req.query.to ? new Date(req.query.to) : new Date();
+  if (req.query.to) {
+    to.setHours(23, 59, 59, 999);
   }
+
+  const { rows: [student] } = await query(`SELECT full_name FROM users WHERE id = $1 AND role = 'student'`, [studentId]);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
+
+  const pdfBuffer = await generateParentReport(studentId, { from, to });
+  const safeName = (student.full_name || studentId).replace(/[^a-z0-9]/gi, '-').toLowerCase();
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `attachment; filename="parent-report-${safeName}.pdf"`,
+  });
+  res.send(pdfBuffer);
 });
 
 module.exports = router;
