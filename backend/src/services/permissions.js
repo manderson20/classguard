@@ -57,6 +57,7 @@ const PERMISSION_CATALOG = [
   // TLS issuance, since a bad restore can overwrite the whole district's
   // configuration in one request.
   { key: 'backup_export',   label: 'Backup Export',       section: 'System', sensitive: true },
+  { key: 'classpulse',      label: 'ClassPulse (admin config)', section: 'ClassPulse' },
 ];
 
 const PERMISSION_KEYS = new Set(PERMISSION_CATALOG.map(p => p.key));

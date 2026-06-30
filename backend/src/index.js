@@ -146,6 +146,7 @@ app.use('/api/v1/backup',        require('./routes/backup'));
 app.use('/api/v1/security',      require('./routes/security'));
 app.use('/api/v1/parent-report', require('./routes/parentReport'));
 app.use('/api/v1/reports',       require('./routes/reports'));
+app.use('/api/v1/classpulse',    require('./routes/classpulse'));
 app.use('/api/v1/lost-mode',     require('./routes/lostMode'));
 app.use('/api/v1/filter-bypass', require('./routes/filterBypass'));
 app.use('/api/v1/kb',            require('./routes/knowledgeBase'));
