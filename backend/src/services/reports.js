@@ -150,6 +150,156 @@ async function generateDnsFiltering({ from, to }) {
 }
 
 // ---------------------------------------------------------------------------
+// Infosec IQ Cybersecurity Awareness
+// ---------------------------------------------------------------------------
+async function generateInfosecIqAwareness() {
+  const [
+    { rows: totals },
+    { rows: gradeRows },
+    { rows: campaigns },
+    { rows: highRisk },
+    { rows: syncRow },
+  ] = await Promise.all([
+    query(`
+      SELECT
+        COUNT(*)::int                                           AS total_learners,
+        ROUND(AVG(training_completion_pct), 1)                 AS avg_completion_pct,
+        COUNT(*) FILTER (WHERE training_completion_pct = 100)::int AS fully_trained,
+        ROUND(AVG(risk_score), 1)                              AS avg_risk_score,
+        ROUND(AVG(phishing_susceptibility), 1)                 AS avg_phishing_susc
+      FROM infoseciq_learners
+    `),
+    query(`
+      SELECT
+        letter_grade,
+        COUNT(*)::int                           AS count,
+        ROUND(AVG(training_completion_pct), 1) AS avg_completion_pct,
+        ROUND(AVG(risk_score), 1)              AS avg_risk_score
+      FROM infoseciq_learners
+      WHERE letter_grade IS NOT NULL
+      GROUP BY letter_grade
+      ORDER BY letter_grade
+    `),
+    query(`
+      SELECT name, campaign_type, status, recipients_total, emails_sent,
+             clicks, reports, click_rate, report_rate, start_date, end_date
+      FROM infoseciq_campaigns
+      ORDER BY COALESCE(start_date, '1970-01-01') DESC
+      LIMIT 50
+    `),
+    query(`
+      SELECT first_name, last_name, email, letter_grade, risk_score,
+             training_completion_pct, phishing_susceptibility
+      FROM infoseciq_learners
+      WHERE letter_grade IN ('D', 'D+', 'D-', 'F')
+         OR risk_score >= 70
+      ORDER BY risk_score DESC NULLS LAST, letter_grade
+    `),
+    query(`SELECT value FROM settings WHERE key = 'last_infoseciq_sync'`),
+  ]);
+
+  const t = totals[0] || {};
+  const lastSync = syncRow[0]?.value
+    ? new Date(syncRow[0].value).toLocaleString('en-US')
+    : 'Never';
+
+  const doc = new PDFDocument({ margin: 50 });
+  renderHeader(
+    doc,
+    'Infosec IQ Cybersecurity Awareness Report',
+    `Data as of last sync: ${lastSync}`
+  );
+
+  if (!t.total_learners) {
+    doc.fontSize(11).font('Helvetica').fillColor('#666').text('No learner data synced yet. Run a sync from the Infosec IQ integration settings.');
+    const pdfBuffer = await pdfToBuffer(doc);
+    return { summary: { total_learners: 0 }, pdfBuffer };
+  }
+
+  // Fleet summary
+  doc.fontSize(11).font('Helvetica-Bold').text('Fleet Summary');
+  doc.moveDown(0.3);
+  doc.font('Helvetica').fontSize(10);
+  doc.text(`Total learners: ${t.total_learners}`);
+  doc.text(`Fully trained (100% completion): ${t.fully_trained} (${Math.round((t.fully_trained / t.total_learners) * 100)}%)`);
+  doc.text(`Average training completion: ${t.avg_completion_pct ?? '—'}%`);
+  doc.text(`Average risk score: ${t.avg_risk_score ?? '—'}`);
+  doc.text(`Average phishing susceptibility: ${t.avg_phishing_susc ?? '—'}%`);
+  doc.moveDown(1);
+
+  // Grade distribution
+  doc.fontSize(13).font('Helvetica-Bold').text('Grade Distribution');
+  doc.moveDown(0.3);
+  if (!gradeRows.length) {
+    doc.fontSize(10).font('Helvetica').fillColor('#666').text('No grade data available.').fillColor('#000');
+  } else {
+    renderTable(
+      doc,
+      ['Grade', 'Count', 'Avg Completion %', 'Avg Risk Score'],
+      gradeRows.map(r => [r.letter_grade, r.count, `${r.avg_completion_pct ?? '—'}%`, r.avg_risk_score ?? '—']),
+      [80, 70, 140, 120]
+    );
+  }
+  doc.moveDown(1);
+
+  // Campaigns
+  doc.fontSize(13).font('Helvetica-Bold').text('Phishing Campaigns');
+  doc.moveDown(0.3);
+  if (!campaigns.length) {
+    doc.fontSize(10).font('Helvetica').fillColor('#666').text('No campaigns found.').fillColor('#000');
+  } else {
+    renderTable(
+      doc,
+      ['Campaign Name', 'Type', 'Status', 'Sent', 'Clicks', 'Click %', 'Report %'],
+      campaigns.map(c => [
+        (c.name || '—').substring(0, 35),
+        c.campaign_type || '—',
+        c.status || '—',
+        c.emails_sent ?? '—',
+        c.clicks ?? '—',
+        c.click_rate != null ? `${Number(c.click_rate).toFixed(1)}%` : '—',
+        c.report_rate != null ? `${Number(c.report_rate).toFixed(1)}%` : '—',
+      ]),
+      [170, 65, 55, 40, 40, 55, 55]
+    );
+  }
+  doc.moveDown(1);
+
+  // High-risk learners
+  doc.fontSize(13).font('Helvetica-Bold').text('High-Risk Learners (Grade D/F or Risk Score ≥ 70)');
+  doc.moveDown(0.3);
+  if (!highRisk.length) {
+    doc.fontSize(10).font('Helvetica').fillColor('#666').text('No high-risk learners found.').fillColor('#000');
+  } else {
+    renderTable(
+      doc,
+      ['Name', 'Email', 'Grade', 'Risk Score', 'Completion %'],
+      highRisk.map(r => [
+        `${r.first_name || ''} ${r.last_name || ''}`.trim() || '—',
+        r.email || '—',
+        r.letter_grade || '—',
+        r.risk_score != null ? Number(r.risk_score).toFixed(1) : '—',
+        r.training_completion_pct != null ? `${Number(r.training_completion_pct).toFixed(1)}%` : '—',
+      ]),
+      [140, 160, 45, 70, 80]
+    );
+  }
+
+  const pdfBuffer = await pdfToBuffer(doc);
+  return {
+    summary: {
+      total_learners:     t.total_learners,
+      fully_trained:      t.fully_trained,
+      avg_completion_pct: t.avg_completion_pct,
+      avg_risk_score:     t.avg_risk_score,
+      high_risk_count:    highRisk.length,
+      campaign_count:     campaigns.length,
+    },
+    pdfBuffer,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Device Fleet Health
 // ---------------------------------------------------------------------------
 async function generateDeviceFleetHealth() {
@@ -230,6 +380,12 @@ const REPORT_TYPES = {
     description: 'Device counts by source/status across every integration (Google Admin, Mosyle, Snipe-IT), stale devices, and anything flagged missing/stolen/in repair.',
     params: [],
     generate: generateDeviceFleetHealth,
+  },
+  infoseciq_awareness: {
+    label: 'Infosec IQ Cybersecurity Awareness',
+    description: 'Fleet-wide training completion, grade distribution, phishing campaign results, and a list of high-risk learners (grade D/F or risk score ≥ 70).',
+    params: [],
+    generate: generateInfosecIqAwareness,
   },
 };
 
