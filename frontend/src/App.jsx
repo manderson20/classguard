@@ -75,7 +75,10 @@ import InfosecIqCampaignDetail from './pages/admin/infoseciq/InfosecIqCampaignDe
 import InfosecIqGradeCards     from './pages/admin/infoseciq/InfosecIqGradeCards';
 
 // ClassPulse
-import StudentJoin from './pages/classpulse/StudentJoin';
+import ClassPulseHub   from './pages/classpulse/ClassPulseHub';
+import LessonLibrary   from './pages/classpulse/LessonLibrary';
+import LessonBuilder   from './pages/classpulse/LessonBuilder';
+import StudentJoin     from './pages/classpulse/StudentJoin';
 
 // Fleet pages
 import FleetOverview    from './pages/fleet/FleetOverview';
@@ -139,6 +142,11 @@ export default function App() {
           <Route path="/lockdown"                element={<LockdownTests />} />
           <Route path="/help"                    element={<HelpCenterPage />} />
           <Route path="/help/:slug"              element={<HelpCenterPage />} />
+          {/* ClassPulse — teacher-accessible */}
+          <Route path="/classpulse"                      element={<ClassPulseHub />} />
+          <Route path="/classpulse/lessons"              element={<LessonLibrary />} />
+          <Route path="/classpulse/lessons/new"          element={<LessonBuilder />} />
+          <Route path="/classpulse/lessons/:id/edit"     element={<LessonBuilder />} />
         </Route>
 
         {/* Admin routes */}
