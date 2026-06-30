@@ -120,17 +120,17 @@ async function run(sqlText, commit) {
     await client.query('BEGIN');
 
     // --- Sections — reuse by name if this dump has already been imported once ---
-    const sectionIdMap = Object.create(null); // phpIPAM sections.id -> our ipam_sections.id
+    const sectionIdMap = new Map(); // phpIPAM sections.id -> our ipam_sections.id
     for (const s of sections) {
       const existing = await client.query('SELECT id FROM ipam_sections WHERE name = $1', [s.name]);
       if (existing.rows[0]) {
-        sectionIdMap[s.id] = existing.rows[0].id;
+        sectionIdMap.set(s.id, existing.rows[0].id);
       } else {
         const { rows } = await client.query(
           `INSERT INTO ipam_sections (name, description) VALUES ($1,$2) RETURNING id`,
           [s.name, s.description || null]
         );
-        sectionIdMap[s.id] = rows[0].id;
+        sectionIdMap.set(s.id, rows[0].id);
         counts.sections++;
       }
       if (sample.sections.length < 5) sample.sections.push({ name: s.name, description: s.description });
@@ -139,7 +139,7 @@ async function run(sqlText, commit) {
     // --- VLANs — our vlan_id (the 802.1Q tag) must be globally unique, but
     // PHPiPAM data can have the same tag reused under different vlanId PKs
     // (different sites/naming over the years) — merge those into one row. ---
-    const vlanIdMap = Object.create(null); // phpIPAM vlans.vlanId (PK) -> our vlans.id
+    const vlanIdMap = new Map(); // phpIPAM vlans.vlanId (PK) -> our vlans.id
     for (const v of vlans) {
       const number = toInt(v.number);
       if (!number) { warnings.push(`VLAN "${v.name}" has no tag number — skipped`); continue; }
@@ -149,12 +149,12 @@ async function run(sqlText, commit) {
         [number, v.name, v.description || null]
       );
       if (rows[0]) {
-        vlanIdMap[v.vlanId] = rows[0].id;
+        vlanIdMap.set(v.vlanId, rows[0].id);
         counts.vlans++;
         if (sample.vlans.length < 5) sample.vlans.push({ vlan_id: number, name: v.name });
       } else {
         const existing = await client.query('SELECT id FROM vlans WHERE vlan_id = $1', [number]);
-        vlanIdMap[v.vlanId] = existing.rows[0]?.id ?? null;
+        vlanIdMap.set(v.vlanId, existing.rows[0]?.id ?? null);
         counts.vlansSkippedDuplicate++;
         warnings.push(`VLAN tag ${number} ("${v.name}") was already used by another PHPiPAM VLAN entry — merged into one`);
       }
@@ -165,24 +165,24 @@ async function run(sqlText, commit) {
     // CIDR — ClassGuard's ipam_subnets requires a real subnet, so folders are
     // skipped; any real subnet nested under one attaches to the section
     // directly instead of losing its place in the hierarchy.
-    const subnetIdMap    = Object.create(null); // phpIPAM subnets.id -> our ipam_subnets.id (real subnets only)
-    const subnetIsFolder = Object.create(null);
-    const subnetMaster   = Object.create(null);
-    const subnetVersion  = Object.create(null);
-    const gatewayCandidate = Object.create(null); // our ipam_subnets.id -> gateway IP text, applied after addresses import
+    const subnetIdMap    = new Map(); // phpIPAM subnets.id -> our ipam_subnets.id (real subnets only)
+    const subnetIsFolder = new Map();
+    const subnetMaster   = new Map();
+    const subnetVersion  = new Map();
+    const gatewayCandidate = new Map(); // our ipam_subnets.id -> gateway IP text, applied after addresses import
 
     for (const s of subnetsRaw) {
-      subnetIsFolder[s.id] = toBool(s.isFolder) || !s.subnet || s.mask === '' || s.mask === null;
-      subnetMaster[s.id]   = toInt(s.masterSubnetId) || null;
-      if (subnetIsFolder[s.id]) { counts.subnetsSkippedFolder++; continue; }
+      subnetIsFolder.set(s.id, toBool(s.isFolder) || !s.subnet || s.mask === '' || s.mask === null);
+      subnetMaster.set(s.id, (s.masterSubnetId && s.masterSubnetId !== '0') ? String(s.masterSubnetId) : null);
+      if (subnetIsFolder.get(s.id)) { counts.subnetsSkippedFolder++; continue; }
 
       const prefixLen = toInt(s.mask);
       const version   = prefixLen > 32 ? 6 : 4;
-      subnetVersion[s.id] = version;
+      subnetVersion.set(s.id, version);
 
       const cidr       = `${intToIp(s.subnet, version === 6)}/${prefixLen}`;
-      const sectionId  = sectionIdMap[s.sectionId] ?? null;
-      const vlanDbId   = s.vlanId ? (vlanIdMap[s.vlanId] ?? null) : null;
+      const sectionId  = sectionIdMap.get(s.sectionId) ?? null;
+      const vlanDbId   = s.vlanId ? (vlanIdMap.get(s.vlanId) ?? null) : null;
       const threshold  = toInt(s.threshold);
 
       try {
@@ -197,7 +197,7 @@ async function run(sqlText, commit) {
            threshold && threshold > 0 ? threshold : 90]
         );
         if (rows[0]) {
-          subnetIdMap[s.id] = rows[0].id;
+          subnetIdMap.set(s.id, rows[0].id);
           counts.subnets++;
           if (sample.subnets.length < 5) sample.subnets.push({ subnet: cidr, description: s.description });
         } else {
@@ -212,23 +212,23 @@ async function run(sqlText, commit) {
     // Resolve parent_id by walking masterSubnetId chains through skipped folders
     function resolveParent(phpId, depth = 0) {
       if (depth > 20) return null; // guard against unexpected cycles
-      const masterId = subnetMaster[phpId];
+      const masterId = subnetMaster.get(phpId);
       if (!masterId) return null;
-      if (subnetIdMap[masterId]) return subnetIdMap[masterId];
-      if (subnetIsFolder[masterId]) return resolveParent(masterId, depth + 1);
+      if (subnetIdMap.get(masterId)) return subnetIdMap.get(masterId);
+      if (subnetIsFolder.get(masterId)) return resolveParent(masterId, depth + 1);
       return null;
     }
     for (const s of subnetsRaw) {
-      if (!subnetIdMap[s.id]) continue;
+      if (!subnetIdMap.get(s.id)) continue;
       const parentId = resolveParent(s.id);
-      if (parentId) await client.query('UPDATE ipam_subnets SET parent_id = $1 WHERE id = $2', [parentId, subnetIdMap[s.id]]);
+      if (parentId) await client.query('UPDATE ipam_subnets SET parent_id = $1 WHERE id = $2', [parentId, subnetIdMap.get(s.id)]);
     }
 
     // --- IP addresses -------------------------------------------------------
     for (const a of addressesRaw) {
-      const ourSubnetId = subnetIdMap[a.subnetId];
+      const ourSubnetId = subnetIdMap.get(a.subnetId);
       if (!ourSubnetId) { counts.addressesSkipped++; continue; }
-      const version    = subnetVersion[a.subnetId] || 4;
+      const version    = subnetVersion.get(a.subnetId) || 4;
       const ip          = intToIp(a.ip_addr, version === 6);
       const status      = STATE_MAP[toInt(a.state)] || 'used';
       const lastSeen     = (a.lastSeen && a.lastSeen !== '1970-01-01 00:00:01') ? a.lastSeen : null;
@@ -245,7 +245,7 @@ async function run(sqlText, commit) {
         );
         if (rows[0]) {
           counts.addresses++;
-          if (isGateway) gatewayCandidate[ourSubnetId] = ip;
+          if (isGateway) gatewayCandidate.set(ourSubnetId, ip);
           if (sample.addresses.length < 5) sample.addresses.push({ ip, hostname: a.hostname, status });
         } else {
           counts.addressesSkipped++;
@@ -257,7 +257,7 @@ async function run(sqlText, commit) {
     }
 
     // Backfill subnet gateway from whichever address was flagged is_gateway
-    for (const [subnetUuid, ip] of Object.entries(gatewayCandidate)) {
+    for (const [subnetUuid, ip] of gatewayCandidate) {
       await client.query('UPDATE ipam_subnets SET gateway = $1 WHERE id = $2 AND gateway IS NULL', [ip, subnetUuid]);
     }
 

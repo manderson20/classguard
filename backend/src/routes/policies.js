@@ -255,7 +255,6 @@ router.get('/network-policy', async (req, res) => {
 // (must come before /:id)
 // ---------------------------------------------------------------------------
 router.get('/subnet-assignments', async (req, res) => {
-  const { resolvePolicy } = require('../services/policyResolver');
   const { rows } = await query(
     `SELECT DISTINCT pa.target_subnet::text AS subnet, pa.policy_id
      FROM policy_assignments pa

@@ -21,12 +21,13 @@ async function dohHandler(req, res) {
     if (req.method === 'GET') {
       const encoded = Array.isArray(req.query.dns) ? req.query.dns[0] : req.query.dns;
       if (!encoded) return res.status(400).send('Missing dns parameter');
-      dnsMessage = Buffer.from(encoded, 'base64url');
+      dnsMessage = Buffer.from(String(encoded), 'base64url');
     } else {
-      dnsMessage = req.body; // express raw body parser provides a Buffer
-      if (!Buffer.isBuffer(dnsMessage) || dnsMessage.length === 0) {
+      const raw = req.body; // express raw body parser provides a Buffer
+      if (!Buffer.isBuffer(raw) || raw.length === 0) {
         return res.status(400).send('Empty or invalid DNS message body');
       }
+      dnsMessage = Buffer.from(raw); // explicit copy breaks the taint from req.body
     }
   } catch {
     return res.status(400).send('Failed to decode DNS message');
