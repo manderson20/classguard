@@ -345,6 +345,27 @@ async function getOverrideForIp(ip, domain) {
   } catch { return false; }
 }
 
+// ---------------------------------------------------------------------------
+// Dry-run mode — all filtering bypassed, queries still resolved and logged
+// with action='dry_run_blocked' to show what would have been blocked.
+// State is a Redis key with TTL matching the chosen duration so it
+// auto-expires without any background job needed.
+// ---------------------------------------------------------------------------
+const DRY_RUN_KEY = 'classguard:dry-run';
+
+async function getDryRunState() {
+  const raw = await redis.get(DRY_RUN_KEY).catch(() => null);
+  if (!raw) return { active: false };
+  try {
+    const state = JSON.parse(raw);
+    if (state.expiresAt && Date.now() > state.expiresAt) {
+      await redis.del(DRY_RUN_KEY).catch(() => {});
+      return { active: false };
+    }
+    return { active: true, expiresAt: state.expiresAt };
+  } catch { return { active: false }; }
+}
+
 module.exports = {
   getDevice, setDevice, getPolicy, invalidatePolicy,
   getGlobalAllowlist, invalidateGlobalAllowlist,
@@ -354,4 +375,5 @@ module.exports = {
   getNetworkPolicy,
   getOverrideForIp,
   resolveLocation,
+  getDryRunState,
 };

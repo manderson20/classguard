@@ -85,6 +85,14 @@ async function resolveQuery(name, typeNum, sourceIp) {
     ...(policy?.resolvedAllowDomains || []),
   ];
 
+  // --- 3.5. Dry-run mode check --------------------------------------------
+  // When active, every filtering decision that would normally block is
+  // logged as 'dry_run_blocked' and the query is forwarded anyway.
+  // Local records and conditional forwarding zones (above) are unaffected —
+  // they are infrastructure, not content filtering.
+  const dryRunState = await policyCache.getDryRunState().catch(() => ({ active: false }));
+  const isDryRun = dryRunState.active;
+
   // --- 4. Global whitelist override (managed bookmarks / admin allowlist) --
   // This runs before ANY policy block including lesson/penalty_box mode.
   const globalAllowList = await policyCache.getGlobalAllowlist().catch(() => []);
@@ -99,11 +107,19 @@ async function resolveQuery(name, typeNum, sourceIp) {
 
   // --- 6. Mode-based restrictions -----------------------------------------
   if (mode === 'penalty_box') {
+    if (isDryRun) {
+      logQuery({ domain, action: 'dry_run_blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'penalty_box', dryRun: true });
+      return dryRunForward(domain, typeNum);
+    }
     logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'penalty_box' });
     return { action: 'blocked', answers: [], blockReason: 'penalty_box' };
   }
 
   if (mode === 'lesson') {
+    if (isDryRun) {
+      logQuery({ domain, action: 'dry_run_blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'lesson_mode', dryRun: true });
+      return dryRunForward(domain, typeNum);
+    }
     logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'lesson_mode' });
     return { action: 'blocked', answers: [], blockReason: 'lesson_mode' };
   }
@@ -126,14 +142,23 @@ async function resolveQuery(name, typeNum, sourceIp) {
   // --- 7. Blocklist check (standard mode) ---------------------------------
   // Fails CLOSED: if Redis can't be reached to check the blocklist, we cannot
   // verify safety, so the query is blocked rather than let through unchecked.
+  // Dry-run bypasses even this — the point is to see what resolves unfiltered.
   let blocked;
   try {
     blocked = await blocklist.isBlocked(domain);
   } catch {
+    if (isDryRun) {
+      logQuery({ domain, action: 'dry_run_blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'safety_check_unavailable', dryRun: true });
+      return dryRunForward(domain, typeNum);
+    }
     logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'safety_check_unavailable' });
     return { action: 'blocked', answers: [], blockReason: 'safety_check_unavailable' };
   }
   if (blocked) {
+    if (isDryRun) {
+      logQuery({ domain, action: 'dry_run_blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'blocklist', dryRun: true });
+      return dryRunForward(domain, typeNum);
+    }
     logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'blocklist' });
     return { action: 'blocked', answers: [], blockReason: 'blocklist' };
   }
@@ -145,6 +170,10 @@ async function resolveQuery(name, typeNum, sourceIp) {
   try {
     category = await categoryLookup.getCategoryForDomain(domain);
   } catch {
+    if (isDryRun) {
+      logQuery({ domain, action: 'dry_run_blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'safety_check_unavailable', dryRun: true });
+      return dryRunForward(domain, typeNum);
+    }
     logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'safety_check_unavailable' });
     return { action: 'blocked', answers: [], blockReason: 'safety_check_unavailable' };
   }
@@ -152,6 +181,10 @@ async function resolveQuery(name, typeNum, sourceIp) {
   const allowedCatSet  = new Set(policy?.allowedCategories || []);
 
   if (category && blockedCats.includes(category)) {
+    if (isDryRun) {
+      logQuery({ domain, action: 'dry_run_blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: `category:${category}`, dryRun: true });
+      return dryRunForward(domain, typeNum);
+    }
     logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: `category:${category}` });
     return { action: 'blocked', answers: [], blockReason: `category:${category}` };
   }
@@ -170,6 +203,16 @@ async function resolveQuery(name, typeNum, sourceIp) {
  * only returns null for the former; the latter still returns a normal,
  * empty answers array and is left alone.
  */
+/**
+ * Forward and return real answers without blocking — used by all dry-run call
+ * sites. The log entry is written by the caller (with the specific blockReason)
+ * before this is called, so we don't log again here.
+ */
+async function dryRunForward(domain, typeNum) {
+  const { answers } = await forwardToUpstream(domain, typeNum);
+  return { action: 'dry_run_blocked', answers: answers || [] };
+}
+
 async function forwardAndLog(domain, typeNum, sourceIp, studentId, deviceId, policyId, lessonSessionId = null) {
   const { answers, cacheHit } = await forwardToUpstream(domain, typeNum);
   if (answers === null) {

@@ -52,6 +52,7 @@ import {
   mdiCalendarClock,
   mdiMonitor,
   mdiShieldCheckOutline,
+  mdiFlaskOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -59,7 +60,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.8.2';
+const VERSION = '0.8.3';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -422,6 +423,7 @@ const ADMIN_SECTIONS = [
       { to: '/admin/lost-mode', icon: mdiLaptopOff, label: 'Lost Mode', permissionKey: 'lost_mode' },
       { to: '/admin/settings',     icon: mdiCogOutline,         label: 'Settings',     permissionKey: 'settings' },
       { to: '/admin/custom-roles', icon: mdiAccountKeyOutline,  label: 'Roles & Permissions', superadminOnly: true },
+      { to: '/admin/dry-run',      icon: mdiFlaskOutline,        label: 'Dry Run Mode',         superadminOnly: true },
     ],
   },
 ];
@@ -494,6 +496,64 @@ function NavItem({ to, icon, label, end = false, badgeCount, children }) {
         </span>
       )}
     </NavLink>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// DryRunBanner — visible to all admins while a dry-run window is active.
+// Polls the API every 30s so the countdown and expiry reflect live state.
+// ---------------------------------------------------------------------------
+function DryRunBanner({ isSuperAdmin, navigate }) {
+  const { data, refetch } = useQuery({
+    queryKey: ['dry-run-state'],
+    queryFn:  () => api.get('/dry-run'),
+    refetchInterval: 30_000,
+  });
+
+  const [disabling, setDisabling] = useState(false);
+
+  if (!data?.active) return null;
+
+  const expiresAt  = data.expiresAt ? new Date(data.expiresAt) : null;
+  const timeLeft   = expiresAt ? expiresAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
+
+  const handleDisable = async () => {
+    setDisabling(true);
+    try {
+      await api.delete('/dry-run');
+      refetch();
+    } catch {
+      // ignore — refetch will clear if Redis TTL fires
+    } finally {
+      setDisabling(false);
+    }
+  };
+
+  return (
+    <div className="bg-orange-500 text-white px-4 py-2 flex items-center gap-3 flex-wrap">
+      <MdiIcon path={mdiFlaskOutline} size="1.1em" />
+      <span className="font-semibold text-sm">Dry Run Mode active — all filtering is bypassed</span>
+      {timeLeft && (
+        <span className="text-sm text-white/80">Expires at {timeLeft}</span>
+      )}
+      <div className="ml-auto flex items-center gap-2">
+        <button
+          className="text-white/80 hover:text-white text-xs underline"
+          onClick={() => navigate('/admin/dry-run')}
+        >
+          Details
+        </button>
+        {isSuperAdmin && (
+          <button
+            className="bg-white text-orange-700 text-xs font-semibold px-3 py-1 rounded hover:bg-orange-50 disabled:opacity-60"
+            onClick={handleDisable}
+            disabled={disabling}
+          >
+            {disabling ? 'Disabling…' : 'Disable Now'}
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -687,6 +747,7 @@ export default function Layout() {
         {isStaff && <FilterBypassBanner socket={socket} navigate={navigate} />}
         {isStaff && <InternetHealthBanner socket={socket} navigate={navigate} />}
         {isSuperAdmin && <HaAutoPromoteBanner socket={socket} navigate={navigate} />}
+        {isAdmin && <DryRunBanner isSuperAdmin={isSuperAdmin} navigate={navigate} />}
         <main className="flex-1 overflow-auto bg-slate-100 pb-20">
           <Outlet />
         </main>

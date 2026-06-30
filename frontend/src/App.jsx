@@ -28,6 +28,7 @@ import PolicySimulator     from './pages/admin/PolicySimulator';
 import UnblockRequestsPage from './pages/admin/UnblockRequestsPage';
 import GroupsPage          from './pages/admin/GroupsPage';
 import CustomRolesPage     from './pages/admin/CustomRolesPage';
+import DryRunPage         from './pages/admin/DryRunPage';
 import DnsLogs         from './pages/admin/DnsLogs';
 import DnsStats        from './pages/admin/DnsStats';
 import DnsRecordsPage  from './pages/admin/DnsRecordsPage';
@@ -187,6 +188,7 @@ export default function App() {
               adjacent to privilege escalation, same tier as role assignment */}
           <Route element={<RequireAuth minRole="superadmin"><Outlet /></RequireAuth>}>
             <Route path="/admin/custom-roles"         element={<CustomRolesPage />} />
+            <Route path="/admin/dry-run"              element={<DryRunPage />} />
           </Route>
 
           {/* Device Fleet */}
