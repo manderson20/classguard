@@ -24,6 +24,10 @@ const events = require('../events');
 const { syncController } = require('../routes/network');
 const { pool } = require('../db');
 const { syncAppleOsVersions } = require('./appleOsSync');
+const mosyle    = require('./mosyle');
+const snipeit   = require('./snipeit');
+const fleetSync = require('./fleetSync');
+const mailer    = require('./mailer');
 
 // ---------------------------------------------------------------------------
 // DNS log drain  — every 30 seconds
@@ -325,6 +329,75 @@ async function expireLockdownSessions() {
 // Real implementation added in Phase 8.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Nightly fleet cross-sync: refresh source data then write asset tags back.
+// Runs Mosyle + Snipe-IT source syncs first so the cross-sync has fresh data.
+// Only runs if both integrations are configured.
+// ---------------------------------------------------------------------------
+async function runFleetNightlySync() {
+  const cfg = await mosyle.getConfig();
+  const { token: mosyleToken } = cfg;
+  if (!mosyleToken) {
+    console.log('[fleet-nightly] skipping — Mosyle not configured');
+    return;
+  }
+
+  console.log('[fleet-nightly] starting nightly fleet cross-sync');
+
+  try {
+    const n = await mosyle.syncDevices();
+    console.log(`[fleet-nightly] Mosyle source sync done: ${n} devices`);
+  } catch (err) {
+    console.error('[fleet-nightly] Mosyle source sync error:', err.message);
+  }
+
+  try {
+    const n = await snipeit.syncAssets();
+    console.log(`[fleet-nightly] Snipe-IT source sync done: ${n} assets`);
+  } catch (err) {
+    console.error('[fleet-nightly] Snipe-IT source sync error:', err.message);
+  }
+
+  try {
+    const results = await fleetSync.runCrossSync(null);
+    console.log('[fleet-nightly] cross-sync done:', JSON.stringify({
+      mosyle: results.wroteBackToMosyle,
+      google: results.wroteBackToGoogle,
+      created: results.createdInSnipeit,
+      skipped: results.skipped,
+      errors: results.errors.length,
+    }));
+  } catch (err) {
+    console.error('[fleet-nightly] cross-sync error:', err.message);
+  }
+
+  // Alert superadmins if any devices are missing from Snipe-IT —
+  // but only when the count changes vs the last run, so it's signal not noise.
+  try {
+    const gaps = await fleetSync.getGaps();
+    const missingSnipe = gaps.filter(g => (g.missingFrom || []).includes('snipeit'));
+    const currentCount = missingSnipe.length;
+
+    const { rows } = await pool.query(`SELECT value FROM settings WHERE key='fleet_last_gap_count'`);
+    const lastCount = rows[0]?.value !== undefined ? parseInt(rows[0].value, 10) : null;
+
+    await pool.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ('fleet_last_gap_count',$1,NOW())
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=NOW()`,
+      [String(currentCount)]
+    );
+
+    if (currentCount > 0 && currentCount !== lastCount) {
+      const result = await mailer.sendFleetGapAlert(missingSnipe);
+      console.log(`[fleet-nightly] gap alert: ${currentCount} missing (prev ${lastCount ?? 'unknown'}) — sent:${result.sent}`);
+    } else {
+      console.log(`[fleet-nightly] gap alert: ${currentCount} missing (no change, no email)`);
+    }
+  } catch (err) {
+    console.error('[fleet-nightly] gap alert error:', err.message);
+  }
+}
+
 async function syncGoogleWorkspace() {
   console.log('[scheduler] Google Workspace sync — not yet implemented (Phase 8)');
 }
@@ -389,6 +462,12 @@ function startScheduler() {
   // (offsite devices on home networks are correctly skipped, not errored).
   cron.schedule('*/15 * * * *', () => {
     integrationDeviceIpamSync.run().catch(err => console.error('[scheduler] integration-device-ipam-sync error:', err.message));
+  });
+
+  // Fleet nightly sync — 2:30am: refresh Mosyle + Snipe-IT source data, then
+  // cross-sync asset tags (writes Snipe-IT tags back to Mosyle for blank devices).
+  cron.schedule('30 2 * * *', () => {
+    runFleetNightlySync().catch(err => console.error('[scheduler] fleet-nightly error:', err.message));
   });
 
   // Apple OS version sync — daily 3am, pulls latest iOS/iPadOS/macOS from SOFA feed

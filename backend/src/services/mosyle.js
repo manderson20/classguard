@@ -184,4 +184,80 @@ async function syncDevices() {
   return count;
 }
 
-module.exports = { getConfig, listDevices, listAllDevices, syncDevices };
+// ---------------------------------------------------------------------------
+// Push asset tags from Snipe-IT back to Mosyle device records.
+// Mosyle API requires one request per OS family (ios covers both iOS + iPadOS).
+// Only updates the local integration_devices row on success so the cross-sync
+// can retry on next run if a device is temporarily unreachable.
+//
+// Verified endpoint: POST /v2/devices with { accessToken, os, elements: [{serialnumber, asset_tag}] }
+// (NOT /editdevice — that endpoint does not exist in Mosyle Manager v2).
+// Success: device serial appears in data.devices[]; per-device errors in data.elements[].
+// ---------------------------------------------------------------------------
+function toMosyleOs(osType) {
+  if (osType === 'macOS') return 'mac';
+  if (osType === 'tvOS')  return 'tvos';
+  return 'ios'; // iOS and iPadOS both use 'ios' in Mosyle API
+}
+
+async function pushAssetTags(updates) {
+  // updates: [{ serialNumber, osType, assetTag }]
+  // Returns: [{ serialNumber, ok: bool, error: string|null }]
+  const cfg    = await getConfig();
+  if (!cfg.token) throw new Error('Mosyle is not configured. Add the access token in Integrations → Mosyle.');
+  const bearer = await getBearerToken(cfg);
+
+  const byOs = new Map();
+  for (const u of updates) {
+    const os = toMosyleOs(u.osType || 'iOS');
+    if (!byOs.has(os)) byOs.set(os, []);
+    // Mosyle /devices uses 'serialnumber' (no underscore), not 'serial_number'
+    byOs.get(os).push({ serialnumber: u.serialNumber, asset_tag: u.assetTag });
+  }
+
+  const out = [];
+  for (const [os, elements] of byOs) {
+    for (let i = 0; i < elements.length; i += 100) {
+      const batch = elements.slice(i, i + 100);
+      try {
+        let res;
+        try {
+          res = await axios.post(`${MOSYLE_API}/devices`, {
+            accessToken: cfg.token, os, elements: batch,
+          }, {
+            headers: { 'Content-Type': 'application/json', Authorization: bearer },
+            timeout: 30_000,
+          });
+        } catch (err) {
+          if (err.response?.status === 401) cachedBearer = null;
+          const detail = err.response?.data?.error || err.response?.data?.message;
+          throw new Error(detail ? `Mosyle API error: ${detail}` : err.message, { cause: err });
+        }
+
+        const data = res.data;
+        if (data?.status && data.status !== 'OK') {
+          throw new Error(`Mosyle API error: ${data?.message || JSON.stringify(data)}`);
+        }
+
+        // Successful devices are listed in data.devices[]; per-device errors in data.elements[]
+        const successSet = new Set(data.devices || []);
+        for (const el of batch) {
+          const ok = successSet.has(el.serialnumber);
+          if (ok) {
+            out.push({ serialNumber: el.serialnumber, ok: true, error: null });
+          } else {
+            const elErr = Array.isArray(data.elements)
+              ? data.elements.find(e => e.serial === el.serialnumber || e.serialnumber === el.serialnumber)
+              : null;
+            out.push({ serialNumber: el.serialnumber, ok: false, error: elErr?.info || elErr?.status || 'not in Mosyle response devices list' });
+          }
+        }
+      } catch (err) {
+        for (const el of batch) out.push({ serialNumber: el.serialnumber, ok: false, error: err.message });
+      }
+    }
+  }
+  return out;
+}
+
+module.exports = { getConfig, listDevices, listAllDevices, syncDevices, pushAssetTags };

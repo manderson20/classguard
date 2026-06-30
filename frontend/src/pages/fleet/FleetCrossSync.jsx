@@ -144,9 +144,10 @@ function SettingsModal({ current, onClose }) {
 // Main page
 // ---------------------------------------------------------------------------
 export default function FleetCrossSync() {
-  const [showSettings, setShowSettings] = useState(false);
-  const [syncResult,   setSyncResult]   = useState(null);
-  const [syncing,      setSyncing]      = useState(false);
+  const [showSettings,  setShowSettings]  = useState(false);
+  const [syncResult,    setSyncResult]    = useState(null);
+  const [syncing,       setSyncing]       = useState(false);
+  const [syncStartedAt, setSyncStartedAt] = useState(null);
   const qc = useQueryClient();
 
   const { data: settings } = useQuery({
@@ -165,21 +166,33 @@ export default function FleetCrossSync() {
     queryKey: ['fleet-cross-sync-history'],
     queryFn:  () => api.get('/fleet/cross-sync/history'),
     staleTime: 30_000,
+    refetchInterval: syncing ? 3000 : false,
   });
+
+  // Detect when the background sync completes by watching for a new history entry.
+  useEffect(() => {
+    if (!syncing || !syncStartedAt || !history.length) return;
+    const latest = history[0];
+    if (latest && new Date(latest.run_at) > syncStartedAt) {
+      setSyncing(false);
+      setSyncStartedAt(null);
+      setSyncResult(latest);
+      qc.invalidateQueries({ queryKey: ['fleet-cross-sync-gaps'] });
+      qc.invalidateQueries({ queryKey: ['fleet-summary'] });
+    }
+  }, [history, syncing, syncStartedAt, qc]);
 
   const runSync = async () => {
     setSyncing(true);
     setSyncResult(null);
+    setSyncStartedAt(new Date());
     try {
-      const result = await api.post('/fleet/cross-sync/run');
-      setSyncResult(result);
-      qc.invalidateQueries({ queryKey: ['fleet-cross-sync-gaps'] });
-      qc.invalidateQueries({ queryKey: ['fleet-cross-sync-history'] });
-      qc.invalidateQueries({ queryKey: ['fleet-summary'] });
+      await api.post('/fleet/cross-sync/run');
+      // { status: 'started' } — result arrives via polling above
     } catch (err) {
-      setSyncResult({ error: err.message || 'Sync failed.' });
-    } finally {
       setSyncing(false);
+      setSyncStartedAt(null);
+      setSyncResult({ error: err.message || 'Sync failed.' });
     }
   };
 
@@ -262,15 +275,15 @@ export default function FleetCrossSync() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
               <div className="text-center">
-                <div className="text-xl font-bold text-green-700">{syncResult.createdInSnipeit}</div>
+                <div className="text-xl font-bold text-green-700">{syncResult.created_in_snipeit}</div>
                 <div className="text-xs text-slate-500">Created in Snipe-IT</div>
               </div>
               <div className="text-center">
-                <div className="text-xl font-bold text-blue-700">{syncResult.wroteBackToGoogle}</div>
+                <div className="text-xl font-bold text-blue-700">{syncResult.wrote_back_to_google}</div>
                 <div className="text-xs text-slate-500">Google writeback</div>
               </div>
               <div className="text-center">
-                <div className="text-xl font-bold text-purple-700">{syncResult.wroteBackToMosyle}</div>
+                <div className="text-xl font-bold text-purple-700">{syncResult.wrote_back_to_mosyle}</div>
                 <div className="text-xs text-slate-500">Mosyle writeback</div>
               </div>
               <div className="text-center">
@@ -286,9 +299,6 @@ export default function FleetCrossSync() {
                 </ul>
               </div>
             )}
-            <p className="text-xs text-slate-400 mt-2 italic">
-              Note: Mosyle write-back records the asset tag in ClassGuard — set it manually in Mosyle if you need it there.
-            </p>
           </div>
         )}
         {syncResult?.error && (

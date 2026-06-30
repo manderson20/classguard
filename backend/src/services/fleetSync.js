@@ -1,12 +1,13 @@
 const { pool } = require('../db');
 const snipeit  = require('./snipeit');
 const google   = require('./google');
+const mosyle   = require('./mosyle');
 
 // ---------------------------------------------------------------------------
 // Fleet cross-sync — finds devices in MDMs not yet in Snipe-IT, creates them,
-// then writes the assigned asset_tag back to Google Admin (annotatedAssetId).
-// Mosyle Manager API v2 has no public endpoint for writing asset IDs, so for
-// Mosyle devices we record the asset_tag locally in integration_devices only.
+// then writes the assigned asset_tag back to Google Admin (annotatedAssetId)
+// and Mosyle (via editdevice). Local integration_devices rows are only updated
+// after a successful API push so failed devices are retried on the next run.
 // ---------------------------------------------------------------------------
 
 async function getFleetSettings() {
@@ -120,13 +121,21 @@ async function getGaps() {
 // Run the cross-sync: create missing Snipe-IT assets + write back asset tags.
 // ---------------------------------------------------------------------------
 async function runCrossSync(actorId) {
-  const cfg = await getFleetSettings();
+  const cfg     = await getFleetSettings();
+  const results = { createdInSnipeit: 0, wroteBackToGoogle: 0, wroteBackToMosyle: 0, skipped: 0, errors: [] };
 
   let http;
   try {
     http = await snipeit.getClient();
   } catch (err) {
-    throw new Error(`Snipe-IT not reachable: ${err.message}`, { cause: err });
+    results.errors.push(`Snipe-IT not reachable: ${err.message}`);
+    await pool.query(
+      `INSERT INTO fleet_sync_log
+         (created_in_snipeit, wrote_back_to_mosyle, wrote_back_to_google, skipped, errors, triggered_by)
+       VALUES ($1,$2,$3,$4,$5,$6)`,
+      [0, 0, 0, 0, results.errors, actorId || null]
+    );
+    return results;
   }
 
   const { rows: allDevices } = await pool.query(
@@ -143,7 +152,7 @@ async function runCrossSync(actorId) {
     bySerial.get(s).push(d);
   }
 
-  const results = { createdInSnipeit: 0, wroteBackToGoogle: 0, wroteBackToMosyle: 0, skipped: 0, errors: [] };
+  const mosylePushQueue = []; // [{ id, serialNumber, osType, assetTag }] — batched after main loop
 
   for (const [serial, deviceRows] of bySerial) {
     const snipeRow  = deviceRows.find(r => r.source === 'snipeit');
@@ -189,8 +198,9 @@ async function runCrossSync(actorId) {
             }
           }
 
-          // Mosyle: update local record only (API doesn't support direct writeback)
-          if (mosyleRow) results.wroteBackToMosyle++;
+          if (mosyleRow) {
+            mosylePushQueue.push({ id: mosyleRow.id, serialNumber: serial, osType: mosyleRow.os_type, assetTag });
+          }
         }
       } catch (err) {
         results.errors.push(`${serial} create in Snipe-IT: ${err.message}`);
@@ -213,8 +223,34 @@ async function runCrossSync(actorId) {
     }
 
     if (mosyleRow && !mosyleRow.asset_tag) {
-      await pool.query(`UPDATE integration_devices SET asset_tag=$1 WHERE id=$2`, [assetTag, mosyleRow.id]);
-      results.wroteBackToMosyle++;
+      mosylePushQueue.push({ id: mosyleRow.id, serialNumber: serial, osType: mosyleRow.os_type, assetTag });
+    }
+  }
+
+  // Push asset tags to Mosyle in one batched call per OS family.
+  // Only update the local row on success — failed devices stay asset_tag=NULL
+  // and will be retried on the next cross-sync run.
+  if (mosylePushQueue.length > 0) {
+    let pushResults;
+    try {
+      pushResults = await mosyle.pushAssetTags(
+        mosylePushQueue.map(q => ({ serialNumber: q.serialNumber, osType: q.osType, assetTag: q.assetTag }))
+      );
+    } catch (err) {
+      // Auth or network failure — mark everything as failed; retry next run
+      results.errors.push(`Mosyle asset-tag push failed: ${err.message}`);
+      pushResults = mosylePushQueue.map(q => ({ serialNumber: q.serialNumber, ok: false, error: err.message }));
+    }
+
+    const successSerials = new Set(pushResults.filter(r => r.ok).map(r => r.serialNumber));
+    for (const q of mosylePushQueue) {
+      if (successSerials.has(q.serialNumber)) {
+        await pool.query(`UPDATE integration_devices SET asset_tag=$1 WHERE id=$2`, [q.assetTag, q.id]);
+        results.wroteBackToMosyle++;
+      } else {
+        const pr = pushResults.find(r => r.serialNumber === q.serialNumber);
+        results.errors.push(`${q.serialNumber} Mosyle asset-tag push: ${pr?.error || 'unknown error'}`);
+      }
     }
   }
 

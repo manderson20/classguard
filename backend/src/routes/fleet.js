@@ -863,12 +863,12 @@ router.post('/cross-sync/settings', async (req, res) => {
 });
 
 router.post('/cross-sync/run', async (req, res) => {
-  try {
-    const result = await fleetSync.runCrossSync(req.user.userId);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
+  // Return immediately — sync runs in background and logs to fleet_sync_log.
+  // Client polls GET /cross-sync/history for the result.
+  res.json({ status: 'started' });
+  fleetSync.runCrossSync(req.user.userId).catch(err => {
+    console.error('[fleet] cross-sync background error:', err.message);
+  });
 });
 
 router.get('/cross-sync/history', async (req, res) => {
