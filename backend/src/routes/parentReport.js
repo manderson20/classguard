@@ -26,20 +26,16 @@ router.get('/:studentId', authenticate, requireMinRole('teacher'), requirePermis
     to.setHours(23, 59, 59, 999);
   }
 
-  try {
-    const { rows: [student] } = await query(`SELECT full_name FROM users WHERE id = $1 AND role = 'student'`, [studentId]);
-    if (!student) return res.status(404).json({ error: 'Student not found' });
+  const { rows: [student] } = await query(`SELECT full_name FROM users WHERE id = $1 AND role = 'student'`, [studentId]);
+  if (!student) return res.status(404).json({ error: 'Student not found' });
 
-    const pdfBuffer = await generateParentReport(studentId, { from, to });
-    const safeName = (student.full_name || studentId).replace(/[^a-z0-9]/gi, '-').toLowerCase();
-    res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="parent-report-${safeName}.pdf"`,
-    });
-    res.send(pdfBuffer);
-  } catch (err) {
-    throw err;
-  }
+  const pdfBuffer = await generateParentReport(studentId, { from, to });
+  const safeName = (student.full_name || studentId).replace(/[^a-z0-9]/gi, '-').toLowerCase();
+  res.set({
+    'Content-Type': 'application/pdf',
+    'Content-Disposition': `attachment; filename="parent-report-${safeName}.pdf"`,
+  });
+  res.send(pdfBuffer);
 });
 
 module.exports = router;
