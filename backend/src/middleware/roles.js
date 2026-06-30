@@ -1,4 +1,4 @@
-const ROLE_HIERARCHY = { student: 0, student_technician: 0.5, teacher: 1, admin: 2, superadmin: 3 };
+const ROLE_HIERARCHY = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 const requireRole = (...roles) => (req, res, next) => {
   if (!req.user) return res.status(401).json({ error: 'Not authenticated' });

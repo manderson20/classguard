@@ -132,7 +132,6 @@ app.use('/api/v1/radius',        require('./routes/radius'));
 app.use('/api/v1/tls',           require('./routes/tls'));
 app.use('/api/v1/analytics',     require('./routes/analytics'));
 app.use('/api/v1/fleet',         require('./routes/fleet'));
-app.use('/api/v1/tech-lab',      require('./routes/techLab'));
 app.use('/api/v1/infoseciq',     require('./routes/infosecIq'));
 app.use('/api/v1/phones',        require('./routes/phones'));
 app.use('/api/v1/phones',        require('./routes/phoneChanges'));
