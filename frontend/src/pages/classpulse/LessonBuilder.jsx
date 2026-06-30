@@ -1,6 +1,5 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
 // ---------------------------------------------------------------------------
@@ -524,35 +523,24 @@ export default function LessonBuilder() {
       });
   }, [isNew, navigate]);
 
-  // Fetch lesson (only when we have a real ID)
+  // Fetch lesson (only when we have a real ID).
+  // Guard on isNew only — not on creating, which stays true until the component
+  // re-renders after the navigate() call and would block this effect from running.
   useEffect(() => {
-    if (isNew || creating) return;
+    if (isNew) return;
     setLoading(true);
     api.get(`/classpulse/lessons/${lessonId}`)
       .then(data => {
-        setLesson(data.lesson);
+        // API returns the lesson object directly with pages already nested
+        // (each page has .questions, each question has .options — see getLessonDetail()).
+        setLesson(data);
         const sorted = [...(data.pages || [])].sort((a, b) => a.position - b.position);
-        // Attach questions to each page
-        const qByPage = {};
-        for (const q of data.questions || []) {
-          if (!qByPage[q.page_id]) qByPage[q.page_id] = [];
-          qByPage[q.page_id].push(q);
-        }
-        const opts = {};
-        for (const o of data.options || []) {
-          if (!opts[o.question_id]) opts[o.question_id] = [];
-          opts[o.question_id].push(o);
-        }
-        const pagesWithQs = sorted.map(p => ({
-          ...p,
-          questions: (qByPage[p.id] || []).map(q => ({ ...q, options: opts[q.id] || [] })),
-        }));
-        setPages(pagesWithQs);
-        setActivePid(pagesWithQs[0]?.id || null);
+        setPages(sorted);
+        setActivePid(sorted[0]?.id || null);
       })
       .catch(e => setError(e.message || 'Failed to load lesson'))
       .finally(() => setLoading(false));
-  }, [lessonId, isNew, creating]);
+  }, [lessonId, isNew]);
 
   const activePage = pages.find(p => p.id === activePageId) || null;
 

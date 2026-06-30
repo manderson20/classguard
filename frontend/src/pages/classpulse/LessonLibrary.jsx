@@ -25,6 +25,7 @@ function StartSessionModal({ lesson, onClose }) {
         mode: 'teacher_paced',
         classroom_lock_enabled: lockEnabled,
       });
+      if (lockEnabled) await api.post(`/classpulse/sessions/${session.id}/lock`, {});
       navigate(`/classpulse/sessions/${session.id}/teach`);
     } catch (e) {
       setError(e.message || 'Failed to start session');

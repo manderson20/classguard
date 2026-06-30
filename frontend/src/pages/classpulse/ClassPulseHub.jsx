@@ -1,12 +1,11 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 
 function StartSessionModal({ lesson, onClose }) {
   const navigate = useNavigate();
-  const [classId, setClassId]     = useState('');
-  const [mode, setMode]           = useState('teacher_paced');
+  const [classId, setClassId]         = useState('');
   const [lockEnabled, setLockEnabled] = useState(false);
   const [starting, setStarting]   = useState(false);
   const [error, setError]         = useState(null);
@@ -23,9 +22,10 @@ function StartSessionModal({ lesson, onClose }) {
       const session = await api.post('/classpulse/sessions/start', {
         lesson_id: lesson.id,
         class_id:  classId || null,
-        mode,
+        mode: 'teacher_paced',
         classroom_lock_enabled: lockEnabled,
       });
+      if (lockEnabled) await api.post(`/classpulse/sessions/${session.id}/lock`, {});
       navigate(`/classpulse/sessions/${session.id}/teach`);
     } catch (e) {
       setError(e.message || 'Failed to start session');
