@@ -2,7 +2,7 @@
 
 > Open-source school internet safety and classroom management platform — a self-hosted alternative to GoGuardian built for Google Workspace for Education districts.
 
-[![Version](https://img.shields.io/badge/version-0.0.1-blue)](CHANGELOG.md)
+[![Version](https://img.shields.io/github/v/release/manderson20/classguard?label=version)](https://github.com/manderson20/classguard/releases/latest)
 [![License](https://img.shields.io/badge/license-AGPLv3-green)](LICENSE)
 [![CI](https://github.com/manderson20/classguard/actions/workflows/ci.yml/badge.svg)](https://github.com/manderson20/classguard/actions/workflows/ci.yml)
 
@@ -60,8 +60,6 @@ Clients (Chromebook / Mac / iPad)
     │  PostgreSQL · Redis          │
     └──────────────────────────────┘
 ```
-
-See [`imageref/ClassGuard-Specification.md`](imageref/ClassGuard-Specification.md) for the full specification.
 
 ---
 
@@ -128,15 +126,14 @@ See `.env.example` for the full list.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide. Short version:
+See the [Contributing Guide](https://github.com/manderson20/classguard/wiki/Contributing) on the wiki for the full guide. Short version:
 
 1. Fork the repository and create a feature branch from `main`.
-2. Follow the phased build plan in the specification for implementation order.
-3. Write tests for new backend services and routes.
-4. Open a pull request — CI will run lint and tests automatically.
-5. Update `CHANGELOG.md` under `[Unreleased]` with a description of your change.
+2. Write tests for new backend services and routes.
+3. Open a pull request — CI will run lint and tests automatically.
+4. Update `CHANGELOG.md` under `[Unreleased]` with a description of your change.
 
-Please also read [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before
+Please also read the [Code of Conduct](https://github.com/manderson20/classguard/wiki/Code-of-Conduct) before
 participating, and never include secrets, proprietary code, or real
 student/staff data in an issue, PR, or commit.
 
@@ -156,8 +153,8 @@ Full release history is in [`CHANGELOG.md`](CHANGELOG.md).
 This protects the open-source nature of the project for the school community.
 
 See also: [SECURITY.md](SECURITY.md) · [PRIVACY.md](PRIVACY.md) ·
-[DISCLAIMER.md](DISCLAIMER.md) · [CONTRIBUTING.md](CONTRIBUTING.md) ·
-[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)
+[DISCLAIMER.md](DISCLAIMER.md) · [Contributing Guide](https://github.com/manderson20/classguard/wiki/Contributing) ·
+[Code of Conduct](https://github.com/manderson20/classguard/wiki/Code-of-Conduct)
 
 ---
 
