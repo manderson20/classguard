@@ -173,7 +173,7 @@ async function run(sqlText, commit) {
 
     for (const s of subnetsRaw) {
       subnetIsFolder.set(s.id, toBool(s.isFolder) || !s.subnet || s.mask === '' || s.mask === null);
-      subnetMaster.set(s.id, toInt(s.masterSubnetId) || null);
+      subnetMaster.set(s.id, (s.masterSubnetId && s.masterSubnetId !== '0') ? String(s.masterSubnetId) : null);
       if (subnetIsFolder.get(s.id)) { counts.subnetsSkippedFolder++; continue; }
 
       const prefixLen = toInt(s.mask);

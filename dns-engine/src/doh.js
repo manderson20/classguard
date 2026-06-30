@@ -21,12 +21,13 @@ async function dohHandler(req, res) {
     if (req.method === 'GET') {
       const encoded = Array.isArray(req.query.dns) ? req.query.dns[0] : req.query.dns;
       if (!encoded) return res.status(400).send('Missing dns parameter');
-      dnsMessage = Buffer.from(encoded, 'base64url');
+      dnsMessage = Buffer.from(String(encoded), 'base64url');
     } else {
-      dnsMessage = req.body; // express raw body parser provides a Buffer
-      if (!Buffer.isBuffer(dnsMessage) || dnsMessage.length === 0) {
+      const raw = req.body; // express raw body parser provides a Buffer
+      if (!Buffer.isBuffer(raw) || raw.length === 0) {
         return res.status(400).send('Empty or invalid DNS message body');
       }
+      dnsMessage = Buffer.from(raw); // explicit copy breaks the taint from req.body
     }
   } catch {
     return res.status(400).send('Failed to decode DNS message');
@@ -48,7 +49,6 @@ async function dohHandler(req, res) {
  * and return the raw response buffer.
  */
 function forwardToLocalDns(message) {
-  const buf = Buffer.isBuffer(message) ? message : Buffer.from(message);
   return new Promise((resolve, reject) => {
     const socket  = dgram.createSocket('udp4');
     const timeout = setTimeout(() => {
@@ -67,7 +67,7 @@ function forwardToLocalDns(message) {
       reject(err);
     });
 
-    socket.send(buf, 0, buf.length, config.dns.port, '127.0.0.1', (err) => {
+    socket.send(message, 0, message.length, config.dns.port, '127.0.0.1', (err) => {
       if (err) {
         clearTimeout(timeout);
         socket.close();
