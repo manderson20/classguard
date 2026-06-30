@@ -89,8 +89,7 @@ async function insertDnsLogBatch(records) {
       console.error('[scheduler] dropping malformed dns_logs record:', JSON.stringify(records[0]), '—', err.message);
       return;
     }
-    const safeErr = err.message.replace(/[^\x20-\x7E]/g, '?').slice(0, 200);
-    console.error('[scheduler] bulk dns_logs insert failed, falling back to one-at-a-time. Records:', records.length, 'Error:', safeErr);
+    console.error('[scheduler] bulk dns_logs insert failed, falling back to one-at-a-time');
     for (const r of records) {
       await insertDnsLogBatch([r]);
     }
@@ -218,8 +217,7 @@ async function insertBrowserHistoryBatch(records) {
       console.error('[scheduler] dropping malformed browser_history record:', JSON.stringify(records[0]), '—', err.message);
       return;
     }
-    const safeErr = err.message.replace(/[^\x20-\x7E]/g, '?').slice(0, 200);
-    console.error('[scheduler] bulk browser_history insert failed, falling back to one-at-a-time. Records:', records.length, 'Error:', safeErr);
+    console.error('[scheduler] bulk browser_history insert failed, falling back to one-at-a-time');
     for (const r of records) {
       await insertBrowserHistoryBatch([r]);
     }

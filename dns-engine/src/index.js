@@ -1,7 +1,6 @@
 require('dotenv').config();
 const DNS                    = require('dns2');
 const express                = require('express');
-const { rateLimit }          = require('express-rate-limit');
 const { resolveQuery, buildResponse } = require('./resolver');
 const { dohHandler }         = require('./doh');
 const { getCount }           = require('./blocklistLoader');
@@ -68,8 +67,17 @@ const app = express();
 app.use('/dns-query', express.raw({ type: 'application/dns-message', limit: '16kb' }));
 app.use(express.json());
 
-// Health check
-const healthLimiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
+// Health check — inline limiter: 120 req/min per IP (no extra dependency)
+const _healthCalls = new Map();
+function healthLimiter(req, res, next) {
+  const ip  = req.ip || req.socket.remoteAddress || '';
+  const now = Date.now();
+  const rec = _healthCalls.get(ip) || { count: 0, start: now };
+  if (now - rec.start > 60_000) { rec.count = 0; rec.start = now; }
+  if (++rec.count > 120) return res.status(429).json({ error: 'Too Many Requests' });
+  _healthCalls.set(ip, rec);
+  next();
+}
 app.get('/health', healthLimiter, async (req, res) => {
   try {
     await redis.ping();

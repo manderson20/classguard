@@ -38,8 +38,10 @@ function xmlEscape(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
 }
 
-// Rate limiter for unauthenticated-accessible metrics endpoints
-const metricsLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
+// Rate limiter for metrics endpoints — 300/min: Zabbix polls one request per
+// metric key per cycle; 30+ keys + HA VIP host doubles some polls, so 60/min
+// was too low and caused intermittent 429s on the generated template.
+const metricsLimiter = rateLimit({ windowMs: 60_000, max: 300, standardHeaders: true, legacyHeaders: false });
 
 const DNS_STREAM = 'classguard:dns-log';
 
