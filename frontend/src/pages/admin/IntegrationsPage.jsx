@@ -2370,14 +2370,19 @@ export default function IntegrationsPage() {
           <Card title="Infosec IQ" icon="🛡" subtitle="Cybersecurity awareness training &amp; phishing simulation">
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2">
-                <StatusDot ok={!!status?.infoseciq?.has_key}/>
+                <StatusDot ok={!!(status?.infoseciq?.has_key && !status?.infoseciq?.lastError)}/>
                 <span className="text-sm text-slate-600">
-                  {status?.infoseciq?.has_key ? 'Connected' : 'Not configured'}
+                  {!status?.infoseciq?.has_key
+                    ? 'Not configured'
+                    : status?.infoseciq?.lastError
+                      ? 'Sync failing'
+                      : 'Connected'}
                 </span>
               </div>
-              {status?.infoseciq?.last_sync && (
-                <span className="text-xs text-slate-400">Last sync: {new Date(status.infoseciq.last_sync).toLocaleString()}</span>
+              {status?.infoseciq?.lastSync && (
+                <span className="text-xs text-slate-400">Last sync: {new Date(status.infoseciq.lastSync).toLocaleString()}</span>
               )}
+              <ErrorBanner message={status?.infoseciq?.lastError} />
             </div>
           </Card>
           <Card title="IPAM Import" icon="📥" subtitle="One-time import from PHPiPAM">
