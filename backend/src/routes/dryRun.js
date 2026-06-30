@@ -59,12 +59,21 @@ router.post('/', authenticate, requireMinRole('superadmin'), async (req, res) =>
   };
 
   try {
-    await redis.set(DRY_RUN_KEY, JSON.stringify(state), 'EX', dur * 60);
+    // DB write first — if Postgres is unavailable the Redis key never gets
+    // set, so the DNS engine stays in filtering mode and the 500 is accurate.
     await query(
       `INSERT INTO settings (key, value) VALUES ('dry_run_state', $1)
        ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
       [JSON.stringify(state)]
     );
+    try {
+      await redis.set(DRY_RUN_KEY, JSON.stringify(state), 'EX', dur * 60);
+    } catch (redisErr) {
+      // Redis write failed after DB succeeded — roll back so state stays
+      // consistent (filtering is NOT bypassed) and return 500.
+      await query(`DELETE FROM settings WHERE key = 'dry_run_state'`).catch(() => {});
+      throw redisErr;
+    }
     res.json({ active: true, expiresAt, durationMinutes: dur });
   } catch (err) {
     res.status(500).json({ error: err.message });

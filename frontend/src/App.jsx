@@ -184,11 +184,14 @@ export default function App() {
           <Route path="/admin/settings"               element={<SettingsPage />} />
           <Route path="/admin/system-health"           element={<SystemHealthPage />} />
           <Route path="/admin/vpn"                    element={<VpnPage />} />
+          {/* Dry run — all admins can view status; superadmin controls are
+              gated inside DryRunPage itself, so the route is admin-readable */}
+          <Route path="/admin/dry-run"              element={<DryRunPage />} />
+
           {/* Superadmin-only: managing what a role grants is itself
               adjacent to privilege escalation, same tier as role assignment */}
           <Route element={<RequireAuth minRole="superadmin"><Outlet /></RequireAuth>}>
             <Route path="/admin/custom-roles"         element={<CustomRolesPage />} />
-            <Route path="/admin/dry-run"              element={<DryRunPage />} />
           </Route>
 
           {/* Device Fleet */}
