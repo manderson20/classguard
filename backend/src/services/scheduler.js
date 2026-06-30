@@ -66,15 +66,16 @@ async function insertDnsLogBatch(records) {
   const queriedAts       = records.map(r =>
     r.timestamp ? new Date(parseInt(r.timestamp, 10)) : new Date()
   );
+  const dryRuns          = records.map(r => r.dryRun === 'true');
 
   try {
     await query(
-      `INSERT INTO dns_logs (user_id, device_id, lesson_session_id, domain, action, block_reason, source_ip, cache_hit, queried_at)
+      `INSERT INTO dns_logs (user_id, device_id, lesson_session_id, domain, action, block_reason, source_ip, cache_hit, queried_at, dry_run)
        SELECT * FROM unnest(
-         $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::inet[], $8::boolean[], $9::timestamptz[]
+         $1::uuid[], $2::uuid[], $3::uuid[], $4::text[], $5::text[], $6::text[], $7::inet[], $8::boolean[], $9::timestamptz[], $10::boolean[]
        )
        ON CONFLICT DO NOTHING`,
-      [userIds, deviceIds, lessonSessionIds, domains, actions, blockReasons, sourceIps, cacheHits, queriedAts]
+      [userIds, deviceIds, lessonSessionIds, domains, actions, blockReasons, sourceIps, cacheHits, queriedAts, dryRuns]
     );
   } catch (err) {
     // unnest() inserts the whole batch as one statement — one malformed

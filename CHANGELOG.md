@@ -18,6 +18,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.8.3] - 2026-06-30
+
+### Added
+
+- **Dry Run Mode** — superadmin-only troubleshooting mode that bypasses all DNS filtering (blocklist, content categories, lesson mode, penalty box, per-student/subnet policy) while DNS still resolves through ClassGuard. Queries that would have been blocked are logged with `action = dry_run_blocked` for post-session review. Requires typing `CONFIRM` to activate; auto-expires at a configurable interval (30 min, 1 hr, 2 hr, 4 hr). An orange banner in the admin layout warns all admins while a dry-run window is active, with a one-click disable for superadmins.
+
+---
+
 ## [0.8.2] - 2026-06-26
 
 ### Fixed
