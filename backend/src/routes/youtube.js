@@ -104,12 +104,12 @@ router.get('/video-info', authenticate, async (req, res) => {
   const results    = [];
   const uncachedIds = [];
 
-  for (const [i, _id] of safeIds.entries()) {
+  for (const [i, id] of safeIds.entries()) {
     const [err, raw] = cached[i];
     if (!err && raw) {
       try { results.push(JSON.parse(raw)); continue; } catch {}
     }
-    uncachedIds.push(safeIds[i]);
+    uncachedIds.push(id);
   }
 
   // Batch-fetch uncached from YouTube API
