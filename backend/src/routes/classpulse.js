@@ -316,25 +316,29 @@ router.get('/lessons', async (req, res) => {
   const { search, tag, folder, status } = req.query;
   const adminPlus = isAdminPlus(role);
 
+  const { rows: policyRows } = await query(`SELECT value FROM settings WHERE key = 'classpulse_lesson_sharing'`);
+  const sharingPolicy = policyRows[0]?.value || 'school_wide';
+  const sharingDisabled = sharingPolicy === 'own_only' && !adminPlus;
+
   const { rows } = await query(
     `SELECT l.*,
             u.full_name AS teacher_name,
             COUNT(DISTINCT p.id)::int AS page_count,
             COUNT(DISTINCT q.id)::int AS question_count,
-            EXISTS (
+            (NOT $7 AND EXISTS (
               SELECT 1 FROM classpulse_lesson_shares s
               WHERE s.lesson_id = l.id AND (s.shared_with = $1 OR s.shared_with IS NULL)
-            ) AS is_shared_with_me
+            )) AS is_shared_with_me
      FROM classpulse_lessons l
      JOIN users u ON u.id = l.teacher_id
      LEFT JOIN classpulse_pages p ON p.lesson_id = l.id
      LEFT JOIN classpulse_questions q ON q.page_id = p.id
      WHERE (
        l.teacher_id = $1
-       OR EXISTS (
+       OR (NOT $7 AND EXISTS (
          SELECT 1 FROM classpulse_lesson_shares s
          WHERE s.lesson_id = l.id AND (s.shared_with = $1 OR s.shared_with IS NULL)
-       )
+       ))
        OR $2
      )
      AND ($3::text IS NULL OR l.title ILIKE '%' || $3 || '%' OR l.description ILIKE '%' || $3 || '%')
@@ -343,7 +347,7 @@ router.get('/lessons', async (req, res) => {
      AND ($6::text IS NULL OR l.status = $6)
      GROUP BY l.id, u.full_name
      ORDER BY l.updated_at DESC`,
-    [userId, adminPlus, search || null, tag || null, folder || null, status || null]
+    [userId, adminPlus, search || null, tag || null, folder || null, status || null, sharingDisabled]
   );
   res.json(rows);
 });
@@ -534,6 +538,11 @@ router.post('/lessons/:lessonId/share', async (req, res) => {
   const { userId, role } = req.user;
   const { lessonId } = req.params;
   const { user_id: sharedWith = null } = req.body; // null = school-wide
+
+  const { rows: policyRows } = await query(`SELECT value FROM settings WHERE key = 'classpulse_lesson_sharing'`);
+  if ((policyRows[0]?.value || 'school_wide') === 'own_only') {
+    return res.status(403).json({ error: 'Lesson sharing is disabled by your district administrator' });
+  }
 
   if (!await ownsLesson(lessonId, userId, role)) {
     return res.status(403).json({ error: 'Forbidden' });
