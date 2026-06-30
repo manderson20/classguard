@@ -50,7 +50,7 @@ router.get('/join/:code', async (req, res) => {
         [page.id]
       );
       const { rows: options } = await query(
-        `SELECT o.id, o.text, o.position
+        `SELECT o.id, o.text, o.position, o.question_id
          FROM classpulse_question_options o
          WHERE o.question_id = ANY($1::uuid[])
          ORDER BY o.question_id, o.position`,
@@ -175,14 +175,23 @@ router.post('/sessions/:id/response', authenticate, async (req, res) => {
 
   // Verify session is active and student is joined
   const { rows: [session] } = await query(
-    `SELECT s.id, s.class_id FROM classpulse_sessions s
+    `SELECT s.id, s.class_id, s.lesson_id FROM classpulse_sessions s
      JOIN classpulse_session_students ss ON ss.session_id = s.id AND ss.student_id = $2
      WHERE s.id = $1 AND s.status = 'active'`,
     [sessionId, userId]
   );
   if (!session) return res.status(403).json({ error: 'Not joined to this session or session ended' });
 
-  const { rows: [response] } = await query(
+  // Verify the question belongs to this session's lesson
+  const { rows: [questionCheck] } = await query(
+    `SELECT 1 FROM classpulse_questions q
+     JOIN classpulse_pages p ON p.id = q.page_id
+     WHERE q.id = $1 AND p.lesson_id = $2`,
+    [question_id, session.lesson_id]
+  );
+  if (!questionCheck) return res.status(400).json({ error: 'Question does not belong to this session' });
+
+  await query(
     `INSERT INTO classpulse_responses
        (session_id, question_id, student_id, response_type, text_value, option_ids, numeric_value)
      VALUES ($1,$2,$3,$4,$5,$6,$7)
@@ -191,8 +200,7 @@ router.post('/sessions/:id/response', authenticate, async (req, res) => {
        text_value    = EXCLUDED.text_value,
        option_ids    = EXCLUDED.option_ids,
        numeric_value = EXCLUDED.numeric_value,
-       submitted_at  = now()
-     RETURNING *`,
+       submitted_at  = now()`,
     [sessionId, question_id, userId, response_type,
      text_value || null, option_ids || [], numeric_value || null]
   );
@@ -834,10 +842,24 @@ router.get('/admin/lessons', requireMinRole('admin'), requirePermissionIfAdmin('
 // ---------------------------------------------------------------------------
 
 router.post('/sessions/start', async (req, res) => {
-  const { userId } = req.user;
+  const { userId, role } = req.user;
   const { lesson_id, class_id, mode = 'teacher_paced', classroom_lock_enabled = false } = req.body;
 
   if (!lesson_id) return res.status(400).json({ error: 'lesson_id is required' });
+
+  // Verify the teacher owns this lesson (or has admin access)
+  if (!await ownsLesson(lesson_id, userId, role)) {
+    return res.status(403).json({ error: 'You do not own this lesson' });
+  }
+
+  // Verify the teacher owns the class they are starting this session for
+  if (class_id) {
+    const { rows: [cls] } = await query(
+      `SELECT 1 FROM classes WHERE id = $1 AND (teacher_id = $2 OR $3)`,
+      [class_id, userId, isAdminPlus(role)]
+    );
+    if (!cls) return res.status(403).json({ error: 'You do not own this class' });
+  }
 
   // Get the first page of the lesson to set as current
   const { rows: [firstPage] } = await query(
