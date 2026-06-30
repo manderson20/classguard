@@ -53,6 +53,8 @@ import {
   mdiMonitor,
   mdiShieldCheckOutline,
   mdiFlaskOutline,
+  mdiPresentationPlay,
+  mdiBookOpenOutline,
 } from '@mdi/js';
 import logo from '../assets/logo.png';
 import { useAuth } from '../contexts/AuthContext';
@@ -60,7 +62,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.8.7';
+const VERSION = '0.9.0';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -673,14 +675,25 @@ export default function Layout() {
 
           {/* Teachers — classroom only (also shown to admins in Teacher view) */}
           {showTeacherNav && (
-            <section>
-              <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
-                Classroom
-              </p>
-              <div className="space-y-0.5">
-                {TEACHER_NAV.map(item => <NavItem key={item.to} {...item} />)}
-              </div>
-            </section>
+            <>
+              <section>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
+                  Classroom
+                </p>
+                <div className="space-y-0.5">
+                  {TEACHER_NAV.map(item => <NavItem key={item.to} {...item} />)}
+                </div>
+              </section>
+              <section>
+                <p className="px-3 mb-1.5 text-[10px] font-semibold uppercase tracking-widest" style={{ color: '#475569' }}>
+                  ClassPulse
+                </p>
+                <div className="space-y-0.5">
+                  <NavItem to="/classpulse"          icon={mdiPresentationPlay} label="Hub"             end />
+                  <NavItem to="/classpulse/lessons"  icon={mdiBookOpenOutline}  label="Lesson Library"      />
+                </div>
+              </section>
+            </>
           )}
 
           {/* Device Fleet — grouped sections */}
