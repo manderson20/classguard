@@ -368,6 +368,45 @@ router.post('/lessons/:lessonId/pages', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// Pages — Reorder  (MUST be registered before /:pageId to avoid shadowing)
+// ---------------------------------------------------------------------------
+
+const MAX_PAGES = 200;
+
+router.put('/lessons/:lessonId/pages/reorder', async (req, res) => {
+  const { userId, role } = req.user;
+  const { lessonId } = req.params;
+
+  if (!await ownsLesson(lessonId, userId, role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  if (!Array.isArray(req.body.order)) return res.status(400).json({ error: 'order must be an array' });
+
+  // Cap to prevent unbounded loops
+  const order = req.body.order.slice(0, MAX_PAGES);
+
+  await withTransaction(async client => {
+    // Phase 1: shift all affected pages to large temporary positions to avoid
+    // UNIQUE(lesson_id, position) conflicts while swapping (e.g. page A=1→2
+    // when page B is already at 2 would violate the constraint mid-update).
+    await client.query(
+      `UPDATE classpulse_pages SET position = position + 1000000
+       WHERE lesson_id = $1 AND id = ANY($2::uuid[])`,
+      [lessonId, order]
+    );
+    // Phase 2: assign final 1-based positions
+    for (let i = 0; i < order.length; i++) {
+      await client.query(
+        `UPDATE classpulse_pages SET position = $1 WHERE id = $2 AND lesson_id = $3`,
+        [i + 1, order[i], lessonId]
+      );
+    }
+  });
+
+  res.json({ ok: true });
+});
+
+// ---------------------------------------------------------------------------
 // Pages — Update
 // ---------------------------------------------------------------------------
 
@@ -426,31 +465,6 @@ router.delete('/lessons/:lessonId/pages/:pageId', async (req, res) => {
   res.status(204).end();
 });
 
-// ---------------------------------------------------------------------------
-// Pages — Reorder
-// ---------------------------------------------------------------------------
-
-router.put('/lessons/:lessonId/pages/reorder', async (req, res) => {
-  const { userId, role } = req.user;
-  const { lessonId } = req.params;
-  const { order } = req.body; // array of page UUIDs in desired order
-
-  if (!await ownsLesson(lessonId, userId, role)) {
-    return res.status(403).json({ error: 'Forbidden' });
-  }
-  if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be an array' });
-
-  await withTransaction(async client => {
-    for (let i = 0; i < order.length; i++) {
-      await client.query(
-        `UPDATE classpulse_pages SET position = $1 WHERE id = $2 AND lesson_id = $3`,
-        [i + 1, order[i], lessonId]
-      );
-    }
-  });
-
-  res.json({ ok: true });
-});
 
 // ---------------------------------------------------------------------------
 // Questions — Create
@@ -581,7 +595,7 @@ router.delete('/questions/:questionId', async (req, res) => {
 // Admin-only: list all lessons district-wide
 // ---------------------------------------------------------------------------
 
-router.get('/admin/lessons', requirePermissionIfAdmin('classpulse'), async (req, res) => {
+router.get('/admin/lessons', requireMinRole('admin'), requirePermissionIfAdmin('classpulse'), async (req, res) => {
   const { rows } = await query(
     `SELECT l.*, u.full_name AS teacher_name,
             COUNT(DISTINCT p.id)::int AS page_count
