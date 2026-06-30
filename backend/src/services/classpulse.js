@@ -19,7 +19,7 @@ async function generateUniqueJoinCode() {
   for (let attempt = 0; attempt < 20; attempt++) {
     const code = generateJoinCode();
     const { rows } = await query(
-      `SELECT 1 FROM classpulse_sessions WHERE join_code = $1 AND status = 'active'`,
+      `SELECT 1 FROM classpulse_sessions WHERE join_code = $1`,
       [code]
     );
     if (!rows.length) return code;
