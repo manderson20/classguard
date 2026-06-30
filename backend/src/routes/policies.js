@@ -406,7 +406,7 @@ router.post('/', async (req, res) => {
 // PATCH /api/v1/policies/:id  — update settings
 // ---------------------------------------------------------------------------
 router.patch('/:id', async (req, res) => {
-  const allowed = ['name','description','mode','safe_search','youtube_restricted','block_page_message','youtube_categories','block_direct_ip'];
+  const allowed = ['name','description','mode','safe_search','youtube_restricted','block_page_message','youtube_categories','block_direct_ip','default_action'];
   const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
 
   let policy;

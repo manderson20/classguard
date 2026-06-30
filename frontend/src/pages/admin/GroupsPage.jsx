@@ -2,6 +2,21 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
+function GroupSourceBadge({ groupType }) {
+  if (groupType === 'google') {
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-blue-100 text-blue-700">
+        Google Workspace
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-medium px-1.5 py-0.5 rounded bg-slate-100 text-slate-500">
+      ClassGuard
+    </span>
+  );
+}
+
 export default function GroupsPage() {
   const qc = useQueryClient();
   const [selected, setSelected] = useState(null);
@@ -49,10 +64,15 @@ export default function GroupsPage() {
 
   return (
     <div className="p-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold text-slate-900">Groups</h1>
         <button className="btn-primary" onClick={() => setCreating(true)}>+ New Group</button>
       </div>
+      <p className="text-sm text-slate-500 mb-4">
+        Organizational groups for policy assignment — both Google Workspace groups (synced, read-only here) and
+        manually created ClassGuard groups. For filter/penalty groups assigned to students needing extra
+        restrictions, use <a href="/admin/filter-groups" className="text-primary-600 hover:underline">Filter Groups</a>.
+      </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Group list */}
@@ -67,7 +87,10 @@ export default function GroupsPage() {
                   ? 'bg-primary-600 text-white border-primary-600'
                   : 'card border-transparent hover:border-slate-200'}`}
             >
-              <div className="font-medium">{g.name}</div>
+              <div className="flex items-center gap-2 mb-0.5">
+                <span className="font-medium truncate">{g.name}</span>
+                {selected !== g.id && <GroupSourceBadge groupType={g.group_type} />}
+              </div>
               {g.description && (
                 <div className={`text-xs mt-0.5 truncate ${selected === g.id ? 'text-primary-200' : 'text-slate-400'}`}>
                   {g.description}

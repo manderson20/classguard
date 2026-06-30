@@ -29,6 +29,7 @@ import UnblockRequestsPage from './pages/admin/UnblockRequestsPage';
 import GroupsPage          from './pages/admin/GroupsPage';
 import CustomRolesPage     from './pages/admin/CustomRolesPage';
 import DryRunPage         from './pages/admin/DryRunPage';
+import FilterGroupsPage   from './pages/admin/FilterGroupsPage';
 import DnsLogs         from './pages/admin/DnsLogs';
 import DnsStats        from './pages/admin/DnsStats';
 import DnsRecordsPage  from './pages/admin/DnsRecordsPage';
@@ -150,6 +151,7 @@ export default function App() {
           <Route path="/admin/policy-simulator"        element={<PolicySimulator />} />
           <Route path="/admin/unblock-requests"        element={<UnblockRequestsPage />} />
           <Route path="/admin/groups"                 element={<GroupsPage />} />
+          <Route path="/admin/filter-groups"          element={<FilterGroupsPage />} />
           <Route path="/admin/dns/logs"               element={<DnsLogs />} />
           <Route path="/admin/dns/stats"              element={<DnsStats />} />
           <Route path="/admin/dns/records"            element={<DnsRecordsPage />} />

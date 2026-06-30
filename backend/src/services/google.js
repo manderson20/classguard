@@ -265,11 +265,12 @@ async function syncGroups(admin, actorId) {
   for (const gg of googleGroups) {
     // Upsert group row
     const { rows } = await pool.query(
-      `INSERT INTO groups (name, description, google_group_email)
-       VALUES ($1, $2, $3)
+      `INSERT INTO groups (name, description, google_group_email, group_type)
+       VALUES ($1, $2, $3, 'google')
        ON CONFLICT (google_group_email) WHERE google_group_email IS NOT NULL DO UPDATE SET
          name        = EXCLUDED.name,
-         description = EXCLUDED.description
+         description = EXCLUDED.description,
+         group_type  = 'google'
        RETURNING id`,
       [gg.name, gg.description ?? null, gg.email]
     );

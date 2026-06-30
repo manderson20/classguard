@@ -139,6 +139,19 @@ async function resolveQuery(name, typeNum, sourceIp) {
     }
   }
 
+  // --- 6.8. Default-deny check -------------------------------------------
+  // Policies with defaultAction='block' (allowlist-only mode) block every
+  // domain that didn't pass the allowlist checks above. Blocklists and
+  // category rules are irrelevant here — we're already blocking everything.
+  if (mode === 'standard' && (policy?.defaultAction || 'allow') === 'block') {
+    if (isDryRun) {
+      logQuery({ domain, action: 'dry_run_blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'default_deny', dryRun: true });
+      return dryRunForward(domain, typeNum);
+    }
+    logQuery({ domain, action: 'blocked', sourceIp, studentId, deviceId, policyId, lessonSessionId, blockReason: 'default_deny' });
+    return { action: 'blocked', answers: [], blockReason: 'default_deny' };
+  }
+
   // --- 7. Blocklist check (standard mode) ---------------------------------
   // Fails CLOSED: if Redis can't be reached to check the blocklist, we cannot
   // verify safety, so the query is blocked rather than let through unchecked.
