@@ -104,7 +104,7 @@ router.get('/video-info', authenticate, async (req, res) => {
   const results    = [];
   const uncachedIds = [];
 
-  for (let i = 0; i < safeIds.length; i++) {
+  for (const [i, _id] of safeIds.entries()) {
     const [err, raw] = cached[i];
     if (!err && raw) {
       try { results.push(JSON.parse(raw)); continue; } catch {}
