@@ -18,6 +18,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.8.4] - 2026-06-30
+
+### Added
+
+- **Filter Groups** — penalty-box-style named groups for students who need more restrictive internet access. Each group has a dedicated filter policy assigned. Students added here are filtered by that policy regardless of class or OU. Admin UI at Filtering → Filter Groups with student search, policy assignment, and member management.
+- **Groups page labels** — Google Workspace groups are now labeled with a "Google Workspace" badge in the Groups list, distinct from manually created ClassGuard groups.
+- **Policy "Block by default" mode** — new toggle in the policy editor Settings tab. "Block by default" (allowlist-only) blocks everything except domains in the policy's Allowed Domains list. DNS engine enforces this immediately without consulting blocklists or categories.
+
+---
+
 ## [0.8.3] - 2026-06-30
 
 ### Added

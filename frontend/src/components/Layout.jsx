@@ -60,7 +60,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.8.3';
+const VERSION = '0.8.4';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {
@@ -370,10 +370,11 @@ const ADMIN_SECTIONS = [
   {
     label: 'Policies & Safety',
     items: [
-      { to: '/admin/policies',          icon: mdiFileDocumentOutline, label: 'Policies',         permissionKey: 'policies' },
-      { to: '/admin/policy-simulator', icon: mdiFilterOutline,        label: 'Filter Simulator', permissionKey: 'policies' },
-      { to: '/admin/groups',           icon: mdiAccountGroupOutline,  label: 'Groups',           permissionKey: 'groups' },
-      { to: '/admin/blocklists',  icon: mdiShieldOutline,       label: 'Blocklists',    permissionKey: 'blocklists' },
+      { to: '/admin/policies',          icon: mdiFileDocumentOutline,  label: 'Policies',         permissionKey: 'policies' },
+      { to: '/admin/filter-groups',     icon: mdiAccountGroupOutline,  label: 'Filter Groups',    permissionKey: 'policies' },
+      { to: '/admin/policy-simulator',  icon: mdiFilterOutline,        label: 'Filter Simulator', permissionKey: 'policies' },
+      { to: '/admin/groups',            icon: mdiAccountGroupOutline,  label: 'Groups',           permissionKey: 'groups' },
+      { to: '/admin/blocklists',        icon: mdiShieldOutline,        label: 'Blocklists',       permissionKey: 'blocklists' },
       { to: '/admin/categories',  icon: mdiTagOutline,          label: 'Categories',    permissionKey: 'categories' },
       { to: '/admin/screenshots',       icon: mdiCameraOutline,  label: 'Screenshots',       permissionKey: 'screenshots' },
       { to: '/admin/browser-history',   icon: mdiHistory,        label: 'Browser History',   permissionKey: 'browser_history' },

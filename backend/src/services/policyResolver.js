@@ -288,6 +288,9 @@ async function buildResolvedPolicy(policy, mode = null, baseAllowDomains = [], b
     activeBloclistIds,
     blockedCategories,
     allowedCategories,
+    // 'allow' = current default-allow (block what's listed)
+    // 'block' = allowlist-only (block everything except resolvedAllowDomains)
+    defaultAction: policy?.default_action || 'allow',
   };
 }
 

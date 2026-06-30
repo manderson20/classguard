@@ -8,13 +8,17 @@ const router = Router();
 router.use(authenticate, requirePermission('groups'));
 
 // GET /api/v1/groups
+// Returns manual + Google Workspace groups only; filter groups are managed
+// via /api/v1/filter-groups and are intentionally excluded here to keep
+// the two concepts separate in the UI.
 router.get('/', async (req, res) => {
   const { rows } = await query(
     `SELECT g.*, COUNT(gm.user_id) AS member_count
      FROM groups g
      LEFT JOIN group_members gm ON gm.group_id = g.id
+     WHERE g.group_type != 'filter'
      GROUP BY g.id
-     ORDER BY g.name`
+     ORDER BY g.group_type, g.name`
   );
   res.json(rows);
 });
@@ -35,13 +39,13 @@ router.get('/:id', async (req, res) => {
   res.json({ ...rows[0], members });
 });
 
-// POST /api/v1/groups
+// POST /api/v1/groups  — creates manual groups only; filter groups are at /filter-groups
 router.post('/', async (req, res) => {
   const { name, description = null } = req.body;
   if (!name) return res.status(400).json({ error: 'name is required' });
 
   const { rows } = await query(
-    'INSERT INTO groups (name, description) VALUES ($1,$2) RETURNING *',
+    `INSERT INTO groups (name, description, group_type) VALUES ($1,$2,'manual') RETURNING *`,
     [name, description]
   );
   res.status(201).json(rows[0]);

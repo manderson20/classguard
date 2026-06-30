@@ -50,6 +50,7 @@ function SettingsTab({ policy, policyId }) {
     name:               policy.name               || '',
     description:        policy.description        || '',
     mode:               policy.mode               || 'standard',
+    default_action:     policy.default_action     || 'allow',
     safe_search:        policy.safe_search        ?? true,
     youtube_restricted: policy.youtube_restricted || 'moderate',
     block_page_message: policy.block_page_message || '',
@@ -78,10 +79,48 @@ function SettingsTab({ policy, policyId }) {
         </Field>
         <Field label="Mode">
           <select className={SELECT} value={form.mode} onChange={e => f({ mode: e.target.value })}>
-            <option value="standard">Standard — normal filtering</option>
+            <option value="standard">Standard — filtered access</option>
             <option value="open">Open — allow all (no filtering)</option>
           </select>
         </Field>
+        {form.mode === 'standard' && (
+          <Field label="Filtering Stance" col2
+            hint={form.default_action === 'block'
+              ? 'Block everything — only sites in the Allowed Domains list will resolve.'
+              : 'Allow everything except what blocklists, categories, and deny rules block.'}>
+            <div className="flex rounded-lg border border-slate-200 overflow-hidden text-sm">
+              <button
+                type="button"
+                onClick={() => f({ default_action: 'allow' })}
+                className={`flex-1 px-3 py-2 text-center transition-colors ${
+                  form.default_action !== 'block'
+                    ? 'bg-primary-600 text-white font-medium'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Allow by default
+              </button>
+              <button
+                type="button"
+                onClick={() => f({ default_action: 'block' })}
+                className={`flex-1 px-3 py-2 text-center transition-colors border-l border-slate-200 ${
+                  form.default_action === 'block'
+                    ? 'bg-orange-500 text-white font-medium'
+                    : 'bg-white text-slate-600 hover:bg-slate-50'
+                }`}
+              >
+                Block by default
+              </button>
+            </div>
+            {form.default_action === 'block' && (
+              <div className="mt-2 text-xs text-orange-700 bg-orange-50 border border-orange-200 rounded-lg px-3 py-2">
+                Allowlist-only mode: students can only reach sites you add to the
+                <strong> Allowed Domains</strong> list on the Domain Rules tab.
+                Blocklists and category rules are bypassed (already blocked anyway).
+              </div>
+            )}
+          </Field>
+        )}
         <Field label="Description" col2>
           <input className={INPUT} placeholder="Optional description"
             value={form.description} onChange={e => f({ description: e.target.value })} />
