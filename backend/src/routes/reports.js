@@ -30,12 +30,16 @@ router.get('/history', ...auth, async (req, res) => {
 });
 
 router.post('/generate', ...auth, async (req, res) => {
-  const { type, from, to } = req.body;
+  const { type, from, to, session_id } = req.body;
   if (!REPORT_TYPES[type]) return res.status(400).json({ error: 'Unknown report type' });
 
   const params = {};
-  if (REPORT_TYPES[type].params.includes('from')) params.from = from ? new Date(from) : new Date(Date.now() - 30 * 86400_000);
-  if (REPORT_TYPES[type].params.includes('to'))   params.to   = to   ? new Date(to)   : new Date();
+  if (REPORT_TYPES[type].params.includes('from'))       params.from       = from ? new Date(from) : new Date(Date.now() - 30 * 86400_000);
+  if (REPORT_TYPES[type].params.includes('to'))         params.to         = to   ? new Date(to)   : new Date();
+  if (REPORT_TYPES[type].params.includes('session_id')) {
+    if (!session_id) return res.status(400).json({ error: 'session_id is required for this report type' });
+    params.session_id = session_id;
+  }
 
   try {
     const { summary, pdfBuffer } = await runReport(type, params);

@@ -16,6 +16,7 @@ export default function ReportsPage() {
   const [selectedType, setSelectedType] = useState(null);
   const [from, setFrom] = useState(() => new Date(Date.now() - 30 * 86400_000).toISOString().slice(0, 10));
   const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
+  const [sessionId, setSessionId] = useState('');
   const [error, setError] = useState(null);
 
   const { data: types = [] } = useQuery({ queryKey: ['report-types'], queryFn: () => api.get('/reports/types') });
@@ -25,8 +26,9 @@ export default function ReportsPage() {
     mutationFn: async () => {
       const token = localStorage.getItem('cg_token');
       const body = { type: selectedType.key };
-      if (selectedType.params.includes('from')) body.from = new Date(from).toISOString();
-      if (selectedType.params.includes('to')) body.to = new Date(to).toISOString();
+      if (selectedType.params.includes('from'))       body.from       = new Date(from).toISOString();
+      if (selectedType.params.includes('to'))         body.to         = new Date(to).toISOString();
+      if (selectedType.params.includes('session_id')) body.session_id = sessionId.trim();
       const res = await fetch('/api/v1/reports/generate', {
         method: 'POST',
         headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
@@ -78,6 +80,21 @@ export default function ReportsPage() {
               <input type="date" className="input text-xs" value={from} onChange={e => setFrom(e.target.value)} />
               <span className="text-slate-400 text-xs">to</span>
               <input type="date" className="input text-xs" value={to} onChange={e => setTo(e.target.value)} />
+            </div>
+          )}
+          {selectedType.params.includes('session_id') && (
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Session ID</label>
+              <input
+                type="text"
+                className="input text-xs font-mono w-full"
+                placeholder="Paste session UUID from TeachSession URL"
+                value={sessionId}
+                onChange={e => setSessionId(e.target.value)}
+              />
+              <p className="text-[11px] text-slate-400 mt-1">
+                Find the session ID in the URL: /classpulse/sessions/<strong>&lt;id&gt;</strong>/teach
+              </p>
             </div>
           )}
           {error && <p className="text-xs text-red-600">{error}</p>}
