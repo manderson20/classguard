@@ -553,7 +553,6 @@ function SubnetIpView({ subnet: subnetProp, onBack }) {
   const util    = data.utilization || {};
   const pag     = data.pagination  || {};
   const total   = hostsInCidr(subnet.subnet, subnet.ip_version);
-  const usedPct = util.total ? Math.min(100, Math.round(((util.used + (util.reserved||0) + (util.offline||0)) / util.total) * 100)) : 0;
 
   const openAdd  = (prefillIp) => { setForm({ ...EMPTY_IP, ip: prefillIp || '' }); setModal('add'); };
   const openEdit = row => { setForm({ ...row, mac_address: row.mac_address || '', hostname: row.hostname || '', owner: row.owner || '', description: row.description || '', notes: row.notes || '', nat_public_ip: row.nat_public_ip ? String(row.nat_public_ip).split('/')[0] : '' }); setModal(row); };

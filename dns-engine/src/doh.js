@@ -19,7 +19,7 @@ async function dohHandler(req, res) {
 
   try {
     if (req.method === 'GET') {
-      const encoded = req.query.dns;
+      const encoded = Array.isArray(req.query.dns) ? req.query.dns[0] : req.query.dns;
       if (!encoded) return res.status(400).send('Missing dns parameter');
       dnsMessage = Buffer.from(encoded, 'base64url');
     } else {

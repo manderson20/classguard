@@ -69,7 +69,7 @@ async function fetchControllerClients(config) {
   }
 
   const https  = require('https');
-  const agent  = new https.Agent({ rejectUnauthorized: false });
+  const agent  = new https.Agent({ rejectUnauthorized: !!(config.extra_config?.verify_ssl) });
 
   // Login
   const login = await axios.post(

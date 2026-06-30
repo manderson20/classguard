@@ -15,7 +15,7 @@ const REDACT_RE = /password|secret|token/i;
 
 function redactBody(body) {
   if (!body || typeof body !== 'object') return null;
-  const out = {};
+  const out = Object.create(null);
   for (const [k, v] of Object.entries(body)) {
     out[k] = REDACT_RE.test(k) ? '[redacted]' : v;
   }

@@ -150,7 +150,6 @@ function CategoriesTab({ categories }) {
 // Policy Rules tab
 // ---------------------------------------------------------------------------
 function PolicyRulesTab({ categories }) {
-  const qc = useQueryClient();
   const [policyId, setPolicyId] = useState('');
 
   const { data: policies = [] } = useQuery({
@@ -282,8 +281,6 @@ function DomainLookupTab({ categories }) {
     mutationFn: () => api.post('/categories/override', { domain: query_, remove: true }),
     onSuccess:  () => qc.invalidateQueries({ queryKey: ['cat-lookup', query_] }),
   });
-
-  const cat = result?.category ? categories.find(c => c.slug === result.category) : null;
 
   return (
     <div className="max-w-xl space-y-4">

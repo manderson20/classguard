@@ -13,7 +13,6 @@
 // for why the disable action's lock-screen message can't be templated
 // per-incident -- that's a Google Admin Console limitation, not ours.
 const { Router } = require('express');
-const { pool } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { requirePermissionIfAdmin } = require('../middleware/permissions');

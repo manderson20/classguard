@@ -514,7 +514,7 @@ async function handleMessage(msg, sender) {
 
     // Content script detected a keyword match — capture screenshot
     case 'CG_KEYWORD_VIOLATION': {
-      const { keyword, category, url, title, tabId } = msg;
+      const { keyword, category, tabId } = msg;
       const detail = `keyword:${keyword} (${category})`;
       captureAndUpload({
         trigger:       'content_violation',

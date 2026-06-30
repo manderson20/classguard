@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useState, useRef } from 'react';
+import { useParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
@@ -935,7 +935,7 @@ function VideoRulesPanel({ policy, policyId }) {
     // Full URL: youtube.com/watch?v=ID  or  youtu.be/ID
     try {
       const url = new URL(s.startsWith('http') ? s : `https://${s}`);
-      if (url.hostname.includes('youtube.com')) return url.searchParams.get('v') || null;
+      if (url.hostname === 'youtube.com' || url.hostname === 'www.youtube.com') return url.searchParams.get('v') || null;
       if (url.hostname === 'youtu.be') return url.pathname.slice(1).split('?')[0] || null;
     } catch {}
     // Bare video ID (11 chars, alphanumeric + _ -)
@@ -1445,8 +1445,6 @@ function AssignmentsTab({ policy, policyId }) {
 // ---------------------------------------------------------------------------
 export default function PolicyEditor() {
   const { policyId } = useParams();
-  const navigate     = useNavigate();
-  const qc           = useQueryClient();
   const [tab, setTab] = useState(0);
 
   const { data: policy, isLoading, error } = useQuery({

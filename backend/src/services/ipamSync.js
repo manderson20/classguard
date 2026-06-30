@@ -64,7 +64,6 @@ async function syncNetworkClientsToIpam() {
     }
   }
 
-  const unmatched = 0; // clients with no matching IPAM subnet — count from diff
   console.log(`[ipam-sync] done — created:${created} updated:${updated} errors:${errors} total_clients:${matches.length}`);
   return { created, updated, errors, total: matches.length };
 }

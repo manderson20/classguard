@@ -26,8 +26,7 @@ async function printExtensionId() {
   const crx = new ChromeExtension({ privateKey });
   // generateAppId() needs a loaded+packed extension to derive this.publicKey;
   // a single throwaway manifest is enough, only the key material matters.
-  const tmp = require('os').tmpdir() + '/cg-keygen-' + Date.now();
-  require('fs').mkdirSync(tmp);
+  const tmp = require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'cg-keygen-'));
   require('fs').writeFileSync(tmp + '/manifest.json', JSON.stringify({ manifest_version: 3, name: 'x', version: '1.0.0' }));
   await crx.load(tmp);
   await crx.pack();

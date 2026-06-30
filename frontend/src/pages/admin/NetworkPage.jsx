@@ -216,7 +216,7 @@ function ClientsTab() {
   const [search, setSearch]   = useState('');
   const [ctrlFilter, setCtrl] = useState('');
   const [typeFilter, setType] = useState('');
-  const [apFilter, setAp]     = useState('');
+  const [apFilter]             = useState('');
 
   const { data: resp } = useQuery({
     queryKey: ['network-clients', search, ctrlFilter, typeFilter, apFilter],

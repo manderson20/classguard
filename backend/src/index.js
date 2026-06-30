@@ -154,7 +154,8 @@ app.use('/api/v1/network-tools', require('./routes/networkTools'));
 app.use('/metrics',              require('./routes/metrics'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
-app.get('/health', async (req, res) => {
+const healthLimiter = rateLimit({ windowMs: 60_000, max: 120, standardHeaders: true, legacyHeaders: false });
+app.get('/health', healthLimiter, async (req, res) => {
   const { pool } = require('./db');
   try {
     await pool.query('SELECT 1');

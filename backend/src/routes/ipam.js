@@ -5,7 +5,7 @@
 
 const { Router } = require('express');
 const axios      = require('axios');
-const { query, withTransaction, pool } = require('../db');
+const { query, withTransaction } = require('../db');
 const { authenticate }    = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const config              = require('../config');
@@ -1177,7 +1177,7 @@ router.get('/ipam-subnets/:id/next-free', async (req, res) => {
 // GET /ipam/search?q=
 // Returns matching IP address records AND matching subnets in one response.
 router.get('/search', async (req, res) => {
-  const { q } = req.query;
+  const q = Array.isArray(req.query.q) ? req.query.q[0] : (req.query.q || '');
   if (!q || q.length < 2) return res.status(400).json({ error: 'q must be at least 2 chars' });
   const like = `%${q}%`;
 
@@ -1313,7 +1313,7 @@ router.post('/import/addresses', async (req, res) => {
 
   let imported = 0, skipped = 0;
   const errors = [];
-  const subnetCache = {};
+  const subnetCache = Object.create(null);
 
   for (const row of rows) {
     const subnetCidr = (row.subnet || '').trim();

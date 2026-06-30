@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, Fragment } from 'react';
+import { useState, useEffect, Fragment } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
@@ -236,12 +236,6 @@ export default function ClassDetail() {
   const { data: cls, isLoading } = useQuery({
     queryKey: ['class', classId],
     queryFn:  () => api.get(`/classes/${classId}`),
-  });
-
-  const { data: lesson } = useQuery({
-    queryKey:        ['class-lesson', classId],
-    queryFn:         () => api.get(`/classes/${classId}`).then(c => c.active_lesson || null),
-    refetchInterval: 10_000,
   });
 
   // Real-time activity feed

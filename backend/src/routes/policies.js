@@ -264,7 +264,6 @@ router.get('/subnet-assignments', async (req, res) => {
   );
   const results = [];
   for (const row of rows) {
-    const resolved = await resolvePolicy(null).catch(() => null);
     // Resolve policy directly by ID for subnet (bypass student-chain)
     const { rows: [pol] } = await query('SELECT * FROM policies WHERE id = $1', [row.policy_id]);
     if (!pol) continue;

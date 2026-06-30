@@ -3,7 +3,6 @@ const router   = express.Router();
 const axios    = require('axios');
 const crypto   = require('crypto');
 const fs       = require('fs');
-const path     = require('path');
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');

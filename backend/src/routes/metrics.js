@@ -27,8 +27,19 @@ const router  = express.Router();
 const { pool }  = require('../db');
 const redis     = require('../redis');
 const os        = require('os');
+const { rateLimit } = require('express-rate-limit');
 const { getHaConfig, getNodes } = require('../services/keepalived');
 const { getResourceUsage } = require('../services/systemResources');
+
+// Escape characters that are special in XML contexts
+function xmlEscape(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
+
+// Rate limiter for unauthenticated-accessible metrics endpoints
+const metricsLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
 
 const DNS_STREAM = 'classguard:dns-log';
 
@@ -63,7 +74,6 @@ async function metricsAuth(req, res, next) {
 // ---------------------------------------------------------------------------
 
 async function collectMetrics() {
-  const now        = Date.now();
   const memUsage   = process.memoryUsage();
   const loadAvg    = os.loadavg();
   const freemem    = os.freemem();
@@ -213,7 +223,7 @@ async function collectMetrics() {
 // ---------------------------------------------------------------------------
 
 // GET /metrics  — main JSON metrics blob
-router.get('/', metricsAuth, async (req, res) => {
+router.get('/', metricsLimiter, metricsAuth, async (req, res) => {
   try {
     const metrics = await collectMetrics();
     res.json(metrics);
@@ -249,12 +259,12 @@ function zabbixValueType(key, value) {
 function buildItemsXml(keys, metrics, url, token) {
   return keys.map(k => `
     <item>
-      <name>ClassGuard: ${k.replace(/_/g, ' ')}</name>
+      <name>ClassGuard: ${xmlEscape(k.replace(/_/g, ' '))}</name>
       <type>19</type><!-- HTTP agent -->
-      <key>classguard.${k}</key>
-      <url>${url}</url>
+      <key>classguard.${xmlEscape(k)}</key>
+      <url>${xmlEscape(url)}</url>
       <headers>
-        <header><name>X-Metrics-Token</name><value>${token}</value></header>
+        <header><name>X-Metrics-Token</name><value>${xmlEscape(token)}</value></header>
       </headers>
       <posts/>
       <status_codes>200</status_codes>
@@ -263,7 +273,7 @@ function buildItemsXml(keys, metrics, url, token) {
       <preprocessing>
         <step>
           <type>12</type><!-- JSONPath -->
-          <params>$.${k}</params>
+          <params>$.${xmlEscape(k)}</params>
         </step>
       </preprocessing>
       <value_type>${zabbixValueType(k, metrics[k])}</value_type>
@@ -274,8 +284,8 @@ function buildItemsXml(keys, metrics, url, token) {
 function hostXml(techName, displayName, itemsXml) {
   return `
     <host>
-      <host>${techName}</host>
-      <name>${displayName}</name>
+      <host>${xmlEscape(techName)}</host>
+      <name>${xmlEscape(displayName)}</name>
       <items>${itemsXml}
       </items>
     </host>`;
@@ -286,7 +296,7 @@ function hostXml(techName, displayName, itemsXml) {
 // node, not just "the VIP answers") plus the VIP itself (the "is the
 // service reachable at all" check). Falls back to a single host pointed at
 // this box's own URL for a standalone, non-HA install.
-router.get('/zabbix-template', metricsAuth, async (req, res) => {
+router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => {
   const metrics = await collectMetrics().catch(() => ({}));
   const keys    = Object.keys(metrics).filter(k => !['node_id','timestamp'].includes(k));
   const token   = req.headers['x-metrics-token'] || req.query.token || '';

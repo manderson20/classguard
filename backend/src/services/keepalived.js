@@ -473,7 +473,6 @@ async function buildConfigBundle() {
 async function buildVrrpOnlyBundle() {
   const cfg    = await getHaConfig();
   const nodes  = await getNodes();
-  const apiUrl = process.env.APP_URL || 'http://localhost:3001';
 
   return {
     ...buildKeepalivedFiles(cfg, nodes),

@@ -93,12 +93,6 @@ function SyncButton({ label, endpoint }) {
 // ---------------------------------------------------------------------------
 // Zammad tab
 // ---------------------------------------------------------------------------
-const PRIORITY_COLOR = {
-  '1 low':    'text-slate-400',
-  '2 normal': 'text-slate-600',
-  '3 high':   'text-orange-600 font-semibold',
-};
-
 // ClassGuard event types that can be routed to Zammad groups
 const ROUTING_EVENT_TYPES = [
   {
@@ -187,19 +181,6 @@ function ZammadSection({ status }) {
   function openCreate() {
     setForm({ title: '', customer: '', body: '', group: groups[0]?.name || '', priority: '2 normal' });
     setModal('create');
-  }
-
-  // ---------------------------------------------------------------------------
-  // Connection settings
-  // ---------------------------------------------------------------------------
-  function openConnSettings() {
-    setConnSettings({
-      zammad_url:   savedSettings?.zammad_url   || '',
-      zammad_token: savedSettings?.zammad_token || '',
-    });
-    setTestResult(null);
-    setConnSaveError(null);
-    setModal('settings');
   }
 
   async function testConnection() {

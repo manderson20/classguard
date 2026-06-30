@@ -1,7 +1,6 @@
 // Backend routes called exclusively by the ClassGuard Chrome extension.
 
 const { Router }          = require('express');
-const { OAuth2Client }    = require('google-auth-library');
 const jwt                 = require('jsonwebtoken');
 const fs                  = require('fs');
 const path                = require('path');
@@ -34,7 +33,6 @@ const SCREENSHOT_DIR = process.env.SCREENSHOT_DIR || path.join(__dirname, '../..
 fs.mkdirSync(SCREENSHOT_DIR, { recursive: true });
 
 const router     = Router();
-const oauthClient = new OAuth2Client(config.google.clientId);
 
 // ---------------------------------------------------------------------------
 // POST /api/v1/extension/auth
@@ -649,6 +647,11 @@ router.post('/screenshot', authenticate, async (req, res) => {
 
   const ext    = matches[1];
   const buffer = Buffer.from(matches[2], 'base64');
+
+  const MAX_SCREENSHOT_BYTES = 10 * 1024 * 1024; // 10 MB
+  if (buffer.length > MAX_SCREENSHOT_BYTES) {
+    return res.status(400).json({ error: 'Screenshot too large (max 10 MB)' });
+  }
 
   // Store in YYYY/MM/DD subdirectory
   const now     = new Date();

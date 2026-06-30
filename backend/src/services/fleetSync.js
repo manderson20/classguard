@@ -121,8 +121,6 @@ async function getGaps() {
 // ---------------------------------------------------------------------------
 async function runCrossSync(actorId) {
   const cfg = await getFleetSettings();
-  const { rows: [cs] } = await pool.query(`SELECT value FROM settings WHERE key = 'google_customer_id'`);
-  const customerId = cs?.value || 'my_customer';
 
   let http;
   try {

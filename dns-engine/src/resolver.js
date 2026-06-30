@@ -191,7 +191,6 @@ async function resolveQuery(name, typeNum, sourceIp) {
     return { action: 'blocked', answers: [], blockReason: 'safety_check_unavailable' };
   }
   const blockedCats    = policy?.blockedCategories || [];
-  const allowedCatSet  = new Set(policy?.allowedCategories || []);
 
   if (category && blockedCats.includes(category)) {
     if (isDryRun) {

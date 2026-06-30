@@ -135,7 +135,6 @@ async function classifyWithOpenAI(domain, apiKey, model, baseUrl) {
 }
 
 async function classifyWithOllama(domain, model, baseUrl) {
-  const http    = require('http');
   const url     = new URL((baseUrl || 'http://localhost:11434') + '/api/chat');
   const payload = JSON.stringify({
     model:    model || 'llama3.2',

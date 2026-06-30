@@ -96,19 +96,20 @@ router.get('/video-info', authenticate, async (req, res) => {
   }
 
   // Check Redis for each id
+  const safeIds    = ids.slice(0, 200);
   const pipeline   = redis.pipeline();
-  for (const id of ids) pipeline.get(CACHE_KEY(id));
-  const cached     = await pipeline.exec().catch(() => ids.map(() => [null, null]));
+  for (const id of safeIds) pipeline.get(CACHE_KEY(id));
+  const cached     = await pipeline.exec().catch(() => safeIds.map(() => [null, null]));
 
   const results    = [];
   const uncachedIds = [];
 
-  for (let i = 0; i < ids.length; i++) {
+  for (let i = 0; i < safeIds.length; i++) {
     const [err, raw] = cached[i];
     if (!err && raw) {
       try { results.push(JSON.parse(raw)); continue; } catch {}
     }
-    uncachedIds.push(ids[i]);
+    uncachedIds.push(safeIds[i]);
   }
 
   // Batch-fetch uncached from YouTube API
