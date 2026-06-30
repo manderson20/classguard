@@ -3,6 +3,7 @@ const config = require('../config');
 const events = require('../events');
 const { query } = require('../db');
 const redis  = require('../redis');
+const { calcPulseScore } = require('../services/classpulse');
 
 const setupSockets = (io) => {
   // Authenticate every socket connection with the same JWT used by the REST API
@@ -63,6 +64,72 @@ const setupSockets = (io) => {
       socket.leave(`liveview:${studentId}`);
     });
 
+    // ClassPulse: teacher joins their session's live dashboard room
+    socket.on('classpulse:join_dashboard', async (sessionId) => {
+      if (!['teacher', 'admin', 'superadmin'].includes(role)) return;
+      try {
+        const { rows: [session] } = await query(
+          `SELECT 1 FROM classpulse_sessions WHERE id = $1 AND (teacher_id = $2 OR $3)`,
+          [sessionId, userId, ['admin', 'superadmin'].includes(role)]
+        );
+        if (session) socket.join(`classpulse:dashboard:${sessionId}`);
+      } catch {}
+    });
+
+    socket.on('classpulse:leave_dashboard', (sessionId) => {
+      socket.leave(`classpulse:dashboard:${sessionId}`);
+    });
+
+    // ClassPulse: student joins an active session room after calling POST /join/:code
+    socket.on('classpulse:join_session', async (sessionId) => {
+      try {
+        const { rows: [ss] } = await query(
+          `SELECT 1 FROM classpulse_session_students WHERE session_id = $1 AND student_id = $2`,
+          [sessionId, userId]
+        );
+        if (!ss) return;
+        socket.join(`classpulse:session:${sessionId}`);
+        await query(
+          `UPDATE classpulse_session_students SET last_seen_at = now(), status = 'active'
+           WHERE session_id = $1 AND student_id = $2`,
+          [sessionId, userId]
+        );
+      } catch {}
+    });
+
+    // ClassPulse: periodic heartbeat from student tab
+    socket.on('classpulse:heartbeat', async ({ sessionId }) => {
+      if (!sessionId) return;
+      try {
+        await query(
+          `UPDATE classpulse_session_students SET last_seen_at = now(), status = 'active'
+           WHERE session_id = $1 AND student_id = $2`,
+          [sessionId, userId]
+        );
+      } catch {}
+    });
+
+    // ClassPulse: student raises a help request — forwarded to teacher dashboard only
+    socket.on('classpulse:help_request', async ({ sessionId, message }) => {
+      if (!sessionId) return;
+      try {
+        const { rows: [ss] } = await query(
+          `SELECT 1 FROM classpulse_session_students WHERE session_id = $1 AND student_id = $2`,
+          [sessionId, userId]
+        );
+        if (!ss) return;
+        const { rows: [student] } = await query(
+          `SELECT full_name FROM users WHERE id = $1`, [userId]
+        );
+        io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:help_request', {
+          studentId:   userId,
+          studentName: student?.full_name || 'Student',
+          message:     (typeof message === 'string' ? message.slice(0, 500) : null),
+          ts:          Date.now(),
+        });
+      } catch {}
+    });
+
     socket.on('disconnect', () => {});
   });
 
@@ -102,6 +169,35 @@ const setupSockets = (io) => {
       const payload = { studentId, url, title, ts, event, action, block_reason };
       for (const classId of classIds) {
         io.to(`class:${classId}`).emit('student:activity', payload);
+      }
+
+      // ClassPulse: bridge off-task navigation into active sessions
+      for (const classId of classIds) {
+        try {
+          const sessionId = await redis.get(`classpulse:class:${classId}:session`);
+          if (!sessionId) continue;
+
+          const offtaskKey = `classpulse:session:${sessionId}:offtask`;
+          const onPulsePage = typeof url === 'string' && url.includes('/pulse/');
+
+          if (onPulsePage) {
+            await redis.hdel(offtaskKey, studentId);
+          } else {
+            await redis.hset(offtaskKey, studentId, String(Date.now()));
+            await redis.expire(offtaskKey, 28800);
+            io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:off_task_alert', {
+              studentId, url, title, ts: Date.now(),
+            });
+          }
+
+          const focusRaw = await redis.hgetall(offtaskKey).catch(() => null);
+          const focusData = {};
+          if (focusRaw) {
+            for (const [sid, stamp] of Object.entries(focusRaw)) focusData[sid] = parseInt(stamp, 10);
+          }
+          const score = await calcPulseScore(sessionId, focusData);
+          io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:pulse_score', score);
+        } catch {}
       }
     } catch (err) {
       console.error('[socket] student:activity forwarding error:', err.message);
@@ -205,6 +301,65 @@ const setupSockets = (io) => {
     for (const id of recipientIds || []) {
       io.to(`student:${id}`).emit('chat:message', { threadId, message });
     }
+  });
+
+  // ---------------------------------------------------------------------------
+  // ClassPulse event bus → WebSocket bridge
+  // ---------------------------------------------------------------------------
+
+  // Teacher navigated: push new page to both student session room and dashboard
+  events.on('classpulse:page_changed', ({ sessionId, page }) => {
+    io.to(`classpulse:session:${sessionId}`).emit('classpulse:page_changed', { page });
+    io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:page_changed', { page });
+  });
+
+  // New student response: push to teacher dashboard with student name,
+  // then recalculate and broadcast the Pulse Score.
+  events.on('classpulse:new_response', async ({ sessionId, questionId, studentId, studentName, responseType, textValue, optionIds, responseCount }) => {
+    io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:response', {
+      questionId,
+      studentId,
+      studentName,
+      responseType,
+      textValue,
+      optionIds,
+      responseCount,
+      ts: Date.now(),
+    });
+    try {
+      const offtaskKey = `classpulse:session:${sessionId}:offtask`;
+      const focusRaw = await redis.hgetall(offtaskKey).catch(() => null);
+      const focusData = {};
+      if (focusRaw) {
+        for (const [sid, stamp] of Object.entries(focusRaw)) focusData[sid] = parseInt(stamp, 10);
+      }
+      const score = await calcPulseScore(sessionId, focusData);
+      io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:pulse_score', score);
+    } catch {}
+  });
+
+  // Student joined the session: notify teacher dashboard
+  events.on('classpulse:student_joined', ({ sessionId, studentId, studentName }) => {
+    io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:student_joined', {
+      studentId, studentName, ts: Date.now(),
+    });
+  });
+
+  // Session ended: dismiss both student join pages and teacher dashboard
+  events.on('classpulse:session_ended', ({ sessionId }) => {
+    io.to(`classpulse:session:${sessionId}`).emit('classpulse:session_ended', { sessionId });
+    io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:session_ended', { sessionId });
+  });
+
+  // Classroom lock engaged/released: send to student session room so the join
+  // page can show a "locked" banner and prevent navigation away.
+  events.on('classpulse:lock_changed', ({ sessionId, locked, joinCode }) => {
+    if (locked) {
+      io.to(`classpulse:session:${sessionId}`).emit('classpulse:lock_engaged', { joinCode });
+    } else {
+      io.to(`classpulse:session:${sessionId}`).emit('classpulse:lock_released', {});
+    }
+    io.to(`classpulse:dashboard:${sessionId}`).emit('classpulse:lock_changed', { locked });
   });
 };
 
