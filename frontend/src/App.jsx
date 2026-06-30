@@ -78,6 +78,7 @@ import InfosecIqGradeCards     from './pages/admin/infoseciq/InfosecIqGradeCards
 import ClassPulseHub   from './pages/classpulse/ClassPulseHub';
 import LessonLibrary   from './pages/classpulse/LessonLibrary';
 import LessonBuilder   from './pages/classpulse/LessonBuilder';
+import TeachSession    from './pages/classpulse/TeachSession';
 import StudentJoin     from './pages/classpulse/StudentJoin';
 
 // Fleet pages
@@ -147,6 +148,7 @@ export default function App() {
           <Route path="/classpulse/lessons"              element={<LessonLibrary />} />
           <Route path="/classpulse/lessons/new"          element={<LessonBuilder />} />
           <Route path="/classpulse/lessons/:id/edit"     element={<LessonBuilder />} />
+          <Route path="/classpulse/sessions/:id/teach"   element={<TeachSession />} />
         </Route>
 
         {/* Admin routes */}
