@@ -495,6 +495,28 @@ function startScheduler() {
     internetHealth.runCheck().catch(err => console.error('[scheduler] internet-health error:', err.message));
   });
 
+  // ClassPulse response retention purge — daily 3:30am.
+  // Deletes responses for sessions that ended more than classpulse_response_retention_days
+  // days ago; 0 or unset means keep forever.
+  cron.schedule('30 3 * * *', async () => {
+    try {
+      const { rows } = await query(`SELECT value FROM settings WHERE key = 'classpulse_response_retention_days'`);
+      const days = parseInt(rows[0]?.value, 10);
+      if (!days || days <= 0) return;
+      await query(
+        `DELETE FROM classpulse_responses
+         WHERE session_id IN (
+           SELECT id FROM classpulse_sessions
+           WHERE ended_at IS NOT NULL
+             AND ended_at < NOW() - ($1 || ' days')::interval
+         )`,
+        [days]
+      );
+    } catch (err) {
+      console.error('[scheduler] classpulse-response-purge error:', err.message);
+    }
+  });
+
   // Prune old internet-health rows — daily 5:30am.
   cron.schedule('30 5 * * *', () => {
     internetHealth.pruneOldChecks().catch(err => console.error('[scheduler] internet-health prune error:', err.message));

@@ -535,6 +535,11 @@ router.post('/lessons/:lessonId/share', async (req, res) => {
   const { lessonId } = req.params;
   const { user_id: sharedWith = null } = req.body; // null = school-wide
 
+  const { rows: policyRows } = await query(`SELECT value FROM settings WHERE key = 'classpulse_lesson_sharing'`);
+  if ((policyRows[0]?.value || 'school_wide') === 'own_only') {
+    return res.status(403).json({ error: 'Lesson sharing is disabled by your district administrator' });
+  }
+
   if (!await ownsLesson(lessonId, userId, role)) {
     return res.status(403).json({ error: 'Forbidden' });
   }

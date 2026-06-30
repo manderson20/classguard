@@ -3,6 +3,7 @@ const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
+const { hasPermission }    = require('../services/permissions');
 const config              = require('../config');
 
 const auth = [authenticate, requirePermission('settings')];
@@ -87,6 +88,12 @@ router.get('/', ...auth, async (req, res) => {
   }
 });
 
+const CLASSPULSE_KEYS = new Set([
+  'classpulse_response_retention_days',
+  'classpulse_lesson_sharing',
+  'classpulse_drawing_enabled',
+]);
+
 // PUT /api/v1/settings  — upsert one or more settings keys
 // Body: { key: value, ... }  (only ALLOWED_KEYS are accepted)
 router.put('/', ...auth, async (req, res) => {
@@ -94,6 +101,12 @@ router.put('/', ...auth, async (req, res) => {
 
   if (!updates.length) {
     return res.status(400).json({ error: 'No valid settings keys provided' });
+  }
+
+  // ClassPulse config requires the 'classpulse' permission on top of 'settings'
+  if (updates.some(([k]) => CLASSPULSE_KEYS.has(k))) {
+    const allowed = await hasPermission(req.user.userId, req.user.role, 'classpulse').catch(() => false);
+    if (!allowed) return res.status(403).json({ error: 'ClassPulse admin permission required' });
   }
 
   try {

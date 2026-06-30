@@ -89,7 +89,6 @@ function McBarChart({ options, totalResponses }) {
   return (
     <div className="space-y-2 mt-2">
       {options.map(opt => {
-        const pct = totalResponses > 0 ? Math.round((opt.count / totalResponses) * 100) : 0;
         return (
           <div key={opt.id}>
             <div className="flex items-center justify-between mb-0.5">
@@ -154,12 +153,13 @@ function ResponseFeed({ responses, onFlag, onHide }) {
 // Question aggregate panel
 // ---------------------------------------------------------------------------
 function QuestionPanel({ agg, liveResponses }) {
-  const { question, responses: restResponses, aggregate, total_responses } = agg;
+  const { question, responses: restResponses, aggregate } = agg;
 
-  // Merge REST responses with any live socket responses that arrived since the last poll
+  // Merge REST responses with any live socket responses that arrived since the last poll.
+  // Socket payloads use camelCase (studentId) while REST rows use snake_case (student_id).
   const allLive = liveResponses[question.id] || [];
-  const knownIds = new Set(restResponses.map(r => r.id));
-  const newLive  = allLive.filter(r => r.id && !knownIds.has(r.id));
+  const knownStudentIds = new Set(restResponses.map(r => r.student_id));
+  const newLive = allLive.filter(r => !knownStudentIds.has(r.studentId));
   const merged   = [...restResponses, ...newLive];
   const total    = merged.length;
 
@@ -232,8 +232,8 @@ function QuestionPanel({ agg, liveResponses }) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-function timeSince(ts) {
-  const diff = Math.round((Date.now() - ts) / 1000);
+function timeSince(ts, now) {
+  const diff = Math.round((now - ts) / 1000);
   if (diff < 60) return `${diff}s ago`;
   return `${Math.round(diff / 60)}m ago`;
 }
@@ -277,6 +277,7 @@ export default function TeachSession() {
       setPulseScore(data.pulseScore);
       setLocked(data.session?.classroom_lock_enabled || false);
       if (data.session?.status === 'ended') setSessionEnded(true);
+      setError(null);
     } catch (e) {
       setError(e.message || 'Failed to load session');
     } finally {
@@ -456,8 +457,9 @@ export default function TeachSession() {
   const atStart        = currentPageIdx <= 0;
   const atEnd          = currentPageIdx >= (pages?.length ?? 0) - 1;
 
-  const activeStudents     = students?.filter(s => s.status === 'active') ?? [];
-  const disconnectedStudents = students?.filter(s => s.status !== 'active') ?? [];
+  const PRESENCE_TIMEOUT_MS = 90_000;
+  const activeStudents     = students?.filter(s => now - new Date(s.last_seen_at).getTime() < PRESENCE_TIMEOUT_MS) ?? [];
+  const disconnectedStudents = students?.filter(s => now - new Date(s.last_seen_at).getTime() >= PRESENCE_TIMEOUT_MS) ?? [];
   const studentCount       = activeStudents.length;
 
   const joinCode = session?.join_code?.toUpperCase() ?? '';
@@ -566,7 +568,7 @@ export default function TeachSession() {
                         {h.message && (
                           <p className="text-[10px] text-amber-600 mt-0.5 line-clamp-2">{h.message}</p>
                         )}
-                        <p className="text-[9px] text-amber-400 mt-0.5">{timeSince(h.ts)}</p>
+                        <p className="text-[9px] text-amber-400 mt-0.5">{timeSince(h.ts, now)}</p>
                       </div>
                       <button onClick={() => dismissHelp(i)} className="text-amber-400 hover:text-amber-600 text-xs flex-shrink-0">✕</button>
                     </div>
@@ -582,16 +584,19 @@ export default function TeachSession() {
                   Off-task ({offTaskAlerts.length})
                 </p>
                 <div className="space-y-1.5">
-                  {offTaskAlerts.map((a, i) => (
+                  {offTaskAlerts.map((a, i) => {
+                    const alertStudent = students?.find(s => s.student_id === a.studentId);
+                    return (
                     <div key={i} className="bg-rose-50 rounded-lg px-2 py-1.5 flex items-start justify-between gap-1">
                       <div>
-                        <p className="text-[11px] font-semibold text-rose-700">{a.name || a.studentName}</p>
-                        {a.tabTitle && <p className="text-[10px] text-rose-500 mt-0.5 truncate">{a.tabTitle}</p>}
-                        <p className="text-[9px] text-rose-300 mt-0.5">{timeSince(a.ts)}</p>
+                        <p className="text-[11px] font-semibold text-rose-700">{alertStudent?.full_name || alertStudent?.email || 'Unknown'}</p>
+                        {a.title && <p className="text-[10px] text-rose-500 mt-0.5 truncate">{a.title}</p>}
+                        <p className="text-[9px] text-rose-300 mt-0.5">{timeSince(a.ts, now)}</p>
                       </div>
                       <button onClick={() => dismissOffTask(i)} className="text-rose-300 hover:text-rose-500 text-xs flex-shrink-0">✕</button>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             )}
