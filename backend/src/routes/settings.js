@@ -3,7 +3,6 @@ const router  = express.Router();
 const { pool }           = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
-const { hasPermission }    = require('../services/permissions');
 const config              = require('../config');
 
 const auth = [authenticate, requirePermission('settings')];
@@ -65,10 +64,6 @@ const ALLOWED_KEYS = new Set([
   'setup_wizard_complete',
   // Zammad ticket routing — JSON map of event type → { group, priority, auto_create }
   'zammad_routing_rules',
-  // ClassPulse admin config
-  'classpulse_response_retention_days',
-  'classpulse_lesson_sharing',
-  'classpulse_drawing_enabled',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object
@@ -88,12 +83,6 @@ router.get('/', ...auth, async (req, res) => {
   }
 });
 
-const CLASSPULSE_KEYS = new Set([
-  'classpulse_response_retention_days',
-  'classpulse_lesson_sharing',
-  'classpulse_drawing_enabled',
-]);
-
 // PUT /api/v1/settings  — upsert one or more settings keys
 // Body: { key: value, ... }  (only ALLOWED_KEYS are accepted)
 router.put('/', ...auth, async (req, res) => {
@@ -101,12 +90,6 @@ router.put('/', ...auth, async (req, res) => {
 
   if (!updates.length) {
     return res.status(400).json({ error: 'No valid settings keys provided' });
-  }
-
-  // ClassPulse config requires the 'classpulse' permission on top of 'settings'
-  if (updates.some(([k]) => CLASSPULSE_KEYS.has(k))) {
-    const allowed = await hasPermission(req.user.userId, req.user.role, 'classpulse').catch(() => false);
-    if (!allowed) return res.status(403).json({ error: 'ClassPulse admin permission required' });
   }
 
   try {
@@ -225,6 +208,50 @@ router.post('/safety-alerts/test', ...safetyAlertsAuth, async (req, res) => {
     res.json({ ok: true, sentTo: recipients });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ClassPulse admin config — gated by the 'classpulse' permission rather than
+// the blanket 'settings' permission so that a custom role can administer
+// ClassPulse without gaining write access to Google credentials, SMTP, etc.
+// ---------------------------------------------------------------------------
+const CLASSPULSE_KEYS = [
+  'classpulse_response_retention_days',
+  'classpulse_lesson_sharing',
+  'classpulse_drawing_enabled',
+];
+const classpulseAuth = [authenticate, requirePermission('classpulse')];
+
+router.get('/classpulse-admin', ...classpulseAuth, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT key, value FROM settings WHERE key = ANY($1::text[])`,
+      [CLASSPULSE_KEYS]
+    );
+    res.json(Object.fromEntries(rows.map(r => [r.key, r.value])));
+  } catch (err) {
+    console.error('[settings] classpulse GET error:', err);
+    res.status(500).json({ error: 'Failed to load ClassPulse settings' });
+  }
+});
+
+router.put('/classpulse-admin', ...classpulseAuth, async (req, res) => {
+  const updates = Object.entries(req.body).filter(([k]) => CLASSPULSE_KEYS.includes(k));
+  if (!updates.length) return res.status(400).json({ error: 'No valid ClassPulse settings keys provided' });
+
+  try {
+    for (const [key, value] of updates) {
+      await pool.query(
+        `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, NOW())
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+        [key, value == null ? null : String(value)]
+      );
+    }
+    res.json({ saved: updates.map(([k]) => k) });
+  } catch (err) {
+    console.error('[settings] classpulse PUT error:', err);
+    res.status(500).json({ error: 'Failed to save ClassPulse settings' });
   }
 });
 

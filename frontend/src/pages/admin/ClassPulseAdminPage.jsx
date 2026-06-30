@@ -15,7 +15,7 @@ export default function ClassPulseAdminPage() {
   const [error,    setError]    = useState(null);
 
   useEffect(() => {
-    api.get('/settings')
+    api.get('/settings/classpulse-admin')
       .then(data => {
         setSettings({
           classpulse_response_retention_days: data.classpulse_response_retention_days ?? DEFAULTS.classpulse_response_retention_days,
@@ -36,7 +36,7 @@ export default function ClassPulseAdminPage() {
     setSaving(true);
     setError(null);
     try {
-      await api.put('/settings', settings);
+      await api.put('/settings/classpulse-admin', settings);
       setSaved(true);
     } catch (e) {
       setError(e.message || 'Failed to save');
