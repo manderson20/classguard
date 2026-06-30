@@ -75,11 +75,12 @@ import InfosecIqCampaignDetail from './pages/admin/infoseciq/InfosecIqCampaignDe
 import InfosecIqGradeCards     from './pages/admin/infoseciq/InfosecIqGradeCards';
 
 // ClassPulse
-import ClassPulseHub   from './pages/classpulse/ClassPulseHub';
-import LessonLibrary   from './pages/classpulse/LessonLibrary';
-import LessonBuilder   from './pages/classpulse/LessonBuilder';
-import TeachSession    from './pages/classpulse/TeachSession';
-import StudentJoin     from './pages/classpulse/StudentJoin';
+import ClassPulseHub      from './pages/classpulse/ClassPulseHub';
+import LessonLibrary      from './pages/classpulse/LessonLibrary';
+import LessonBuilder      from './pages/classpulse/LessonBuilder';
+import TeachSession       from './pages/classpulse/TeachSession';
+import StudentJoin        from './pages/classpulse/StudentJoin';
+import ClassPulseAdminPage from './pages/admin/ClassPulseAdminPage';
 
 // Fleet pages
 import FleetOverview    from './pages/fleet/FleetOverview';
@@ -193,6 +194,7 @@ export default function App() {
           <Route path="/admin/impersonation-audit"    element={<ImpersonationAuditPage />} />
           <Route path="/admin/backup"                 element={<BackupPage />} />
           <Route path="/admin/security-scan"          element={<SecurityScanPage />} />
+          <Route path="/admin/classpulse"             element={<ClassPulseAdminPage />} />
           <Route path="/admin/reports"                element={<ReportsPage />} />
           <Route path="/admin/lost-mode"               element={<LostModePage />} />
           <Route path="/admin/filter-bypass"           element={<FilterBypassPage />} />

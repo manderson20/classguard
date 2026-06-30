@@ -5,6 +5,7 @@
 // per-type routes.
 const PDFDocument = require('pdfkit');
 const { query } = require('../db');
+const { buildSessionReport } = require('./classpulse');
 
 function renderHeader(doc, title, subtitle) {
   doc.fontSize(18).font('Helvetica-Bold').text('ClassGuard');
@@ -362,6 +363,120 @@ async function generateDeviceFleetHealth() {
   };
 }
 
+// ---------------------------------------------------------------------------
+// ClassPulse Session Summary
+// ---------------------------------------------------------------------------
+async function generateClasspulseSession({ session_id }) {
+  const data = await buildSessionReport(session_id);
+  if (!data) throw new Error('Session not found');
+
+  const { session, participation, students, questions, total_responses, flagged_count } = data;
+
+  // Fetch option text for all MC/TF questions in this session's lesson
+  const { rows: optionRows } = await query(
+    `SELECT o.id, o.text, o.is_correct, o.question_id
+     FROM classpulse_question_options o
+     JOIN classpulse_questions q  ON q.id  = o.question_id
+     JOIN classpulse_pages p      ON p.id  = q.page_id
+     JOIN classpulse_sessions s   ON s.lesson_id = p.lesson_id
+     WHERE s.id = $1
+     ORDER BY o.question_id, o.position`,
+    [session_id]
+  );
+  const optionsByQ = {};
+  for (const o of optionRows) {
+    (optionsByQ[o.question_id] ||= []).push(o);
+  }
+
+  const doc = new PDFDocument({ margin: 50 });
+  renderHeader(doc, 'ClassPulse Session Report', `${session.lesson_title || 'Untitled lesson'}${session.class_name ? ' — ' + session.class_name : ''}`);
+
+  // Session metadata
+  doc.fontSize(10).font('Helvetica-Bold').text('Session Details').font('Helvetica');
+  const started = session.started_at ? new Date(session.started_at).toLocaleString('en-US') : '—';
+  const ended   = session.ended_at   ? new Date(session.ended_at).toLocaleString('en-US')   : 'In progress';
+  doc.fontSize(9).text(`Teacher: ${session.teacher_name || '—'}`);
+  doc.text(`Join Code: ${session.join_code || '—'}   Mode: ${session.mode || '—'}`);
+  doc.text(`Started: ${started}   Ended: ${ended}   Duration: ${session.duration_minutes} min`);
+  doc.moveDown(0.8);
+
+  // Participation summary
+  doc.fontSize(10).font('Helvetica-Bold').text('Participation').font('Helvetica');
+  doc.fontSize(9).text(
+    `${participation.responded} of ${participation.total_joined} students responded (${participation.participation_pct}%). ` +
+    `Total responses: ${total_responses}. Flagged: ${flagged_count}.`
+  );
+  doc.moveDown(0.8);
+
+  // Questions
+  doc.fontSize(10).font('Helvetica-Bold').text('Questions & Responses').font('Helvetica');
+  doc.moveDown(0.3);
+
+  for (const q of questions) {
+    if (doc.y > 700) doc.addPage();
+    const typeLabel = { multiple_choice: 'MC', true_false: 'T/F', short_answer: 'SA', exit_ticket: 'Exit Ticket' }[q.question_type] || q.question_type;
+    doc.fontSize(9).font('Helvetica-Bold').text(`[${typeLabel}] ${q.prompt}`, { continued: false });
+    doc.font('Helvetica').fillColor('#555').text(`Page: ${q.page_title || '—'}  |  ${q.responses.length} response(s)`).fillColor('#000');
+    doc.moveDown(0.3);
+
+    const options = optionsByQ[q.question_id] || [];
+    if ((q.question_type === 'multiple_choice' || q.question_type === 'true_false') && options.length > 0) {
+      const total = q.responses.length;
+      for (const opt of options) {
+        const count = q.responses.filter(r => (r.option_ids || []).includes(opt.id)).length;
+        const pct   = total > 0 ? Math.round((count / total) * 100) : 0;
+        const marker = opt.is_correct ? '✓ ' : '   ';
+        doc.fontSize(8).text(`  ${marker}${opt.text}: ${count} (${pct}%)`, { indent: 10 });
+      }
+    } else {
+      // Short answer / exit ticket — list up to 15 responses
+      const shown = q.responses.slice(0, 15);
+      for (const r of shown) {
+        const flag = r.is_flagged ? ' [FLAGGED]' : '';
+        doc.fontSize(8).text(`  • ${(r.text_value || '').trim()}${flag}`, { indent: 10 });
+      }
+      if (q.responses.length > 15) {
+        doc.fontSize(8).fillColor('#888').text(`  … and ${q.responses.length - 15} more`, { indent: 10 }).fillColor('#000');
+      }
+    }
+    doc.moveDown(0.5);
+  }
+
+  // Student roster
+  if (students.length > 0) {
+    if (doc.y > 620) doc.addPage();
+    doc.fontSize(10).font('Helvetica-Bold').text('Student Roster').font('Helvetica').moveDown(0.3);
+    renderTable(
+      doc,
+      ['Name', 'Email', 'Status', 'Joined'],
+      students.map(s => [
+        s.full_name || '—',
+        s.email || '—',
+        s.status,
+        s.joined_at ? new Date(s.joined_at).toLocaleTimeString('en-US') : '—',
+      ]),
+      [160, 180, 70, 100]
+    );
+  }
+
+  const pdfBuffer = await pdfToBuffer(doc);
+  return {
+    summary: {
+      session_id,
+      lesson_title:      session.lesson_title,
+      class_name:        session.class_name,
+      teacher_name:      session.teacher_name,
+      duration_minutes:  session.duration_minutes,
+      total_joined:      participation.total_joined,
+      responded:         participation.responded,
+      participation_pct: participation.participation_pct,
+      total_responses,
+      flagged_count,
+    },
+    pdfBuffer,
+  };
+}
+
 const REPORT_TYPES = {
   ipam_utilization: {
     label: 'IPAM Subnet Utilization',
@@ -386,6 +501,12 @@ const REPORT_TYPES = {
     description: 'Fleet-wide training completion, grade distribution, phishing campaign results, and a list of high-risk learners (grade D/F or risk score ≥ 70).',
     params: [],
     generate: generateInfosecIqAwareness,
+  },
+  classpulse_session: {
+    label: 'ClassPulse Session Summary',
+    description: 'Per-session participation rate, per-question response breakdown, flagged responses, and student roster — suitable for instructional documentation.',
+    params: ['session_id'],
+    generate: generateClasspulseSession,
   },
 };
 

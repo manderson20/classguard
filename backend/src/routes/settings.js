@@ -64,6 +64,10 @@ const ALLOWED_KEYS = new Set([
   'setup_wizard_complete',
   // Zammad ticket routing — JSON map of event type → { group, priority, auto_create }
   'zammad_routing_rules',
+  // ClassPulse admin config
+  'classpulse_response_retention_days',
+  'classpulse_lesson_sharing',
+  'classpulse_drawing_enabled',
 ]);
 
 // GET /api/v1/settings  — returns all allowed settings as a key→value object
