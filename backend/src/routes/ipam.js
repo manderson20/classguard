@@ -1313,7 +1313,7 @@ router.post('/import/addresses', async (req, res) => {
 
   let imported = 0, skipped = 0;
   const errors = [];
-  const subnetCache = Object.create(null);
+  const subnetCache = new Map();
 
   for (const row of rows) {
     const subnetCidr = (row.subnet || '').trim();
@@ -1324,11 +1324,11 @@ router.post('/import/addresses', async (req, res) => {
     }
 
     try {
-      if (!subnetCache[subnetCidr]) {
+      if (!subnetCache.has(subnetCidr)) {
         const sr = await query('SELECT id FROM ipam_subnets WHERE subnet = $1::inet LIMIT 1', [subnetCidr]);
-        subnetCache[subnetCidr] = sr.rows[0]?.id ?? null;
+        subnetCache.set(subnetCidr, sr.rows[0]?.id ?? null);
       }
-      const ipam_subnet_id = subnetCache[subnetCidr];
+      const ipam_subnet_id = subnetCache.get(subnetCidr);
       if (!ipam_subnet_id) {
         errors.push(`${ip}: subnet ${subnetCidr} not found in IPAM`);
         continue;

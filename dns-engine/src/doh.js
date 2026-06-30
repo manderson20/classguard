@@ -48,6 +48,7 @@ async function dohHandler(req, res) {
  * and return the raw response buffer.
  */
 function forwardToLocalDns(message) {
+  const buf = Buffer.isBuffer(message) ? message : Buffer.from(message);
   return new Promise((resolve, reject) => {
     const socket  = dgram.createSocket('udp4');
     const timeout = setTimeout(() => {
@@ -66,7 +67,7 @@ function forwardToLocalDns(message) {
       reject(err);
     });
 
-    socket.send(message, 0, message.length, config.dns.port, '127.0.0.1', (err) => {
+    socket.send(buf, 0, buf.length, config.dns.port, '127.0.0.1', (err) => {
       if (err) {
         clearTimeout(timeout);
         socket.close();
