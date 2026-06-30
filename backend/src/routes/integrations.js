@@ -29,7 +29,8 @@ router.get('/status', ...auth, async (req, res) => {
          'last_google_devices_sync','last_google_devices_error',
          'google_client_id','google_client_secret',
          'google_service_account_json','google_superadmin_email',
-         'snipeit_mac_fields'
+         'snipeit_mac_fields',
+         'infoseciq_api_key','last_infoseciq_sync','last_infoseciq_error'
        )`
     ),
     pool.query(`SELECT source, COUNT(*) AS count FROM integration_devices GROUP BY source`),
@@ -48,11 +49,12 @@ router.get('/status', ...auth, async (req, res) => {
   );
 
   res.json({
-    zammad:   { configured: !!(cfg.zammad_url && cfg.zammad_token),    lastSync: cfg.last_zammad_sync  || null, lastError: cfg.last_zammad_error  || null },
-    mosyle:   { configured: !!(cfg.mosyle_access_token && cfg.mosyle_email && cfg.mosyle_password), lastSync: cfg.last_mosyle_sync  || null, lastError: cfg.last_mosyle_error  || null, deviceCount: deviceCount.mosyle  ?? 0 },
-    snipeit:  { configured: !!(cfg.snipeit_url && (cfg.snipeit_token || (cfg.snipeit_client_id && cfg.snipeit_client_secret))), lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0, macFields: (() => { try { return JSON.parse(cfg.snipeit_mac_fields || '[]'); } catch { return []; } })() },
-    google:   { configured: googleSyncConfigured, lastSync: cfg.last_google_sync || null, lastError: cfg.last_google_error || null },
+    zammad:      { configured: !!(cfg.zammad_url && cfg.zammad_token),    lastSync: cfg.last_zammad_sync  || null, lastError: cfg.last_zammad_error  || null },
+    mosyle:      { configured: !!(cfg.mosyle_access_token && cfg.mosyle_email && cfg.mosyle_password), lastSync: cfg.last_mosyle_sync  || null, lastError: cfg.last_mosyle_error  || null, deviceCount: deviceCount.mosyle  ?? 0 },
+    snipeit:     { configured: !!(cfg.snipeit_url && (cfg.snipeit_token || (cfg.snipeit_client_id && cfg.snipeit_client_secret))), lastSync: cfg.last_snipeit_sync || null, lastError: cfg.last_snipeit_error || null, deviceCount: deviceCount.snipeit ?? 0, macFields: (() => { try { return JSON.parse(cfg.snipeit_mac_fields || '[]'); } catch { return []; } })() },
+    google:      { configured: googleSyncConfigured, lastSync: cfg.last_google_sync || null, lastError: cfg.last_google_error || null },
     googleDevices: { configured: googleSyncConfigured, lastSync: cfg.last_google_devices_sync || null, lastError: cfg.last_google_devices_error || null, deviceCount: deviceCount.google_admin ?? 0 },
+    infoseciq:   { has_key: !!cfg.infoseciq_api_key, configured: !!cfg.infoseciq_api_key, lastSync: cfg.last_infoseciq_sync || null, lastError: cfg.last_infoseciq_error || null },
   });
 });
 

@@ -184,10 +184,17 @@ export default function SystemHealthPage() {
           <div className="text-slate-400 text-sm">Loading…</div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {Object.entries(integrations).map(([name, d]) => (
+            {Object.entries(integrations).map(([name, d]) => {
+              const LABELS = {
+                zammad: 'Zammad', mosyle: 'Mosyle', snipeit: 'Snipe-IT',
+                google: 'Google Workspace', googleDevices: 'Google Devices',
+                infoseciq: 'Infosec IQ',
+              };
+              const label = LABELS[name] || name.charAt(0).toUpperCase() + name.slice(1);
+              return (
               <div key={name} className="card p-4">
                 <div className="flex items-center justify-between mb-1">
-                  <span className="font-semibold text-slate-800 text-sm capitalize">{name}</span>
+                  <span className="font-semibold text-slate-800 text-sm">{label}</span>
                   {d.configured ? (
                     d.lastError
                       ? <span className="text-xs font-medium text-red-600">Error</span>
@@ -203,7 +210,8 @@ export default function SystemHealthPage() {
                   </div>
                 )}
               </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
