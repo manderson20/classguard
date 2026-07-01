@@ -7,6 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Avatar from '../components/Avatar';
 import { TraceContent } from '../components/WhyBlockedTrace';
 import LiveViewModal from '../components/LiveViewModal';
+import LiveThumbnailsGrid from '../components/LiveThumbnailsGrid';
 
 function hostnameOf(url) {
   try { return new URL(url).hostname; } catch { return url; }
@@ -510,6 +511,7 @@ export default function ActiveLesson() {
   const [pickExhausted, setPickExhausted] = useState(false);
   const [fullScreenStudent, setFullScreenStudent] = useState(null);
   const [raisedHands, setRaisedHands] = useState(new Map());
+  const [thumbnailsOpen, setThumbnailsOpen] = useState(false);
 
   const toggleSelect = (studentId) => {
     setSelected(prev => {
@@ -694,6 +696,13 @@ export default function ActiveLesson() {
             🎲 Pick Student
           </button>
           <button
+            onClick={() => setThumbnailsOpen(true)}
+            disabled={members.length === 0}
+            className="btn btn-sm bg-slate-700 text-white hover:bg-slate-600 border-0 disabled:opacity-40"
+          >
+            🖼 Live Thumbnails
+          </button>
+          <button
             onClick={() => lesson && endLesson.mutate(lesson.id)}
             disabled={endLesson.isPending || !lesson}
             className="btn btn-sm bg-red-600 text-white hover:bg-red-700 border-0"
@@ -794,6 +803,10 @@ export default function ActiveLesson() {
 
       {fullScreenStudent && (
         <LiveViewModal student={fullScreenStudent} onClose={() => setFullScreenStudent(null)} />
+      )}
+
+      {thumbnailsOpen && (
+        <LiveThumbnailsGrid members={members} onClose={() => setThumbnailsOpen(false)} />
       )}
 
       {/* Activity log sidebar — latest events */}
