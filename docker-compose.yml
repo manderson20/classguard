@@ -9,6 +9,7 @@ volumes:
   app-logs:
   blocklists:
   screenshots:
+  chat-files:
   tls-certs:
   extension-dist:
 
@@ -147,6 +148,7 @@ services:
       - app-logs:/app/logs
       - blocklists:/app/blocklists
       - screenshots:/app/screenshots
+      - chat-files:/app/chat-files
       - tls-certs:/app/certs
       - ./infrastructure/postgres/pg_hba.conf:/app/pg_hba.conf:rw
     networks:

@@ -1,15 +1,30 @@
 const { Router }          = require('express');
+const fs                  = require('fs');
+const path                = require('path');
+const multer              = require('multer');
 const { query }           = require('../db');
 const { authenticate }    = require('../middleware/auth');
 const { requireMinRole }  = require('../middleware/roles');
 const { requirePermission } = require('../middleware/permissions');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
+const { hasPermission }   = require('../services/permissions');
 const events              = require('../events');
 
 const router = Router();
 router.use(authenticate);
 
 const MAX_BODY_LENGTH = 2000;
+
+// File distribution — same date-sharded on-disk storage pattern as
+// routes/extension.js's screenshot storage (SCREENSHOT_DIR), own dedicated
+// volume (chat-files, docker-compose.yml) rather than reusing the
+// screenshots one, since these are two very different privacy/retention
+// categories (safety-evidence spot-checks vs. a teacher sharing a
+// worksheet) that shouldn't share a directory.
+const CHAT_FILES_DIR = process.env.CHAT_FILES_DIR || path.join(__dirname, '../../chat-files');
+fs.mkdirSync(CHAT_FILES_DIR, { recursive: true });
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024; // 25 MB
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_ATTACHMENT_BYTES } });
 
 async function isThreadMember(threadId, userId) {
   const { rows } = await query(
@@ -202,7 +217,10 @@ router.get('/threads/:id/messages', async (req, res) => {
   const { rows } = await query(
     `SELECT id, sender_id, created_at,
             CASE WHEN deleted_at IS NULL THEN body ELSE NULL END AS body,
-            (deleted_at IS NOT NULL) AS deleted
+            (deleted_at IS NOT NULL) AS deleted,
+            CASE WHEN deleted_at IS NULL THEN attachment_name ELSE NULL END AS attachment_name,
+            CASE WHEN deleted_at IS NULL THEN attachment_mime ELSE NULL END AS attachment_mime,
+            CASE WHEN deleted_at IS NULL THEN attachment_size ELSE NULL END AS attachment_size
      FROM chat_messages WHERE thread_id = $1
      ORDER BY created_at ASC LIMIT 200`,
     [req.params.id]
@@ -231,6 +249,90 @@ router.post('/threads/:id/messages', async (req, res) => {
   );
   await notifyNewMessage(req.params.id, rows[0], req.user.userId);
   res.status(201).json(rows[0]);
+});
+
+// ---------------------------------------------------------------------------
+// POST /threads/:id/messages/attachment  multipart: file, body? (caption)
+// File distribution — any thread member can attach a file, not just
+// teachers, matching the existing symmetric membership-check pattern every
+// other message route already uses (a student replying with a file, e.g.
+// turning in work, reuses this same endpoint rather than needing a second
+// teacher-only one).
+// ---------------------------------------------------------------------------
+router.post('/threads/:id/messages/attachment', upload.single('file'), async (req, res) => {
+  if (!(await isThreadMember(req.params.id, req.user.userId))) {
+    return res.status(403).json({ error: 'Not a member of this thread' });
+  }
+  if (!req.file) return res.status(400).json({ error: 'file required' });
+  const body = (req.body.body || '').trim() || null;
+  if (body && body.length > MAX_BODY_LENGTH) return res.status(400).json({ error: 'caption too long' });
+
+  // Date-sharded directory, same layout as extension.js's screenshot storage.
+  const now     = new Date();
+  const dateDir = path.join(CHAT_FILES_DIR,
+    now.getFullYear().toString(),
+    String(now.getMonth() + 1).padStart(2, '0'),
+    String(now.getDate()).padStart(2, '0')
+  );
+  fs.mkdirSync(dateDir, { recursive: true });
+
+  const safeExt  = path.extname(req.file.originalname).replace(/[^a-zA-Z0-9.]/g, '').slice(0, 10);
+  const filename = `${Date.now()}-${req.user.userId.slice(0, 8)}${safeExt}`;
+  const filePath = path.join(dateDir, filename);
+  const relPath  = path.relative(CHAT_FILES_DIR, filePath);
+  fs.writeFileSync(filePath, req.file.buffer);
+
+  const { rows } = await query(
+    `INSERT INTO chat_messages (thread_id, sender_id, body, attachment_path, attachment_name, attachment_mime, attachment_size)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING id, thread_id, sender_id, body, created_at, attachment_name, attachment_mime, attachment_size`,
+    [req.params.id, req.user.userId, body, relPath,
+     req.file.originalname.slice(0, 255), req.file.mimetype, req.file.size]
+  );
+  await query(
+    'UPDATE chat_thread_members SET last_read_at = NOW() WHERE thread_id = $1 AND user_id = $2',
+    [req.params.id, req.user.userId]
+  );
+  // rows[0] deliberately omits attachment_path (an internal server file
+  // path) -- the RETURNING list above already excludes it, unlike the
+  // plain-text POST /messages route above which returns the full row.
+  await notifyNewMessage(req.params.id, rows[0], req.user.userId);
+  res.status(201).json(rows[0]);
+});
+
+// ---------------------------------------------------------------------------
+// GET /messages/:id/attachment — stream the file. Membership-checked via
+// the message's own thread, same as every other per-message route — except
+// for an admin/superadmin with the chat_audit permission, who can always
+// reach it (including a soft-deleted message's attachment), matching
+// GET /admin/messages: chat is never really deleted, only hidden from
+// participants, and that has to include attachments too, not just text.
+// ---------------------------------------------------------------------------
+router.get('/messages/:id/attachment', async (req, res) => {
+  const { rows } = await query(
+    `SELECT thread_id, attachment_path, attachment_name, attachment_mime, deleted_at
+     FROM chat_messages WHERE id = $1`,
+    [req.params.id]
+  );
+  const message = rows[0];
+  if (!message || !message.attachment_path) return res.status(404).json({ error: 'No attachment' });
+
+  const isAuditor = ['admin', 'superadmin'].includes(req.user.role)
+    && await hasPermission(req.user.userId, req.user.role, 'chat_audit').catch(() => false);
+  if (!isAuditor) {
+    if (message.deleted_at) return res.status(404).json({ error: 'Message deleted' });
+    if (!(await isThreadMember(message.thread_id, req.user.userId))) {
+      return res.status(403).json({ error: 'Not a member of this thread' });
+    }
+  }
+
+  const abs = path.join(CHAT_FILES_DIR, message.attachment_path);
+  if (!fs.existsSync(abs)) return res.status(404).json({ error: 'file not found' });
+
+  res.setHeader('Content-Type', message.attachment_mime || 'application/octet-stream');
+  res.setHeader('Content-Disposition', `attachment; filename="${(message.attachment_name || 'file').replace(/"/g, '')}"`);
+  res.setHeader('Cache-Control', 'private, max-age=3600');
+  fs.createReadStream(abs).pipe(res);
 });
 
 // ---------------------------------------------------------------------------
@@ -301,6 +403,7 @@ router.get('/admin/messages', requirePermission('chat_audit'), async (req, res) 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await query(
     `SELECT m.id, m.thread_id, m.body, m.created_at, m.deleted_at,
+            m.attachment_name, m.attachment_mime, m.attachment_size,
             t.type AS thread_type, t.name AS thread_name,
             sender.full_name AS sender_name, sender.email AS sender_email,
             deleter.full_name AS deleted_by_name

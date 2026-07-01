@@ -22,7 +22,8 @@
     "activeTab",
     "scripting",
     "webNavigation",
-    "idle"
+    "idle",
+    "downloads"
   ],
 
   "storage": {
