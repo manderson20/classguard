@@ -188,6 +188,7 @@ async function aggregateResponses(sessionId, questionId) {
       id:             r.id,
       anonymousOrder: i + 1,
       text_value:     r.text_value,
+      numeric_value:  r.numeric_value,
       option_ids:     r.option_ids,
       submitted_at:   r.submitted_at,
       is_flagged:     r.is_flagged,
@@ -262,11 +263,12 @@ async function buildSessionReport(sessionId) {
       };
     }
     byQuestion[r.question_id].responses.push({
-      student_id:   r.student_id,
-      text_value:   r.text_value,
-      option_ids:   r.option_ids,
-      submitted_at: r.submitted_at,
-      is_flagged:   r.is_flagged,
+      student_id:    r.student_id,
+      text_value:    r.text_value,
+      numeric_value: r.numeric_value,
+      option_ids:    r.option_ids,
+      submitted_at:  r.submitted_at,
+      is_flagged:    r.is_flagged,
     });
   }
 
