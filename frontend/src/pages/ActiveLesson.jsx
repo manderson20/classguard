@@ -6,6 +6,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useAuth } from '../contexts/AuthContext';
 import Avatar from '../components/Avatar';
 import { TraceContent } from '../components/WhyBlockedTrace';
+import LiveViewModal from '../components/LiveViewModal';
 
 function hostnameOf(url) {
   try { return new URL(url).hostname; } catch { return url; }
@@ -249,7 +250,7 @@ function RandomPickerBanner({ picked, onPickAgain, onClose, exhausted }) {
   );
 }
 
-function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, lockdownSession, lockdownEventCount, onEndLockdown }) {
+function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, onFullScreen, lockdownSession, lockdownEventCount, onEndLockdown }) {
   const [highlight, setHighlight]   = useState(false);
   const [locked, setLocked]         = useState(false);
   const [urlInputOpen, setUrlInputOpen] = useState(false);
@@ -356,6 +357,10 @@ function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRe
           className="text-xs px-2 py-1 rounded-md border text-slate-600 border-slate-300 hover:bg-slate-50">
           Close Tab
         </button>
+        <button onClick={() => onFullScreen(student)}
+          className="text-xs px-2 py-1 rounded-md border text-slate-600 border-slate-300 hover:bg-slate-50">
+          Full Screen
+        </button>
         {lesson?.id && (
           <button onClick={() => setHistoryOpen(v => !v)}
             className={`text-xs px-2 py-1 rounded-md border ${historyOpen ? 'bg-slate-700 text-white border-slate-700' : 'text-slate-600 border-slate-300 hover:bg-slate-50'}`}>
@@ -399,6 +404,7 @@ export default function ActiveLesson() {
   const [picked, setPicked] = useState(null);
   const [pickedIds, setPickedIds] = useState(new Set());
   const [pickExhausted, setPickExhausted] = useState(false);
+  const [fullScreenStudent, setFullScreenStudent] = useState(null);
 
   const toggleSelect = (studentId) => {
     setSelected(prev => {
@@ -650,6 +656,7 @@ export default function ActiveLesson() {
                 onOpenTab={(id) => openTab.mutate(id)}
                 onOpenTabUrl={(id, url) => openTabUrl.mutate({ studentId: id, url })}
                 onCloseTab={(id) => closeTab.mutate(id)}
+                onFullScreen={(s) => setFullScreenStudent(s)}
                 lockdownSession={lockdownByStudent.get(student.id)}
                 lockdownEventCount={lockdownEventCounts[student.id] || 0}
                 onEndLockdown={(sessionId) => endLockdown.mutate(sessionId)}
@@ -658,6 +665,10 @@ export default function ActiveLesson() {
           </div>
         )}
       </div>
+
+      {fullScreenStudent && (
+        <LiveViewModal student={fullScreenStudent} onClose={() => setFullScreenStudent(null)} />
+      )}
 
       {/* Activity log sidebar — latest events */}
       <div className="flex-shrink-0 bg-slate-800 text-white px-4 py-2 text-xs font-mono max-h-28 overflow-y-auto">

@@ -4,6 +4,7 @@ const events = require('../events');
 const { query } = require('../db');
 const redis  = require('../redis');
 const { calcPulseScore } = require('../services/classpulse');
+const { teacherOwnsStudent } = require('../services/teacherRoster');
 
 const setupSockets = (io) => {
   // Authenticate every socket connection with the same JWT used by the REST API
@@ -50,12 +51,17 @@ const setupSockets = (io) => {
       socket.leave(`class:${classId}`);
     });
 
-    // Admin Live View (routes/liveView.js) — not roster-scoped like
-    // join:class above, so restricted to admin+ rather than any teacher.
-    // The actual permission/audit-logging gate is the HTTP /start route;
-    // this just controls who receives the relayed frames over the socket.
-    socket.on('join:liveview', (studentId) => {
+    // Live View (routes/liveView.js) — admin+ isn't roster-scoped (any
+    // student, same as join:class-style rooms elsewhere trust the HTTP
+    // layer), but a teacher joining this room IS scoped here, not just at
+    // the HTTP /start route: unlike join:class, actually being in this
+    // room lets a socket silently receive another viewer's frames for the
+    // same student without ever calling /start themselves, so a teacher
+    // must be verified to own the roster before they can even join.
+    socket.on('join:liveview', async (studentId) => {
       if (['admin', 'superadmin'].includes(role)) {
+        socket.join(`liveview:${studentId}`);
+      } else if (role === 'teacher' && await teacherOwnsStudent(userId, studentId)) {
         socket.join(`liveview:${studentId}`);
       }
     });
