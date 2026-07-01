@@ -13,6 +13,9 @@ __pycache__/
 # the live frontend during development.
 .devtools/
 
+# Local-only Claude Code project instructions — not shared/committed.
+CLAUDE.md
+
 # ============================================================
 # Environment & Secrets — NEVER commit these
 # ============================================================
