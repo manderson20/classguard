@@ -236,11 +236,17 @@ async function run(sqlText, commit) {
       const isGateway    = toBool(a.is_gateway);
 
       try {
+        // Conflict target is `ip` alone, not `(ip, ipam_subnet_id)` — see
+        // ipamSync.js for the full explanation. ip_addresses has both a
+        // plain UNIQUE(ip) and a UNIQUE(ip, ipam_subnet_id); targeting the
+        // composite one lets a genuine ip collision (same IP already
+        // present under some other subnet mapping) fall through as an
+        // uncaught duplicate-key error instead of a clean skip.
         const { rows } = await client.query(
           `INSERT INTO ip_addresses
              (ipam_subnet_id, ip, ip_version, hostname, description, mac_address, owner, status, notes, is_gateway, last_seen)
            VALUES ($1,$2,$3,$4,$5,$6::macaddr,$7,$8,$9,$10,$11)
-           ON CONFLICT (ip, ipam_subnet_id) DO NOTHING RETURNING id`,
+           ON CONFLICT (ip) DO NOTHING RETURNING id`,
           [ourSubnetId, ip, version, a.hostname || null, a.description || null, mac, a.owner || null, status, a.note || null, isGateway, lastSeen]
         );
         if (rows[0]) {

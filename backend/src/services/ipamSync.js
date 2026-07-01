@@ -32,11 +32,28 @@ async function syncNetworkClientsToIpam() {
         ? 'wireless'
         : (m.os_type || null);
 
+      // Conflict target is `ip` alone, not `(ip, ipam_subnet_id)` — `ip_addresses`
+      // carries two overlapping unique constraints (the original column-level
+      // UNIQUE on `ip` from migration 005, plus a composite one on
+      // `(ip, ipam_subnet_id)` added in migration 017 specifically so this
+      // query's ON CONFLICT would work). Targeting the composite constraint
+      // meant a genuine, recurring failure mode: if the most-specific IPAM
+      // subnet resolved for an IP ever changes between sync runs (a new,
+      // more-specific subnet gets created, or an existing one gets edited),
+      // this INSERT's ON CONFLICT wouldn't match the *existing* row (still
+      // under the old ipam_subnet_id) and would instead hit the older, wider
+      // `ip` UNIQUE constraint — a raw, uncaught-by-ON-CONFLICT duplicate-key
+      // error, permanently, on every 15-minute sync, since nothing ever
+      // updated the stale row. Targeting `ip` (the real invariant — a given
+      // IP maps to one row, one current subnet) and updating
+      // `ipam_subnet_id` on conflict lets a device's subnet mapping
+      // self-correct instead.
       const { rows: [row] } = await query(`
         INSERT INTO ip_addresses
           (ip, ipam_subnet_id, hostname, mac_address, status, last_seen, device_type, owner)
         VALUES ($1::inet, $2, $3, $4::macaddr, 'used', $5, $6, $7)
-        ON CONFLICT (ip, ipam_subnet_id) DO UPDATE SET
+        ON CONFLICT (ip) DO UPDATE SET
+          ipam_subnet_id = EXCLUDED.ipam_subnet_id,
           last_seen   = EXCLUDED.last_seen,
           hostname    = COALESCE(NULLIF(ip_addresses.hostname, ''), EXCLUDED.hostname),
           mac_address = COALESCE(ip_addresses.mac_address,   EXCLUDED.mac_address),
