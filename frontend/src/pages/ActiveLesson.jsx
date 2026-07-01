@@ -226,6 +226,29 @@ function LockdownForm({ count, onClose, onStart }) {
   );
 }
 
+function RandomPickerBanner({ picked, onPickAgain, onClose, exhausted }) {
+  return (
+    <div className="bg-purple-50 border-b border-purple-200 px-6 py-3 flex items-center gap-3">
+      <span className="text-sm text-purple-800 font-medium whitespace-nowrap">🎲 Picked —</span>
+      {picked ? (
+        <div className="flex items-center gap-2">
+          <Avatar photoUrl={picked.photo_url} name={picked.full_name} email={picked.email} className="w-6 h-6 text-xs" />
+          <span className="font-semibold text-purple-900">{picked.full_name}</span>
+        </div>
+      ) : (
+        <span className="text-sm text-purple-700">No students available</span>
+      )}
+      {exhausted && (
+        <span className="text-xs text-purple-500">(everyone's had a turn — starting over)</span>
+      )}
+      <button onClick={onPickAgain} className="btn btn-sm bg-purple-600 text-white hover:bg-purple-700 border-0 whitespace-nowrap">
+        Pick Again
+      </button>
+      <button onClick={onClose} className="text-slate-400 hover:text-slate-600 text-sm whitespace-nowrap">Close</button>
+    </div>
+  );
+}
+
 function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, lockdownSession, lockdownEventCount, onEndLockdown }) {
   const [highlight, setHighlight]   = useState(false);
   const [locked, setLocked]         = useState(false);
@@ -372,6 +395,10 @@ export default function ActiveLesson() {
   const [chatChoiceOpen, setChatChoiceOpen] = useState(false);
   const [lockdownFormOpen, setLockdownFormOpen] = useState(false);
   const [lockdownEventCounts, setLockdownEventCounts] = useState({});
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [picked, setPicked] = useState(null);
+  const [pickedIds, setPickedIds] = useState(new Set());
+  const [pickExhausted, setPickExhausted] = useState(false);
 
   const toggleSelect = (studentId) => {
     setSelected(prev => {
@@ -480,6 +507,28 @@ export default function ActiveLesson() {
   const lesson     = cls.active_lesson;
   const allowed    = lesson?.allowed_domains || [];
   const activeCount = members.filter(m => activity[m.id]).length;
+  const onlineMembers = members.filter(m => activity[m.id]);
+
+  // Random student picker — prefers currently-online students (no point
+  // calling on someone not there), falls back to the full roster if nobody
+  // shows online yet. Tracks who's already been picked this session so the
+  // same student isn't called on repeatedly until everyone's had a turn.
+  const pickRandomStudent = () => {
+    const pool = onlineMembers.length > 0 ? onlineMembers : members;
+    if (pool.length === 0) { setPicked(null); setPickerOpen(true); return; }
+    let candidates = pool.filter(m => !pickedIds.has(m.id));
+    let exhausted = false;
+    if (candidates.length === 0) {
+      candidates = pool;
+      exhausted = true;
+      setPickedIds(new Set());
+    }
+    const choice = candidates[Math.floor(Math.random() * candidates.length)];
+    setPickedIds(prev => new Set(prev).add(choice.id));
+    setPicked(choice);
+    setPickExhausted(exhausted);
+    setPickerOpen(true);
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -512,6 +561,13 @@ export default function ActiveLesson() {
             className="btn btn-sm bg-amber-600 text-white hover:bg-amber-700 border-0 disabled:opacity-40"
           >
             🔒 Lockdown Test {selected.size > 0 && `(${selected.size})`}
+          </button>
+          <button
+            onClick={pickRandomStudent}
+            disabled={members.length === 0}
+            className="btn btn-sm bg-purple-600 text-white hover:bg-purple-700 border-0 disabled:opacity-40"
+          >
+            🎲 Pick Student
           </button>
           <button
             onClick={() => lesson && endLesson.mutate(lesson.id)}
@@ -558,6 +614,16 @@ export default function ActiveLesson() {
           onStart={(targetUrl, durationMinutes) => startLockdown.mutate({
             studentIds: Array.from(selected), targetUrl, durationMinutes,
           })}
+        />
+      )}
+
+      {/* Random student picker */}
+      {pickerOpen && (
+        <RandomPickerBanner
+          picked={picked}
+          exhausted={pickExhausted}
+          onPickAgain={pickRandomStudent}
+          onClose={() => setPickerOpen(false)}
         />
       )}
 
