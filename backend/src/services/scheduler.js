@@ -19,7 +19,7 @@ const radiusSync = require('./radiusSync');
 const ntp = require('./ntp');
 const internetHealth = require('./internetHealth');
 const teacherUtilization = require('./teacherUtilization');
-const { invalidatePolicy } = require('./policyResolver');
+const { invalidatePolicy, invalidatePoliciesForClass } = require('./policyResolver');
 const events = require('../events');
 const { syncController } = require('../routes/network');
 const { pool } = require('../db');
@@ -325,6 +325,91 @@ async function expireLockdownSessions() {
 }
 
 // ---------------------------------------------------------------------------
+// Bell-schedule auto-start — per-minute boundary check, same idiom as
+// expireLockdownSessions above: query rows whose time window just started,
+// act idempotently. Opt-in per class (classes.auto_start_lessons, migration
+// 092) rather than a district-wide setting.
+//
+// Schedule resolution mirrors teacherUtilization.js's student_schedule CTE
+// (OU-prefix or grade_level match, falling back to the default schedule) --
+// each enrolled student can in principle resolve to a different schedule,
+// so this checks whether ANY of a class's students have a matching period
+// starting right now, not just one canonical schedule per class.
+//
+// The "manual start always wins" requirement is enforced two ways: this
+// query only fires for a class with no already-active session (so a
+// teacher who started early, e.g. for a schedule-change day, is never
+// double-started), and POST /classes/:id/lessons (a real manual start)
+// always closes any existing active session first — including one this
+// cron created — before opening its own, so a manual start immediately
+// afterward still takes over cleanly.
+// ---------------------------------------------------------------------------
+async function autoStartLessons() {
+  const { rows } = await query(`
+    WITH match_mode AS (
+      SELECT COALESCE((SELECT value FROM settings WHERE key = 'bell_schedule_match_mode'), 'grade_level') AS mode
+    ),
+    default_schedule AS (
+      SELECT id FROM bell_schedules WHERE is_default = true LIMIT 1
+    ),
+    student_schedule AS (
+      SELECT u.id AS student_id,
+        COALESCE(
+          CASE WHEN mm.mode = 'ou' THEN (
+            SELECT ba.schedule_id FROM bell_schedule_assignments ba
+            WHERE ba.target_type = 'ou' AND u.google_ou LIKE ba.target_ou || '%'
+            ORDER BY LENGTH(ba.target_ou) DESC LIMIT 1
+          ) END,
+          CASE WHEN mm.mode = 'grade_level' THEN (
+            SELECT ba.schedule_id FROM bell_schedule_assignments ba
+            WHERE ba.target_type = 'grade_level' AND ba.target_grade_level = u.grade_level
+            LIMIT 1
+          ) END,
+          (SELECT id FROM default_schedule)
+        ) AS schedule_id
+      FROM users u, match_mode mm
+      WHERE u.role = 'student'
+    ),
+    class_schedules AS (
+      SELECT DISTINCT c.id AS class_id, c.teacher_id, c.period,
+        COALESCE(ss.schedule_id, (SELECT id FROM default_schedule)) AS schedule_id
+      FROM classes c
+      LEFT JOIN class_members cm ON cm.class_id = c.id
+      LEFT JOIN student_schedule ss ON ss.student_id = cm.student_id
+      WHERE c.is_active = true AND c.teacher_id IS NOT NULL
+        AND c.auto_start_lessons = true AND c.period IS NOT NULL
+    )
+    SELECT DISTINCT cs.class_id, cs.teacher_id
+    FROM class_schedules cs
+    JOIN bell_schedule_periods bsp
+      ON bsp.schedule_id = cs.schedule_id AND bsp.period_label = cs.period
+    WHERE bsp.start_time = date_trunc('minute', NOW())::time
+      AND EXTRACT(DOW FROM CURRENT_DATE)::int = ANY(bsp.days_of_week)
+      AND NOT EXISTS (
+        SELECT 1 FROM lesson_sessions ls WHERE ls.class_id = cs.class_id AND ls.is_active = true
+      )
+  `);
+
+  if (rows.length === 0) return;
+
+  for (const { class_id, teacher_id } of rows) {
+    try {
+      await query(
+        `INSERT INTO lesson_sessions (class_id, teacher_id, name, is_active)
+         VALUES ($1, $2, 'Auto-started (bell schedule)', true)`,
+        [class_id, teacher_id]
+      );
+      const studentIds = await invalidatePoliciesForClass(class_id);
+      for (const sid of studentIds) events.emit('policy:updated', { studentId: sid });
+    } catch (err) {
+      console.error(`[scheduler] auto-start-lessons error for class ${class_id}:`, err.message);
+    }
+  }
+
+  console.log(`[scheduler] auto-started ${rows.length} lesson session(s) from bell schedule`);
+}
+
+// ---------------------------------------------------------------------------
 // Google Workspace sync stub  — nightly 2am
 // Real implementation added in Phase 8.
 // ---------------------------------------------------------------------------
@@ -439,6 +524,12 @@ function startScheduler() {
   // releases close to on time rather than lagging behind by minutes.
   cron.schedule('*/1 * * * *', () => {
     expireLockdownSessions().catch(err => console.error('[scheduler] lockdown expiry error:', err.message));
+  });
+
+  // Bell-schedule auto-start — every minute, so a class's lesson starts
+  // close to the actual period start time rather than lagging behind.
+  cron.schedule('*/1 * * * *', () => {
+    autoStartLessons().catch(err => console.error('[scheduler] auto-start-lessons error:', err.message));
   });
 
   // Blocklist sync — configurable (default: 2am daily)

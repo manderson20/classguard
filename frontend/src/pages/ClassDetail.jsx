@@ -272,6 +272,11 @@ export default function ClassDetail() {
     },
   });
 
+  const toggleAutoStart = useMutation({
+    mutationFn: (auto_start_lessons) => api.patch(`/classes/${classId}/auto-start`, { auto_start_lessons }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['class', classId] }),
+  });
+
   const placePenalty = useMutation({
     mutationFn: (studentId) => api.post('/penalty-box', { student_id: studentId }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['class', classId] }),
@@ -299,10 +304,33 @@ export default function ClassDetail() {
   return (
     <div className="p-6 max-w-5xl mx-auto">
       {/* Header */}
-      <div className="flex items-center gap-3 mb-6">
+      <div className="flex items-center gap-3 mb-2">
         <Link to="/classes" className="text-slate-400 hover:text-slate-600 text-sm">← Classes</Link>
         <span className="text-slate-300">/</span>
         <h1 className="text-2xl font-bold text-slate-900">{cls.name}</h1>
+      </div>
+
+      {/* Bell-schedule auto-start toggle — only meaningful if this class has
+          a period assigned (matched against bell_schedule_periods.period_label
+          by services/scheduler.js's autoStartLessons cron); otherwise there's
+          nothing for it to ever match. */}
+      <div className="mb-6">
+        {cls.period ? (
+          <label className="inline-flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={!!cls.auto_start_lessons}
+              disabled={toggleAutoStart.isPending}
+              onChange={(e) => toggleAutoStart.mutate(e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            Auto-start lessons from the bell schedule (Period {cls.period})
+          </label>
+        ) : (
+          <p className="text-xs text-slate-400">
+            No period assigned to this class — bell-schedule auto-start isn't available.
+          </p>
+        )}
       </div>
 
       {/* Lesson banner */}
