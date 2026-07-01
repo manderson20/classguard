@@ -1338,13 +1338,19 @@ router.post('/import/addresses', async (req, res) => {
       const status = VALID_STATUS.includes(row.status?.trim()) ? row.status.trim() : 'used';
       const mac    = row.mac_address?.trim() || null;
 
+      // ip_addresses has both a plain UNIQUE(ip) and a UNIQUE(ip, ipam_subnet_id)
+      // (see ipamSync.js for the full explanation of why both exist). A manual
+      // WHERE-NOT-EXISTS guard scoped to (ip, ipam_subnet_id) — like the raw
+      // ON CONFLICT (ip, ipam_subnet_id) this replaced elsewhere — misses a
+      // genuine collision against the real invariant (ip alone) and throws an
+      // uncaught duplicate-key error instead of a clean skip. ON CONFLICT (ip)
+      // both closes that race and lets Postgres do the existence check
+      // atomically instead of a separate SELECT.
       const { rowCount } = await query(
         `INSERT INTO ip_addresses
            (ip, ipam_subnet_id, hostname, mac_address, owner, description, status, device_type)
-         SELECT $1::inet, $2, $3, $4::macaddr, $5, $6, $7, $8
-         WHERE NOT EXISTS (
-           SELECT 1 FROM ip_addresses WHERE ip = $1::inet AND ipam_subnet_id = $2
-         )`,
+         VALUES ($1::inet, $2, $3, $4::macaddr, $5, $6, $7, $8)
+         ON CONFLICT (ip) DO NOTHING`,
         [ip, ipam_subnet_id, row.hostname?.trim() || null, mac,
          row.owner?.trim() || null, row.description?.trim() || null,
          status, row.device_type?.trim() || null]

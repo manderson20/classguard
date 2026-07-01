@@ -25,22 +25,29 @@ async function syncPhone(phone) {
     return phone;
   }
 
-  const { rows: [existing] } = await query(
-    `SELECT * FROM ip_addresses WHERE ip = $1`,
-    [phone.ip_address]
+  // INSERT-first with ON CONFLICT (ip) DO NOTHING instead of a SELECT-then-
+  // INSERT — the old check-then-act pattern raced two concurrent syncPhone()
+  // calls landing on the same IP (both see "not existing", both try to
+  // INSERT, one throws an uncaught duplicate-key error). ip_addresses.ip has
+  // its own UNIQUE constraint, so this closes the race atomically; if the
+  // conflict fires, fetch the row that already won.
+  const { rows: [created] } = await query(
+    `INSERT INTO ip_addresses (ip, hostname, device_type, mac_address, owner, tags)
+     VALUES ($1, $2, 'voip', $3, $4, ARRAY[$5])
+     ON CONFLICT (ip) DO NOTHING
+     RETURNING *`,
+    [phone.ip_address, phone.display_name, phone.mac_address || null,
+     [phone.building, phone.room_number].filter(Boolean).join(' - ') || null, TAG]
   );
 
   let ipamId;
-  if (!existing) {
-    const { rows: [created] } = await query(
-      `INSERT INTO ip_addresses (ip, hostname, device_type, mac_address, owner, tags)
-       VALUES ($1, $2, 'voip', $3, $4, ARRAY[$5])
-       RETURNING id`,
-      [phone.ip_address, phone.display_name, phone.mac_address || null,
-       [phone.building, phone.room_number].filter(Boolean).join(' - ') || null, TAG]
-    );
+  if (created) {
     ipamId = created.id;
   } else {
+    const { rows: [existing] } = await query(
+      `SELECT * FROM ip_addresses WHERE ip = $1`,
+      [phone.ip_address]
+    );
     ipamId = existing.id;
     // Only keep our own auto-created rows in sync — never clobber a manually
     // entered IPAM record that happens to share this IP.
