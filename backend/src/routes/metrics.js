@@ -29,6 +29,7 @@ const redis     = require('../redis');
 const os        = require('os');
 const { rateLimit } = require('express-rate-limit');
 const { getHaConfig, getNodes } = require('../services/keepalived');
+const kea = require('../services/kea');
 const { getResourceUsage } = require('../services/systemResources');
 
 // Escape characters that are special in XML contexts
@@ -136,6 +137,26 @@ async function collectMetrics() {
   `).catch(() => ({ rows: [{}] }));
   const ntp = ntpRows[0] || {};
 
+  // DHCP pool utilization — aggregate across every configured subnet, via
+  // the same Kea stat-lease4-get command the DHCP Management page already
+  // uses per-subnet (routes/dhcp.js). Kea deliberately never runs on a
+  // standby node (its DB is a read-only replica, leases can't be written
+  // there), so a standby always reports dhcp_kea_reachable=0 — expected,
+  // not an error; poll this metric from the primary/VIP, same as the DNS
+  // throughput metrics above.
+  let dhcpTotal = 0, dhcpUsed = 0, dhcpReachable = 0;
+  try {
+    const stats = await kea.getStats();
+    for (const row of stats) {
+      dhcpTotal += row['total-addresses'] || 0;
+      dhcpUsed  += (row['assigned-addresses'] || 0) + (row['declined-addresses'] || 0);
+    }
+    dhcpReachable = 1;
+  } catch { /* Kea offline or this is a standby node — leave zeros */ }
+  const { rows: subnetRows } = await pool.query(
+    `SELECT COUNT(*) AS total FROM dhcp_subnets`
+  ).catch(() => ({ rows: [{}] }));
+
   // Node count (HA)
   const { rows: nodeRows } = await pool.query(`
     SELECT COUNT(*) AS total,
@@ -198,6 +219,14 @@ async function collectMetrics() {
     pg_connections_active:   parseInt(pg.active_connections, 10) || 0,
     pg_connections_idle:     parseInt(pg.idle_connections, 10)   || 0,
 
+    // DHCP pool utilization (aggregate across every configured subnet)
+    dhcp_kea_reachable:      dhcpReachable,
+    dhcp_subnets_configured: parseInt(subnetRows[0]?.total, 10) || 0,
+    dhcp_pool_total_addresses: dhcpTotal,
+    dhcp_pool_used_addresses:  dhcpUsed,
+    dhcp_pool_free_addresses:  Math.max(0, dhcpTotal - dhcpUsed),
+    dhcp_pool_utilization_pct: dhcpTotal > 0 ? parseFloat(((dhcpUsed / dhcpTotal) * 100).toFixed(2)) : 0,
+
     // NTP
     ntp_min_stratum:         ntp.min_stratum ? parseInt(ntp.min_stratum, 10) : null,
     ntp_reachable_servers:   parseInt(ntp.reachable_count, 10) || 0,
@@ -249,6 +278,7 @@ const KNOWN_VALUE_TYPES = {
   ha_configured:     '3',
   ntp_min_stratum:   '3',
   ntp_synced:        '3',
+  dhcp_kea_reachable: '3',
 };
 
 function zabbixValueType(key, value) {

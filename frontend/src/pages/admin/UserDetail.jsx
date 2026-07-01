@@ -379,16 +379,23 @@ export default function UserDetail() {
               <h2 className="text-sm font-semibold text-slate-700">Security Awareness — Infosec IQ</h2>
               <div className="flex gap-2 items-center">
                 <button
-                  onClick={() => {
+                  onClick={async () => {
                     const token = localStorage.getItem('cg_token');
-                    fetch(`/api/v1/infoseciq/exit-ticket/${encodeURIComponent(user.email)}`, {
+                    const res = await fetch(`/api/v1/infoseciq/exit-ticket/${encodeURIComponent(user.email)}`, {
                       headers: { Authorization: `Bearer ${token}` },
-                    }).then(r => r.blob()).then(blob => {
-                      const a = document.createElement('a');
-                      a.href = URL.createObjectURL(blob);
-                      a.download = `exit-ticket-${(user.full_name || user.email).replace(/\s+/g, '-')}.pdf`;
-                      a.click();
                     });
+                    if (!res.ok) {
+                      const body = await res.json().catch(() => ({}));
+                      alert(body.error || `Failed to generate exit ticket (${res.status})`);
+                      return;
+                    }
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `exit-ticket-${(user.full_name || user.email).replace(/\s+/g, '-')}.pdf`;
+                    a.click();
+                    URL.revokeObjectURL(url);
                   }}
                   className="text-xs px-3 py-1 rounded-lg bg-primary-600 text-white hover:bg-primary-700 font-medium"
                 >

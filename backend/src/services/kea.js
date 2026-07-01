@@ -136,9 +136,20 @@ async function deleteLease(ip) {
 // ---------------------------------------------------------------------------
 // Pool utilization stats
 // ---------------------------------------------------------------------------
+// stat-lease4-get/stat-lease6-get don't return plain row objects — they
+// return a columnar result-set ({ columns: [...], rows: [[...], [...]] })
+// that has to be zipped back into objects before consumers can key off
+// column names like 'subnet-id'/'total-addresses'.
+function decodeResultSet(res) {
+  const resultSet = res.arguments?.['result-set'];
+  if (!resultSet) return [];
+  const { columns = [], rows = [] } = resultSet;
+  return rows.map(row => Object.fromEntries(columns.map((col, i) => [col, row[i]])));
+}
+
 async function getStats() {
   const res = await keaCommand('stat-lease4-get', 'dhcp4');
-  return res.arguments?.result ?? [];
+  return decodeResultSet(res);
 }
 
 // ---------------------------------------------------------------------------
@@ -253,7 +264,7 @@ async function deleteLease6(ip) {
 
 async function getStats6() {
   const res = await keaCommand('stat-lease6-get', 'dhcp6');
-  return res.arguments?.result ?? [];
+  return decodeResultSet(res);
 }
 
 module.exports = {

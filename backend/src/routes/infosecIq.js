@@ -353,7 +353,7 @@ async function buildTicketData(email, requiredCourses) {
 
   // Devices from Snipe-IT
   const { rows: devices } = await pool.query(
-    `SELECT device_name, asset_tag, device_model, device_type
+    `SELECT device_name, asset_tag, device_model
      FROM integration_devices
      WHERE source = 'snipeit' AND LOWER(assigned_email) = LOWER($1)
      ORDER BY device_name`, [email]
@@ -399,7 +399,10 @@ router.get('/exit-ticket/bulk', ...auth, async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="exit-tickets-${new Date().toISOString().slice(0,10)}.pdf"`);
     const doc = buildExitTicketPdf(staffList, required);
     doc.pipe(res);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error('[infoseciq] exit-ticket/bulk error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.get('/exit-ticket/:email', ...auth, async (req, res) => {
@@ -416,7 +419,10 @@ router.get('/exit-ticket/:email', ...auth, async (req, res) => {
     res.setHeader('Content-Disposition', `attachment; filename="exit-ticket-${safeName}.pdf"`);
     const doc = buildExitTicketPdf([data], required);
     doc.pipe(res);
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    console.error('[infoseciq] exit-ticket error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 module.exports = router;
