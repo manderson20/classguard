@@ -37,16 +37,23 @@ function PhishedBadge({ count }) {
   return <span className={`text-xs font-semibold ${color}`}>{count}×</span>;
 }
 
-function downloadExitTicket(email) {
+async function downloadExitTicket(email) {
   const token = localStorage.getItem('cg_token');
-  fetch(`/api/v1/infoseciq/exit-ticket/${encodeURIComponent(email)}`, {
+  const res = await fetch(`/api/v1/infoseciq/exit-ticket/${encodeURIComponent(email)}`, {
     headers: { Authorization: `Bearer ${token}` },
-  }).then(r => r.blob()).then(blob => {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `exit-ticket-${email}.pdf`;
-    a.click();
   });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    alert(body.error || `Failed to generate exit ticket (${res.status})`);
+    return;
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `exit-ticket-${email}.pdf`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function GradeCardModal({ learner, onClose }) {
@@ -225,16 +232,23 @@ export default function InfosecIqGradeCards() {
             Export CSV
           </button>
           <button
-            onClick={() => {
+            onClick={async () => {
               const token = localStorage.getItem('cg_token');
-              fetch('/api/v1/infoseciq/exit-ticket/bulk', {
+              const res = await fetch('/api/v1/infoseciq/exit-ticket/bulk', {
                 headers: { Authorization: `Bearer ${token}` },
-              }).then(r => r.blob()).then(blob => {
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(blob);
-                a.download = `exit-tickets-all-${new Date().toISOString().slice(0,10)}.pdf`;
-                a.click();
               });
+              if (!res.ok) {
+                const body = await res.json().catch(() => ({}));
+                alert(body.error || `Failed to generate exit tickets (${res.status})`);
+                return;
+              }
+              const blob = await res.blob();
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement('a');
+              a.href = url;
+              a.download = `exit-tickets-all-${new Date().toISOString().slice(0,10)}.pdf`;
+              a.click();
+              URL.revokeObjectURL(url);
             }}
             className="btn btn-primary text-sm"
           >
