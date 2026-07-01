@@ -11,7 +11,7 @@ let _socket = null;
 export async function connectSocket({
   jwt, onPolicyUpdated, onScreenshotRequest,
   onLockRequest, onUnlockRequest, onOpenTabRequest, onCloseTabRequest,
-  onChatMessage, onLiveViewRequest,
+  onChatMessage, onLiveViewRequest, onBroadcastFrame, onBroadcastEnd,
 }) {
   if (_socket && _socket.connected) return;
   if (_socket) _socket.disconnect();
@@ -59,6 +59,14 @@ export async function connectSocket({
   // New chat message addressed to this user (teacher or student)
   _socket.on('chat:message', (data) => {
     if (typeof onChatMessage === 'function') onChatMessage(data);
+  });
+
+  // Teacher screen broadcast — a captured frame, or the end-of-broadcast signal
+  _socket.on('broadcast:frame', (data) => {
+    if (typeof onBroadcastFrame === 'function') onBroadcastFrame(data);
+  });
+  _socket.on('broadcast:end', (data) => {
+    if (typeof onBroadcastEnd === 'function') onBroadcastEnd(data);
   });
 }
 

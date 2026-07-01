@@ -325,6 +325,29 @@ const setupSockets = (io) => {
     }
   });
 
+  // Screen broadcasting (routes/liveView.js's class-broadcast/* routes) —
+  // fans a teacher-captured frame out to every roster member's own private
+  // room, same direction as the remote-device commands above (teacher ->
+  // students), not the class:${classId} dashboard-fanout room those other
+  // handlers use (that's teacher-facing only; students never join it).
+  events.on('class:broadcast_frame', async ({ classId, teacherName, dataUrl }) => {
+    try {
+      const { rows } = await query('SELECT student_id FROM class_members WHERE class_id = $1', [classId]);
+      for (const { student_id } of rows) {
+        io.to(`student:${student_id}`).emit('broadcast:frame', { classId, teacherName, dataUrl });
+      }
+    } catch {}
+  });
+
+  events.on('class:broadcast_end', async ({ classId }) => {
+    try {
+      const { rows } = await query('SELECT student_id FROM class_members WHERE class_id = $1', [classId]);
+      for (const { student_id } of rows) {
+        io.to(`student:${student_id}`).emit('broadcast:end', { classId });
+      }
+    } catch {}
+  });
+
   // ---------------------------------------------------------------------------
   // ClassPulse event bus → WebSocket bridge
   // ---------------------------------------------------------------------------

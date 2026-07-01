@@ -125,6 +125,10 @@
       onIncomingChatMessage(msg.threadId, msg.message);
     } else if (msg.type === 'CG_LESSON_STATE') {
       setLessonState(msg.inActiveLesson);
+    } else if (msg.type === 'CG_BROADCAST_FRAME') {
+      showBroadcastFrame(msg.teacherName, msg.dataUrl);
+    } else if (msg.type === 'CG_BROADCAST_END') {
+      hideBroadcastOverlay();
     }
   });
 
@@ -228,6 +232,58 @@
     const overlay = document.getElementById('cg-lock-overlay');
     if (overlay) overlay.remove();
     document.documentElement.style.overflow = _prevOverflow || '';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Screen broadcasting — a teacher sharing their own screen to the class.
+  // Unlike the lock overlay above, this is instructional, not disciplinary --
+  // it doesn't block interaction with the page and can be minimized, same
+  // reasoning the chat widget already applies (only the lock screen and
+  // safety monitoring itself are ever inescapable, see feedback memory on
+  // "no opt-out" — a teacher's screen-share is neither).
+  // ---------------------------------------------------------------------------
+  let _broadcastMinimized = false;
+
+  function showBroadcastFrame(teacherName, dataUrl) {
+    let panel = document.getElementById('cg-broadcast-panel');
+    if (!panel) {
+      panel = document.createElement('div');
+      panel.id = 'cg-broadcast-panel';
+      panel.style.cssText = `
+        position:fixed;top:16px;right:16px;z-index:2147483645;
+        width:360px;background:#0f172a;border-radius:12px;overflow:hidden;
+        box-shadow:0 4px 24px rgba(0,0,0,0.35);font:14px system-ui,sans-serif;`;
+      panel.innerHTML = `
+        <div id="cg-broadcast-header" style="
+          background:#1a56db;color:#fff;padding:8px 12px;display:flex;
+          align-items:center;justify-content:space-between;cursor:pointer;">
+          <span id="cg-broadcast-title" style="font-size:12px;font-weight:600;"></span>
+          <span id="cg-broadcast-toggle" style="font-size:12px;">–</span>
+        </div>
+        <img id="cg-broadcast-img" style="display:block;width:100%;height:auto;" />`;
+      document.documentElement.appendChild(panel);
+      document.getElementById('cg-broadcast-header').addEventListener('click', () => {
+        _broadcastMinimized = !_broadcastMinimized;
+        renderBroadcastState();
+      });
+    }
+    document.getElementById('cg-broadcast-title').textContent = `📺 ${teacherName} is sharing their screen`;
+    document.getElementById('cg-broadcast-img').src = dataUrl;
+    renderBroadcastState();
+  }
+
+  function renderBroadcastState() {
+    const img = document.getElementById('cg-broadcast-img');
+    const toggle = document.getElementById('cg-broadcast-toggle');
+    if (!img || !toggle) return;
+    img.style.display = _broadcastMinimized ? 'none' : 'block';
+    toggle.textContent = _broadcastMinimized ? '□' : '–';
+  }
+
+  function hideBroadcastOverlay() {
+    const panel = document.getElementById('cg-broadcast-panel');
+    if (panel) panel.remove();
+    _broadcastMinimized = false;
   }
 
   // ---------------------------------------------------------------------------

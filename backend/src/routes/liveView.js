@@ -174,4 +174,70 @@ router.get('/audit', ...adminAuth, async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// Screen broadcasting — teacher shares their OWN screen (via the standard
+// getDisplayMedia() Web API, captured in their own browser tab) to every
+// student in a class at once. Doesn't need WebRTC/a signaling server: same
+// frame-relay trick as Live View, just inverted — the teacher's browser
+// periodically POSTs a captured frame instead of the extension doing it,
+// and it fans out to the WHOLE roster instead of one viewer.
+//
+// Deliberately scoped to "teacher's own screen" only for now — broadcasting
+// a specific STUDENT's screen to the rest of the class would need real
+// session-state tracking (is student X's live view currently also being
+// relayed to class Y) on top of what Live View already has, and isn't
+// built here; teacher's-own-screen is the more common, standard
+// interpretation of "screen broadcasting" in a classroom tool.
+// ---------------------------------------------------------------------------
+async function requireClassOwnership(req, res, next) {
+  const { rows: [cls] } = await pool.query('SELECT teacher_id FROM classes WHERE id = $1', [req.params.classId]);
+  if (!cls) return res.status(404).json({ error: 'Class not found' });
+  if (req.user.role === 'teacher' && cls.teacher_id !== req.user.userId) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  next();
+}
+
+async function logBroadcastAction(req, action_type) {
+  await pool.query(
+    `INSERT INTO teacher_actions (teacher_id, student_id, class_id, action_type)
+     VALUES ($1, NULL, $2, $3)`,
+    [req.user.userId, req.params.classId, action_type]
+  ).catch(() => {});
+}
+
+// POST /api/v1/live-view/class-broadcast/:classId/start
+router.post('/class-broadcast/:classId/start', ...auth, requireClassOwnership, async (req, res) => {
+  await logBroadcastAction(req, 'broadcast_start');
+  res.json({ ok: true });
+});
+
+// POST /api/v1/live-view/class-broadcast/:classId/frame  { data_url }
+router.post('/class-broadcast/:classId/frame', ...auth, requireClassOwnership, async (req, res) => {
+  const { data_url } = req.body;
+  if (!data_url || !/^data:image\/(png|jpeg|webp);base64,/.test(data_url)) {
+    return res.status(400).json({ error: 'invalid data_url format' });
+  }
+  const MAX_FRAME_BYTES = 10 * 1024 * 1024;
+  // Rough byte-size check on the base64 payload without fully decoding it.
+  if (data_url.length * 0.75 > MAX_FRAME_BYTES) {
+    return res.status(400).json({ error: 'frame too large (max 10 MB)' });
+  }
+
+  const { rows: [teacher] } = await pool.query('SELECT full_name FROM users WHERE id = $1', [req.user.userId]);
+  events.emit('class:broadcast_frame', {
+    classId: req.params.classId,
+    teacherName: teacher?.full_name || 'Your teacher',
+    dataUrl: data_url,
+  });
+  res.json({ ok: true });
+});
+
+// POST /api/v1/live-view/class-broadcast/:classId/end
+router.post('/class-broadcast/:classId/end', ...auth, requireClassOwnership, async (req, res) => {
+  await logBroadcastAction(req, 'broadcast_end');
+  events.emit('class:broadcast_end', { classId: req.params.classId });
+  res.json({ ok: true });
+});
+
 module.exports = router;

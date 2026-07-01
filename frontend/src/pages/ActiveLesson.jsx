@@ -512,6 +512,10 @@ export default function ActiveLesson() {
   const [fullScreenStudent, setFullScreenStudent] = useState(null);
   const [raisedHands, setRaisedHands] = useState(new Map());
   const [thumbnailsOpen, setThumbnailsOpen] = useState(false);
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [broadcastError, setBroadcastError] = useState(null);
+  const broadcastStreamRef = useRef(null);
+  const broadcastIntervalRef = useRef(null);
 
   const toggleSelect = (studentId) => {
     setSelected(prev => {
@@ -578,6 +582,20 @@ export default function ActiveLesson() {
       socket.emit('leave:class', classId);
     };
   }, [socket, classId]);
+
+  // Stop any in-progress screen broadcast if the teacher navigates away
+  // mid-share, so students aren't left with a stale overlay and the
+  // server-side session doesn't linger.
+  useEffect(() => {
+    return () => {
+      clearInterval(broadcastIntervalRef.current);
+      if (broadcastStreamRef.current) {
+        broadcastStreamRef.current.getTracks().forEach(t => t.stop());
+        api.post(`/live-view/class-broadcast/${classId}/end`).catch(() => {});
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const dismissRaisedHand = (studentId) => {
     setRaisedHands(prev => {
@@ -656,6 +674,56 @@ export default function ActiveLesson() {
     setPickerOpen(true);
   };
 
+  // Screen broadcasting — standard getDisplayMedia() Web API in the
+  // teacher's own tab, no extension involvement on this side at all.
+  // Captures a frame to a canvas every 2s (fast enough to feel reasonably
+  // live for a screen-share, since this is the teacher's own browser doing
+  // the capture directly, not a round-trip through a student's extension
+  // like Live View/Live Thumbnails) and POSTs it as a JPEG data URL.
+  const BROADCAST_INTERVAL_MS = 2000;
+
+  const startBroadcast = async () => {
+    setBroadcastError(null);
+    try {
+      const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+      broadcastStreamRef.current = stream;
+      const track = stream.getVideoTracks()[0];
+      track.addEventListener('ended', stopBroadcast); // browser's own "Stop sharing" UI
+
+      const video = document.createElement('video');
+      video.srcObject = stream;
+      await video.play();
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      await api.post(`/live-view/class-broadcast/${classId}/start`);
+
+      const captureAndSend = () => {
+        if (!video.videoWidth) return;
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        ctx.drawImage(video, 0, 0);
+        const dataUrl = canvas.toDataURL('image/jpeg', 0.6);
+        api.post(`/live-view/class-broadcast/${classId}/frame`, { data_url: dataUrl }).catch(() => {});
+      };
+      captureAndSend();
+      broadcastIntervalRef.current = setInterval(captureAndSend, BROADCAST_INTERVAL_MS);
+      setBroadcasting(true);
+    } catch (e) {
+      // Most common case: the teacher clicked "Cancel" on the browser's own
+      // share picker -- not a real error, just don't start.
+      if (e.name !== 'NotAllowedError') setBroadcastError(e.message || 'Failed to start screen share');
+    }
+  };
+
+  const stopBroadcast = () => {
+    clearInterval(broadcastIntervalRef.current);
+    broadcastStreamRef.current?.getTracks().forEach(t => t.stop());
+    broadcastStreamRef.current = null;
+    setBroadcasting(false);
+    api.post(`/live-view/class-broadcast/${classId}/end`).catch(() => {});
+  };
+
   return (
     <div className="flex flex-col h-full">
       {/* Top bar */}
@@ -703,6 +771,13 @@ export default function ActiveLesson() {
             🖼 Live Thumbnails
           </button>
           <button
+            onClick={broadcasting ? stopBroadcast : startBroadcast}
+            disabled={members.length === 0}
+            className={`btn btn-sm border-0 disabled:opacity-40 ${broadcasting ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-teal-600 hover:bg-teal-700'} text-white`}
+          >
+            {broadcasting ? '⏹ Stop Sharing' : '📺 Share Screen'}
+          </button>
+          <button
             onClick={() => lesson && endLesson.mutate(lesson.id)}
             disabled={endLesson.isPending || !lesson}
             className="btn btn-sm bg-red-600 text-white hover:bg-red-700 border-0"
@@ -748,6 +823,13 @@ export default function ActiveLesson() {
             studentIds: Array.from(selected), targetUrl, durationMinutes,
           })}
         />
+      )}
+
+      {broadcastError && (
+        <div className="bg-red-50 border-b border-red-200 px-6 py-2 flex items-center justify-between">
+          <span className="text-sm text-red-700">{broadcastError}</span>
+          <button onClick={() => setBroadcastError(null)} className="text-red-400 hover:text-red-600 text-sm">✕</button>
+        </div>
       )}
 
       {/* Raised hands */}
