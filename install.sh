@@ -238,16 +238,19 @@ docker compose build --parallel
 
 section "Step 6 — Start services"
 info "Starting postgres and redis first..."
-docker compose up -d postgres redis
+timeout 60 docker compose up -d postgres redis || error "docker compose up -d postgres redis timed out after 60s — check: docker compose logs postgres"
 
 # On a brand new volume, TimescaleDB auto-tunes itself and restarts once
 # during its very first init (separate from our own db-init script) — a
 # bare `pg_isready` can catch it ready during that restart's brief window
 # and falsely report success right before it bounces. `--wait` polls the
 # real Compose healthcheck (which needs several consecutive successful
-# checks, not just one) so it rides out that blip correctly.
+# checks, not just one) so it rides out that blip correctly. Also
+# `timeout`-wrapped on top of `--wait`'s own bound — `--wait` bounds how long
+# it waits on the *container's* healthcheck, not how long the `docker compose`
+# CLI call itself can hang talking to a slow/contended daemon.
 info "Waiting for postgres to be healthy..."
-if ! docker compose up -d --wait postgres redis; then
+if ! timeout 120 docker compose up -d --wait postgres redis; then
   error "PostgreSQL/Redis did not become healthy in time — check: docker compose logs postgres"
 fi
 info "PostgreSQL is ready"
@@ -256,8 +259,18 @@ info "PostgreSQL is ready"
 # Ensure Postgres SSL is enabled so replication and join credential exchange
 # are always encrypted.  ssl=on is a postmaster parameter — needs a full
 # restart to take effect, done here once, transparently.
+#
+# Every `docker`/`docker compose` call in this section is `timeout`-wrapped
+# with a clear before/after `info` marker. This isn't defensive paranoia —
+# on the primary node's own real update history, the automated run has
+# repeatedly died with ZERO captured error, silently, somewhere in this
+# script, with no way to tell which command was actually stuck (see
+# infrastructure/update-watcher/update-watcher.sh's comments). A hang here
+# now fails loudly with "X timed out after Ns" naming the exact command,
+# instead of leaving a truncated log and no clue.
 # ---------------------------------------------------------------------------
-SSL_STATUS=$(docker exec classguard-postgres psql -U classguard classguard -tAc "SHOW ssl;" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+info "Checking Postgres SSL status..."
+SSL_STATUS=$(timeout 30 docker exec classguard-postgres psql -U classguard classguard -tAc "SHOW ssl;" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
 if [[ "$SSL_STATUS" != "on" ]]; then
   info "Enabling Postgres SSL (one-time setup — requires a brief restart)..."
   # Generate cert on the host (the Postgres image doesn't include openssl)
@@ -266,10 +279,10 @@ if [[ "$SSL_STATUS" != "on" ]]; then
     -subj '/CN=classguard-postgres' \
     -keyout /tmp/pg-server.key \
     -out /tmp/pg-server.crt >/dev/null 2>&1
-  docker cp /tmp/pg-server.key classguard-postgres:/var/lib/postgresql/data/server.key
-  docker cp /tmp/pg-server.crt classguard-postgres:/var/lib/postgresql/data/server.crt
+  timeout 30 docker cp /tmp/pg-server.key classguard-postgres:/var/lib/postgresql/data/server.key
+  timeout 30 docker cp /tmp/pg-server.crt classguard-postgres:/var/lib/postgresql/data/server.crt
   rm -f /tmp/pg-server.key /tmp/pg-server.crt
-  docker exec classguard-postgres bash -c "
+  timeout 30 docker exec classguard-postgres bash -c "
     chown postgres:postgres /var/lib/postgresql/data/server.key /var/lib/postgresql/data/server.crt
     chmod 600 /var/lib/postgresql/data/server.key /var/lib/postgresql/data/server.crt
     if grep -q '^#ssl = off' /var/lib/postgresql/data/postgresql.conf 2>/dev/null; then
@@ -278,11 +291,17 @@ if [[ "$SSL_STATUS" != "on" ]]; then
       echo 'ssl = on' >> /var/lib/postgresql/data/postgresql.conf
     fi
   "
-  docker compose restart postgres
+  timeout 30 docker compose restart postgres
   info "Waiting for Postgres to restart with SSL..."
-  until docker exec classguard-postgres pg_isready -U classguard >/dev/null 2>&1; do
+  SSL_WAIT_OK=false
+  for i in $(seq 1 60); do
+    if timeout 5 docker exec classguard-postgres pg_isready -U classguard >/dev/null 2>&1; then
+      SSL_WAIT_OK=true
+      break
+    fi
     sleep 1
   done
+  [[ "$SSL_WAIT_OK" == "true" ]] || error "Postgres did not come back up within 60s after enabling SSL — check: docker compose logs postgres"
   info "Postgres SSL enabled"
 fi
 
@@ -295,7 +314,8 @@ if [[ "$NODE_ROLE_CURRENT" == "standby" ]]; then
   info "NODE_ROLE=standby — skipping migrations (replica is read-only, schema synced via replication)"
 else
   info "Running database migrations..."
-  docker compose run --rm migrate
+  timeout 300 docker compose run --rm migrate || error "Migrations timed out or failed after 300s — check: docker compose logs migrate"
+  info "Migrations step finished"
 fi
 
 info "Starting remaining services..."
@@ -304,10 +324,11 @@ info "Starting remaining services..."
 # only bring up the services that are actually safe/useful on a standby.
 if [[ "$NODE_ROLE_CURRENT" == "standby" ]]; then
   info "NODE_ROLE=standby — starting redis/api/dns/frontend only (skipping kea)"
-  docker compose up -d redis api dns frontend
+  timeout 180 docker compose up -d redis api dns frontend || error "docker compose up -d timed out after 180s — check: docker compose ps / docker compose logs"
 else
-  docker compose up -d
+  timeout 180 docker compose up -d || error "docker compose up -d timed out after 180s — check: docker compose ps / docker compose logs"
 fi
+info "Remaining services started"
 
 # ---------------------------------------------------------------------------
 # 6. Wait for API to be healthy
