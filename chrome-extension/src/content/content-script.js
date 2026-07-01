@@ -372,6 +372,13 @@
     if (_activeThread) select.value = _activeThread;
   }
 
+  function formatBytes(n) {
+    if (n == null) return '';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+  }
+
   function renderMessages() {
     const container = document.getElementById('cg-chat-messages');
     if (!container) return;
@@ -381,14 +388,35 @@
     }
     container.innerHTML = _messages.map(m => {
       const mine = m.sender_id === _selfId;
-      const text = m.deleted ? '<em style="color:#94a3b8;">message deleted</em>' : escapeHtml(m.body);
+      const bodyHtml = m.deleted
+        ? '<em style="color:#94a3b8;">message deleted</em>'
+        : (m.body ? escapeHtml(m.body) : '');
+      const attachmentHtml = (!m.deleted && m.attachment_name) ? `
+        <div data-attachment-id="${m.id}" data-attachment-name="${escapeHtml(m.attachment_name)}"
+          style="margin-top:4px;font-size:12px;text-decoration:underline;cursor:pointer;
+          color:${mine ? '#dbeafe' : '#1a56db'};">
+          📎 ${escapeHtml(m.attachment_name)} (${formatBytes(m.attachment_size)})
+        </div>` : '';
       return `<div style="margin-bottom:8px;display:flex;justify-content:${mine ? 'flex-end' : 'flex-start'};">
         <div style="max-width:75%;padding:6px 10px;border-radius:10px;font-size:13px;
-          background:${mine ? '#1a56db' : '#e2e8f0'};color:${mine ? '#fff' : '#1e293b'};">${text}</div>
+          background:${mine ? '#1a56db' : '#e2e8f0'};color:${mine ? '#fff' : '#1e293b'};">${bodyHtml}${attachmentHtml}</div>
       </div>`;
     }).join('');
     container.scrollTop = container.scrollHeight;
   }
+
+  // Delegated click handler for attachment downloads -- renderMessages()
+  // replaces container.innerHTML wholesale on every update, so a listener
+  // bound directly to an attachment div would be lost on the next render.
+  document.addEventListener('click', (e) => {
+    const el = e.target.closest?.('[data-attachment-id]');
+    if (!el) return;
+    chrome.runtime.sendMessage({
+      type: 'CG_CHAT_DOWNLOAD_ATTACHMENT',
+      messageId: el.dataset.attachmentId,
+      filename:  el.dataset.attachmentName,
+    }).catch(() => {});
+  });
 
   let _selfId = null;
 

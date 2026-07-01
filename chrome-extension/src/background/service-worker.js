@@ -467,6 +467,30 @@ async function raiseHand() {
 }
 
 // ---------------------------------------------------------------------------
+// Chat attachment download — chrome.downloads.download() only supports
+// plain URLs, no request body/response handling, but it DOES support
+// custom request headers (since Chrome 91), which is enough to attach the
+// same Bearer JWT apiFetch() uses. Simpler and more robust than fetching
+// the file into memory in the service worker just to hand it back out
+// again as a blob URL.
+// ---------------------------------------------------------------------------
+async function downloadChatAttachment(messageId, filename) {
+  const jwt = await getStoredJWT();
+  if (!jwt) return { ok: false };
+  const base = await getServerUrl();
+  try {
+    await chrome.downloads.download({
+      url: `${base}/api/v1/chat/messages/${messageId}/attachment`,
+      filename: filename || undefined,
+      headers: [{ name: 'Authorization', value: `Bearer ${jwt}` }],
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Heartbeat
 // ---------------------------------------------------------------------------
 function queryIdleState() {
@@ -684,6 +708,9 @@ async function handleMessage(msg, sender) {
 
     case 'CG_RAISE_HAND':
       return await raiseHand();
+
+    case 'CG_CHAT_DOWNLOAD_ATTACHMENT':
+      return await downloadChatAttachment(msg.messageId, msg.filename);
 
     default:
       return { error: 'Unknown message type' };

@@ -101,10 +101,30 @@ function TestUrlPanel({ studentId }) {
   );
 }
 
+// The API only accepts a Bearer header, not a cookie — a plain <a href>
+// to an authenticated route would 401. Same fetch+blob+createObjectURL
+// pattern ReportsPage.jsx already uses for PDF downloads.
+async function downloadAttachment(messageId, filename) {
+  const token = localStorage.getItem('cg_token');
+  const res = await fetch(`/api/v1/chat/messages/${messageId}/attachment`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return;
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename || 'file';
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 function ChatPanel({ threadId, onClose, socket, selfId }) {
   const qc = useQueryClient();
   const [input, setInput] = useState('');
+  const [attachError, setAttachError] = useState(null);
   const listRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   const { data: thread } = useQuery({
     queryKey: ['chat-thread', threadId],
@@ -143,10 +163,46 @@ function ChatPanel({ threadId, onClose, socket, selfId }) {
     },
   });
 
+  // 25 MB cap mirrors the backend's own limit (routes/chat.js) — checked
+  // here too so a student/teacher on a slow connection gets an immediate
+  // error instead of uploading most of an oversized file before the server
+  // rejects it.
+  const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+  const sendFile = useMutation({
+    mutationFn: (file) => {
+      const form = new FormData();
+      form.append('file', file);
+      return api.post(`/chat/threads/${threadId}/messages/attachment`, form);
+    },
+    onSuccess: (msg) => {
+      qc.setQueryData(['chat-messages', threadId], (prev = []) => [...prev, msg]);
+      setAttachError(null);
+    },
+    onError: (e) => setAttachError(e.message || 'Upload failed'),
+  });
+
   const submit = () => {
     const body = input.trim();
     if (!body) return;
     send.mutate(body);
+  };
+
+  const onFileChosen = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      setAttachError('File too large (max 25 MB)');
+      return;
+    }
+    sendFile.mutate(file);
+  };
+
+  const formatBytes = (n) => {
+    if (n == null) return '';
+    if (n < 1024) return `${n} B`;
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(0)} KB`;
+    return `${(n / (1024 * 1024)).toFixed(1)} MB`;
   };
 
   const title = thread?.type === 'group'
@@ -182,7 +238,21 @@ function ChatPanel({ threadId, onClose, socket, selfId }) {
                     <div className="text-xs text-slate-400 mb-0.5">{sender?.full_name || '—'}</div>
                   )}
                   <div className={`text-sm px-3 py-1.5 rounded-xl ${mine ? 'bg-blue-600 text-white' : 'bg-white border border-slate-200 text-slate-700'}`}>
-                    {m.deleted ? <em className="text-slate-400">message deleted</em> : m.body}
+                    {m.deleted ? (
+                      <em className="text-slate-400">message deleted</em>
+                    ) : (
+                      <>
+                        {m.body && <div>{m.body}</div>}
+                        {m.attachment_name && (
+                          <button
+                            onClick={() => downloadAttachment(m.id, m.attachment_name)}
+                            className={`flex items-center gap-1.5 text-xs mt-1 underline ${mine ? 'text-blue-100' : 'text-blue-600'}`}
+                          >
+                            📎 {m.attachment_name} ({formatBytes(m.attachment_size)})
+                          </button>
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
               </div>
@@ -190,7 +260,19 @@ function ChatPanel({ threadId, onClose, socket, selfId }) {
           })}
         </div>
 
+        {attachError && (
+          <div className="px-3 py-1.5 text-xs text-red-600 bg-red-50 border-t border-red-100">{attachError}</div>
+        )}
         <div className="flex gap-2 p-3 border-t border-slate-100">
+          <input ref={fileInputRef} type="file" onChange={onFileChosen} className="hidden" />
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            disabled={sendFile.isPending}
+            title="Attach a file"
+            className="btn btn-sm btn-secondary px-3 disabled:opacity-40"
+          >
+            📎
+          </button>
           <input value={input} onChange={e => setInput(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && submit()}
             placeholder="Type a message…" maxLength={2000}
