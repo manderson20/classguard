@@ -18,6 +18,79 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.9.3] - 2026-06-30
+
+### Added
+
+- **Mosyle asset-tag writeback** — pushes Snipe-IT asset tags to Mosyle Apple devices (iPads, Macs, AppleTVs) wherever the tag is currently blank, via Mosyle Manager API v2 (`POST /v2/devices`). Nightly 2:30am automation refreshes Mosyle/Snipe-IT source data and re-runs the cross-sync to catch newly enrolled devices. Superadmins get an email alert when the count of MDM devices missing from Snipe-IT changes.
+
+### Fixed
+
+- **Fleet cross-sync** made async to avoid nginx's 60s `proxy_read_timeout` on large device counts; the Cross-Sync page now polls `fleet_sync_log` instead of waiting on the request.
+
+### Security
+
+- Resolved all 73 CodeQL security/quality alerts: LDAP injection, reflected/DOM XSS, prototype pollution via unkeyed object maps (converted to `Map`), log injection, loop-bound injection, type confusion, incomplete URL sanitization, missing rate limiting on `/health`/`/metrics`, a TOCTOU file race in ACME cert issuance, an insecure predictable temp-file path, and per-controller TLS certificate validation for UniFi/Ruckus/Aruba/OneRoster.
+
+---
+
+## [0.9.2] - 2026-06-30
+
+### Added
+
+- **ClassPulse — Phase 7 (reports + admin config)**: session summary PDF report (`classpulse_session` type) with participation stats, per-question response breakdown, and student roster; ClassPulse admin config page (`/admin/classpulse`, gated on the `classpulse` permission) for response retention period, lesson sharing policy, and a drawing-canvas toggle (planned); `classpulse` permission surfaced in the custom roles UI.
+
+### Fixed
+
+- ClassPulse settings decoupled from the general `settings` permission into dedicated `classpulse`-gated endpoints; daily 3:30am cron purges responses past the configured retention window; `own_only` lesson sharing now enforced on both listing and share requests; live multiple-choice response de-duplication fixed to match by `studentId`; off-task alerts show the correct student name and tab title.
+
+---
+
+## [0.9.1] - 2026-06-30
+
+### Added
+
+- **ClassPulse — Phase 6 (live teacher dashboard)**: `TeachSession.jsx`, a full-screen socket-driven session view with an animated SVG Class Pulse Score gauge (color-coded by tier), student presence/help-request/off-task panels, live multiple-choice bar charts and an anonymized short-answer feed with flag/hide moderation, slide navigation with jump-to-slide, classroom lock/unlock, and an end-session flow showing the final Pulse Score.
+
+---
+
+## [0.9.0] - 2026-06-30
+
+### Added
+
+- **ClassPulse — Phase 5 (Lesson Builder UI)**: ClassPulse Hub (stats + quick-launch), Lesson Library (search/status/tag filters, duplicate/archive/delete), and a two-panel Lesson Builder with drag-reorder slides and inline editors for all four MVP question types (Multiple Choice, True/False, Short Answer, Exit Ticket).
+- **ClassPulse — Phase 4 (student join page)**: public route at `/pulse/:code`, rendered outside the authenticated app shell, with real-time slide/question sync and MVP question renderers over the existing socket connection.
+
+---
+
+## [0.8.7] - 2026-06-30
+
+### Added
+
+- **ClassPulse — Phases 1–3 (data layer + APIs)**: database schema (migration 091, 9 tables) and core service (join-code generation, Class Pulse Score calculation, response aggregation); full Lesson/Page/Question CRUD API with a new `classpulse` permission key; session lifecycle API (start/next/previous/goto/end), student join flow, classroom-lock integration reusing the existing extension lock endpoints, response moderation (flag/hide), and socket rooms with live Pulse Score broadcasting bridged from Classroom off-task events.
+
+---
+
+## [0.8.6] - 2026-06-30
+
+### Added
+
+- **Infosec IQ Cybersecurity Awareness report** — fleet summary stats, grade distribution, full phishing campaign history, and a high-risk learner list (D/F grade or risk score ≥ 70).
+
+### Fixed
+
+- **Infosec IQ integration status** — `/integrations/status` never returned an `infoseciq` key, so the Integrations overview card and System Health page always showed "Not configured"/offline regardless of actual sync state.
+
+---
+
+## [0.8.5] - 2026-06-30
+
+### Fixed
+
+- **Parent Filter Report** — was gated on the `screenshots` permission instead of `reports`, 403ing admins who had report access but not screenshot access. Replaced the easy-to-miss inline expansion with a proper modal (date range defaulting to last 30 days, student confirmation, visible error banner); PDF filename now uses the student's name instead of their UUID.
+
+---
+
 ## [0.8.4] - 2026-06-30
 
 ### Added
@@ -33,6 +106,10 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 ### Added
 
 - **Dry Run Mode** — superadmin-only troubleshooting mode that bypasses all DNS filtering (blocklist, content categories, lesson mode, penalty box, per-student/subnet policy) while DNS still resolves through ClassGuard. Queries that would have been blocked are logged with `action = dry_run_blocked` for post-session review. Requires typing `CONFIRM` to activate; auto-expires at a configurable interval (30 min, 1 hr, 2 hr, 4 hr). An orange banner in the admin layout warns all admins while a dry-run window is active, with a one-click disable for superadmins.
+
+### Removed
+
+- **Tech Lab** — extracted into its own standalone application. Routes, pages, and the `student_technician` role removed from ClassGuard. Migration 081's DB tables are left in place on existing deployments and can be dropped manually.
 
 ---
 
