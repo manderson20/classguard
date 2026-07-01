@@ -514,6 +514,13 @@ export default function LessonBuilder() {
     setCreating(true);
     api.post('/classpulse/lessons', { title: 'Untitled Lesson', status: 'draft' })
       .then(created => {
+        // React Router preserves this component's state across the
+        // /lessons/new -> /lessons/:id/edit navigate() (it doesn't remount),
+        // so `creating` must be reset here on success too -- the render
+        // guard below checks `creating` first, and it previously only ever
+        // got reset in the .catch() branch, leaving a real, successfully
+        // created+loaded lesson stuck on "Creating lesson..." forever.
+        setCreating(false);
         navigate(`/classpulse/lessons/${created.id}/edit`, { replace: true });
       })
       .catch(e => {
