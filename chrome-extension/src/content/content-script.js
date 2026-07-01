@@ -123,6 +123,8 @@
       hideLockOverlay();
     } else if (msg.type === 'CG_CHAT_MESSAGE') {
       onIncomingChatMessage(msg.threadId, msg.message);
+    } else if (msg.type === 'CG_LESSON_STATE') {
+      setLessonState(msg.inActiveLesson);
     }
   });
 
@@ -293,6 +295,62 @@
     document.getElementById('cg-chat-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') sendChatMessage();
     });
+
+    buildRaiseHandButton();
+  }
+
+  // Raise hand — a separate fixed-position button (not inside #cg-chat-root,
+  // which is exactly chat-bubble-sized) sitting to the left of the chat
+  // bubble along the same row. Hidden unless the student is actually in an
+  // active lesson right now (see CG_LESSON_STATE / setLessonState below) --
+  // raising a hand outside a lesson has no teacher dashboard to reach.
+  let _inActiveLesson = false;
+  let _handRaised = false;
+
+  function buildRaiseHandButton() {
+    if (document.getElementById('cg-raisehand-bubble')) return;
+    const btn = document.createElement('div');
+    btn.id = 'cg-raisehand-bubble';
+    btn.style.cssText = `
+      position:fixed;bottom:16px;right:76px;width:48px;height:48px;border-radius:50%;
+      background:#ca8a04;color:#fff;display:none;align-items:center;justify-content:center;
+      font-size:22px;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,0.25);
+      z-index:2147483646;font:14px system-ui,sans-serif;`;
+    btn.title = 'Raise hand';
+    btn.textContent = '🖐';
+    btn.addEventListener('click', onRaiseHandClick);
+    document.documentElement.appendChild(btn);
+  }
+
+  function setLessonState(inActiveLesson) {
+    _inActiveLesson = inActiveLesson;
+    if (!inActiveLesson) _handRaised = false;
+    const btn = document.getElementById('cg-raisehand-bubble');
+    if (!btn) return;
+    btn.style.display = inActiveLesson ? 'flex' : 'none';
+    renderRaiseHandButton();
+  }
+
+  function renderRaiseHandButton() {
+    const btn = document.getElementById('cg-raisehand-bubble');
+    if (!btn) return;
+    btn.textContent = _handRaised ? '✓' : '🖐';
+    btn.style.background = _handRaised ? '#16a34a' : '#ca8a04';
+    btn.style.cursor = _handRaised ? 'default' : 'pointer';
+  }
+
+  async function onRaiseHandClick() {
+    if (_handRaised || !_inActiveLesson) return;
+    _handRaised = true;
+    renderRaiseHandButton();
+    const res = await chrome.runtime.sendMessage({ type: 'CG_RAISE_HAND' }).catch(() => null);
+    if (!res?.ok) {
+      // Failed silently (e.g. lesson ended between click and send) -- reset
+      // so the student can try again rather than being stuck on a false
+      // "raised" state.
+      _handRaised = false;
+      renderRaiseHandButton();
+    }
   }
 
   function renderBadge() {
@@ -401,5 +459,20 @@
     _selfId = status.user.id;
     buildChatWidget();
     refreshThreads();
+
+    // Same reasoning as cg_locked above — a lesson that started before this
+    // tab existed (or before this content script re-injected) wouldn't
+    // otherwise reach this tab via the CG_LESSON_STATE broadcast, since the
+    // service worker only messages tabs that are already open at that
+    // moment. chrome.storage.local is the source of truth, checked here too.
+    chrome.storage.local.get('cg_in_lesson', (data) => {
+      if (data.cg_in_lesson) setLessonState(true);
+    });
+    if (chrome.storage.onChanged) {
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'local' || !('cg_in_lesson' in changes)) return;
+        setLessonState(!!changes.cg_in_lesson.newValue);
+      });
+    }
   });
 }());
