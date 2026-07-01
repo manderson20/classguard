@@ -17,6 +17,7 @@ RUN apt-get update && apt-get install -y \
       kea-common=${KEA_VERSION} \
       postgresql-client \
       gettext-base \
+      curl \
     && apt-mark hold kea-dhcp4-server kea-dhcp6-server kea-ctrl-agent kea-admin kea-common \
     && rm -rf /var/lib/apt/lists/*
 
