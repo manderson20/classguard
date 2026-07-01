@@ -90,4 +90,18 @@ fi
 LOG_JSON=$(jq -Rs --arg status "$FINAL_STATUS" '{status: $status, log: .}' < <(tail -c 4000 "$LOG_FILE"))
 curl -sf -X POST http://localhost:3001/api/v1/ha/update-complete \
   -H "Content-Type: application/json" -d "$LOG_JSON" || true
+
+if [ "$FINAL_STATUS" = "failed" ]; then
+  # Keep the FULL log on disk for a failed run. In practice these have all
+  # been well under the 4000-byte cap sent to the DB above (see install.sh's
+  # `timeout`-wrapped Step 6 commands — a hang now fails loudly with its own
+  # marker instead of silently eating minutes with zero output), but keep
+  # this as a hedge for any future run whose real output exceeds that. /var/log
+  # survives reboots (/tmp may not, depending on the distro's tmp-on-tmpfs setup).
+  FAIL_LOG_DIR="/var/log/classguard-updates"
+  mkdir -p "$FAIL_LOG_DIR"
+  cp "$LOG_FILE" "$FAIL_LOG_DIR/update-failed-$(date -u +%Y%m%dT%H%M%SZ).log"
+  # Retention: keep only the 20 most recent failure logs.
+  ls -1t "$FAIL_LOG_DIR"/update-failed-*.log 2>/dev/null | tail -n +21 | xargs -r rm -f
+fi
 rm -f "$LOG_FILE"
