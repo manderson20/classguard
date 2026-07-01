@@ -227,6 +227,28 @@ function LockdownForm({ count, onClose, onStart }) {
   );
 }
 
+function RaisedHandsBanner({ raisedHands, members, onDismiss, onFullScreen }) {
+  if (raisedHands.size === 0) return null;
+  const entries = [...raisedHands.entries()].sort((a, b) => a[1] - b[1]);
+  return (
+    <div className="bg-yellow-50 border-b border-yellow-200 px-6 py-2.5 flex items-center gap-2 flex-wrap">
+      <span className="text-sm text-yellow-800 font-medium whitespace-nowrap">🖐 Raised hands —</span>
+      {entries.map(([studentId]) => {
+        const student = members.find(m => m.id === studentId);
+        return (
+          <div key={studentId} className="flex items-center gap-1.5 bg-white border border-yellow-300 rounded-full pl-1 pr-2 py-1">
+            <Avatar photoUrl={student?.photo_url} name={student?.full_name} email={student?.email} className="w-5 h-5 text-[10px]" />
+            <button onClick={() => onFullScreen(student)} className="text-xs font-medium text-yellow-900 hover:underline">
+              {student?.full_name || 'Unknown student'}
+            </button>
+            <button onClick={() => onDismiss(studentId)} className="text-yellow-500 hover:text-yellow-700 text-xs ml-1">✕</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function RandomPickerBanner({ picked, onPickAgain, onClose, exhausted }) {
   return (
     <div className="bg-purple-50 border-b border-purple-200 px-6 py-3 flex items-center gap-3">
@@ -405,6 +427,7 @@ export default function ActiveLesson() {
   const [pickedIds, setPickedIds] = useState(new Set());
   const [pickExhausted, setPickExhausted] = useState(false);
   const [fullScreenStudent, setFullScreenStudent] = useState(null);
+  const [raisedHands, setRaisedHands] = useState(new Map());
 
   const toggleSelect = (studentId) => {
     setSelected(prev => {
@@ -460,12 +483,25 @@ export default function ActiveLesson() {
       setLockdownEventCounts(prev => ({ ...prev, [data.studentId]: (prev[data.studentId] || 0) + 1 }));
     };
     socket.on('lockdown:event', lockdownHandler);
+    const raiseHandHandler = (data) => {
+      setRaisedHands(prev => new Map(prev).set(data.studentId, data.ts));
+    };
+    socket.on('student:raise_hand', raiseHandHandler);
     return () => {
       socket.off('student:activity', handler);
       socket.off('lockdown:event', lockdownHandler);
+      socket.off('student:raise_hand', raiseHandHandler);
       socket.emit('leave:class', classId);
     };
   }, [socket, classId]);
+
+  const dismissRaisedHand = (studentId) => {
+    setRaisedHands(prev => {
+      const next = new Map(prev);
+      next.delete(studentId);
+      return next;
+    });
+  };
 
   const startLockdown = useMutation({
     mutationFn: ({ studentIds, targetUrl, durationMinutes }) => api.post('/lockdown', {
@@ -622,6 +658,14 @@ export default function ActiveLesson() {
           })}
         />
       )}
+
+      {/* Raised hands */}
+      <RaisedHandsBanner
+        raisedHands={raisedHands}
+        members={members}
+        onDismiss={dismissRaisedHand}
+        onFullScreen={(s) => { dismissRaisedHand(s.id); setFullScreenStudent(s); }}
+      />
 
       {/* Random student picker */}
       {pickerOpen && (

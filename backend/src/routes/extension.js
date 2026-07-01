@@ -403,7 +403,28 @@ router.post('/tab-event', authenticate, async (req, res) => {
     ts,
   });
 
-  res.json({ ok: true, requestScreenshot, riskCategory });
+  // inActiveLesson piggybacks on lessonSessionId, already computed above for
+  // the Redis stream tag — lets the extension know whether to show the
+  // Raise Hand button without a separate polling endpoint, since tab-event
+  // already fires on every navigation.
+  res.json({ ok: true, requestScreenshot, riskCategory, inActiveLesson: !!lessonSessionId });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/v1/extension/raise-hand
+// Student signals for help/attention during an active lesson. Ephemeral —
+// no persistence, same as ClassPulse's own classpulse:help_request — this
+// is a live nudge to the teacher's dashboard, not an accountability record.
+// No-ops (still 200) if the student isn't actually in an active lesson right
+// now, so a stale client can't spam a request that goes nowhere.
+// ---------------------------------------------------------------------------
+router.post('/raise-hand', authenticate, async (req, res) => {
+  const studentId = req.user.userId;
+  const lessonSessionId = await getActiveLessonSessionId(studentId).catch(() => null);
+  if (lessonSessionId) {
+    events.emit('student:raise_hand', { studentId, ts: Date.now() });
+  }
+  res.json({ ok: true });
 });
 
 // ---------------------------------------------------------------------------

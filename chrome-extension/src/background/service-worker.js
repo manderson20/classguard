@@ -370,6 +370,9 @@ async function onTabUpdated(tabId, changeInfo, tab) {
     if (res?.requestScreenshot) {
       captureAndUpload({ trigger: 'risky_category', triggerDetail: res.riskCategory, tabId });
     }
+    if (typeof res?.inActiveLesson === 'boolean') {
+      updateLessonState(res.inActiveLesson);
+    }
   }).catch(() => {});
   rememberTab(tabId, tab.url, tab.title || '').catch(() => {});
 
@@ -436,6 +439,31 @@ async function broadcastChatMessage(data) {
   for (const tab of tabs) {
     chrome.tabs.sendMessage(tab.id, { type: 'CG_CHAT_MESSAGE', ...data }).catch(() => {});
   }
+}
+
+// ---------------------------------------------------------------------------
+// Raise hand — piggybacks on /tab-event's response (see onTabUpdated above)
+// rather than a separate polling endpoint, since tab-event already fires on
+// every navigation. Only broadcasts to tabs when the state actually changes,
+// so a routine navigation inside the same active lesson doesn't re-message
+// every tab on every page load. chrome.storage.local (not an in-memory
+// variable) so a fresh tab's content script can read the current state
+// immediately on load, same reasoning as cg_locked.
+// ---------------------------------------------------------------------------
+async function updateLessonState(inActiveLesson) {
+  const { cg_in_lesson: prev } = await chrome.storage.local.get('cg_in_lesson');
+  if (prev === inActiveLesson) return;
+  await chrome.storage.local.set({ cg_in_lesson: inActiveLesson });
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    chrome.tabs.sendMessage(tab.id, { type: 'CG_LESSON_STATE', inActiveLesson }).catch(() => {});
+  }
+}
+
+async function raiseHand() {
+  const jwt = await getStoredJWT();
+  if (!jwt) return { ok: false };
+  return apiFetch('/extension/raise-hand', { method: 'POST', jwt }).catch(() => ({ ok: false }));
 }
 
 // ---------------------------------------------------------------------------
@@ -653,6 +681,9 @@ async function handleMessage(msg, sender) {
         return { ok: false, error: e.message };
       }
     }
+
+    case 'CG_RAISE_HAND':
+      return await raiseHand();
 
     default:
       return { error: 'Unknown message type' };

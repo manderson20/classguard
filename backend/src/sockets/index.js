@@ -231,6 +231,22 @@ const setupSockets = (io) => {
     } catch {}
   });
 
+  // Raise hand: same class-room fanout as student:screenshot above. Ephemeral
+  // (see routes/extension.js's /raise-hand) — nothing persisted, this is
+  // just a live nudge to whichever teacher dashboards have this class open.
+  events.on('student:raise_hand', async ({ studentId, ts }) => {
+    if (!studentId) return;
+    try {
+      const cacheKey = `student:classes:${studentId}`;
+      const cached   = await redis.get(cacheKey);
+      const classIds = cached ? JSON.parse(cached) : [];
+      const payload  = { studentId, ts };
+      for (const classId of classIds) {
+        io.to(`class:${classId}`).emit('student:raise_hand', payload);
+      }
+    } catch {}
+  });
+
   // High-severity safety event (risk_score >= 85) — broadcast to every
   // logged-in staff member immediately, not just the student's own
   // teachers, since self-harm/violence-tier content warrants everyone
