@@ -70,6 +70,8 @@ async function init() {
       onOpenTabRequest:  (data) => openTab(data?.url),
       onCloseTabRequest: () => closeTab(),
       onChatMessage:     (data) => broadcastChatMessage(data),
+      onBroadcastFrame:  (data) => broadcastScreenFrame(data),
+      onBroadcastEnd:    (data) => broadcastScreenEnd(data),
     });
   } else {
     await authenticate();
@@ -120,6 +122,8 @@ async function authenticate() {
       onOpenTabRequest:  (data) => openTab(data?.url),
       onCloseTabRequest: () => closeTab(),
       onChatMessage:     (data) => broadcastChatMessage(data),
+      onBroadcastFrame:  (data) => broadcastScreenFrame(data),
+      onBroadcastEnd:    (data) => broadcastScreenEnd(data),
     });
 
     await apiFetch('/extension/register', {
@@ -298,6 +302,8 @@ async function onAlarm(alarm) {
           onOpenTabRequest:  (data) => openTab(data?.url),
           onCloseTabRequest: () => closeTab(),
           onChatMessage:     (data) => broadcastChatMessage(data),
+      onBroadcastFrame:  (data) => broadcastScreenFrame(data),
+      onBroadcastEnd:    (data) => broadcastScreenEnd(data),
         });
       }
     }
@@ -438,6 +444,23 @@ async function broadcastChatMessage(data) {
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
     chrome.tabs.sendMessage(tab.id, { type: 'CG_CHAT_MESSAGE', ...data }).catch(() => {});
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Screen broadcasting — same broadcast-to-all-tabs pattern as chat/lock.
+// ---------------------------------------------------------------------------
+async function broadcastScreenFrame(data) {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    chrome.tabs.sendMessage(tab.id, { type: 'CG_BROADCAST_FRAME', ...data }).catch(() => {});
+  }
+}
+
+async function broadcastScreenEnd(data) {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    chrome.tabs.sendMessage(tab.id, { type: 'CG_BROADCAST_END', ...data }).catch(() => {});
   }
 }
 
