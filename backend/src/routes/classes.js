@@ -80,10 +80,14 @@ router.patch('/:id', requireMinRole('admin'), requirePermissionIfAdmin('classes'
   const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
   if (fields.length === 0) return res.status(400).json({ error: 'No updatable fields' });
 
+  // classes has no updated_at column (unlike most other tables in this
+  // schema) -- found live 2026-07-01: this route 500'd on every real call,
+  // "column updated_at of relation classes does not exist", since it was
+  // apparently never actually exercised before.
   const sets   = fields.map((f, i) => `${f} = $${i + 2}`).join(', ');
   const values = fields.map(f => req.body[f]);
   const { rows } = await query(
-    `UPDATE classes SET ${sets}, updated_at = NOW() WHERE id = $1 RETURNING *`,
+    `UPDATE classes SET ${sets} WHERE id = $1 RETURNING *`,
     [req.params.id, ...values]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Class not found' });
@@ -95,6 +99,32 @@ router.delete('/:id', requireMinRole('admin'), requirePermissionIfAdmin('classes
   const { rows } = await query('DELETE FROM classes WHERE id = $1 RETURNING id', [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'Class not found' });
   res.json({ deleted: rows[0].id });
+});
+
+// PATCH /api/v1/classes/:id/auto-start  body: { auto_start_lessons }
+// Teacher-facing (unlike the general PATCH /:id above, which is
+// admin-only) -- toggles whether services/scheduler.js's per-minute
+// bell-schedule cron auto-starts a lesson_sessions row for this class when
+// its matching bell_schedule_periods window begins. Owning teacher or
+// admin only. A teacher manually starting a lesson (POST /:id/lessons,
+// whenever that happens to be) always takes precedence -- the cron only
+// ever creates a session if this class doesn't already have an active one,
+// so an early/late manual start is never overridden or duplicated.
+router.patch('/:id/auto-start', async (req, res) => {
+  const { auto_start_lessons } = req.body;
+  if (typeof auto_start_lessons !== 'boolean') {
+    return res.status(400).json({ error: 'auto_start_lessons (boolean) required' });
+  }
+  const { rows: [cls] } = await query('SELECT teacher_id FROM classes WHERE id = $1', [req.params.id]);
+  if (!cls) return res.status(404).json({ error: 'Class not found' });
+  if (req.user.role === 'teacher' && cls.teacher_id !== req.user.userId) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const { rows } = await query(
+    'UPDATE classes SET auto_start_lessons = $1 WHERE id = $2 RETURNING *',
+    [auto_start_lessons, req.params.id]
+  );
+  res.json(rows[0]);
 });
 
 // POST /api/v1/classes/:id/members  body: { user_id }
