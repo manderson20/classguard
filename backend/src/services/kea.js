@@ -122,11 +122,11 @@ async function getLeases() {
 }
 
 async function getLease(ip) {
-  const res = await keaCommand('lease4-get', 'dhcp4', {
-    'op-type': 'by-address',
-    ip,
-  });
-  return res.arguments?.lease ?? null;
+  // lease4-get's query-by-address param is 'ip-address' (not 'ip'/'op-type'
+  // — those aren't recognized params at all), and a found lease's fields
+  // sit directly on `arguments`, not nested under an `arguments.lease` key.
+  const res = await keaCommand('lease4-get', 'dhcp4', { 'ip-address': ip });
+  return res.arguments ?? null;
 }
 
 async function deleteLease(ip) {
@@ -251,11 +251,10 @@ async function getLeases6() {
 }
 
 async function getLease6(ip) {
-  const res = await keaCommand('lease6-get', 'dhcp6', {
-    'op-type': 'by-address',
-    ip,
-  });
-  return res.arguments?.lease ?? null;
+  // Same fix as getLease() above: 'ip-address' is the real param name, and
+  // the lease fields sit directly on `arguments`.
+  const res = await keaCommand('lease6-get', 'dhcp6', { 'ip-address': ip });
+  return res.arguments ?? null;
 }
 
 async function deleteLease6(ip) {
