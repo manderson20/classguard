@@ -13,7 +13,7 @@
     "@aws-sdk/client-route-53": "^3.1075.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "acme-client": "^5.4.0",
-    "axios": "^1.7.9",
+    "axios": "^1.18.1",
     "cors": "^2.8.5",
     "docx": "^9.1.0",
     "dotenv": "^17.4.2",
