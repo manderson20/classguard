@@ -450,6 +450,14 @@ function LessonHeader({ lesson, onSaved, canPresent }) {
             {open ? 'Close' : 'Edit info'}
           </button>
           <button
+            onClick={() => window.open(`/classpulse/lessons/${lesson.id}/preview`, '_blank', 'noopener')}
+            disabled={!canPresent}
+            title={canPresent ? 'See exactly what students will see (opens in a new tab)' : 'Add at least one slide first'}
+            className="btn btn-secondary text-sm disabled:opacity-40"
+          >
+            Preview
+          </button>
+          <button
             onClick={() => setPresenting(true)}
             disabled={!canPresent}
             title={canPresent ? 'Start a live session with this lesson' : 'Add at least one slide first'}
