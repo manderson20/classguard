@@ -109,6 +109,7 @@ app.use('/api/v1/dns',         require('./routes/dns'));
 app.use('/api/v1/dns',         require('./routes/dnsRecords'));
 app.use('/api/v1/penalty-box', require('./routes/penaltyBox'));
 app.use('/api/v1/classes',     require('./routes/classes'));
+app.use('/api/v1/scenes',      require('./routes/scenes'));
 app.use('/api/v1/extension',   require('./routes/extension'));
 app.use('/api/v1/sync',        require('./routes/sync'));
 app.use('/api/v1/dhcp',        require('./routes/dhcp'));
