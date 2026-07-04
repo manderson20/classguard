@@ -284,6 +284,9 @@ export default function TeachSession() {
     try {
       const data = await api.get(`/classpulse/sessions/${sessionId}/dashboard`);
       setDashboard(data);
+      // REST is authoritative (server upserts before emitting) — clearing the
+      // live-socket cache here means a hidden response can't linger merged in.
+      setLiveResponses({});
       setPulseScore(data.pulseScore);
       setLocked(data.session?.classroom_lock_enabled || false);
       if (data.session?.status === 'ended') setSessionEnded(true);
