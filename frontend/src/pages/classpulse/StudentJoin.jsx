@@ -105,7 +105,37 @@ export default function StudentJoin() {
     };
   }, [socket, joined, session]);
 
-  // Step 4: socket event listeners
+  // Authoritative page refresh — used by the socket push handler AND a slow
+  // poll below. The poll is the safety net: if the socket drops silently, a
+  // student must still follow the teacher within a few seconds rather than
+  // being stranded on a stale slide (teacher-paced sync is the contract).
+  const refreshCurrent = useCallback((resetFirst = false) => {
+    if (!session) return;
+    api.get(`/classpulse/sessions/${session.id}/current`)
+      .then(data => {
+        if (data.ended) { setSessionEnded(true); return; }
+        if (data.page) {
+          setCurrentPage(prev => {
+            if (!resetFirst && prev?.id === data.page.id) return prev;
+            return data.page;
+          });
+          const pre = {};
+          for (const q of data.page.questions || []) {
+            if (q.already_responded) pre[q.id] = true;
+          }
+          setSubmitted(prev => {
+            // Only wipe local state when the page actually changed
+            const changed = resetFirst || !currentPage || currentPage.id !== data.page.id;
+            return changed ? pre : prev;
+          });
+          if (resetFirst) setHelpSent(false);
+        }
+      })
+      .catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session, currentPage?.id]);
+
+  // Step 4: socket event listeners + poll fallback
   useEffect(() => {
     if (!socket || !joined) return;
 
@@ -115,21 +145,7 @@ export default function StudentJoin() {
       setSubmitted({});
       setHelpSent(false);
       // Fetch fresh to get already_responded per student
-      if (session) {
-        api.get(`/classpulse/sessions/${session.id}/current`)
-          .then(data => {
-            if (data.ended) { setSessionEnded(true); return; }
-            if (data.page) {
-              setCurrentPage(data.page);
-              const pre = {};
-              for (const q of data.page.questions || []) {
-                if (q.already_responded) pre[q.id] = true;
-              }
-              setSubmitted(pre);
-            }
-          })
-          .catch(() => {});
-      }
+      refreshCurrent(true);
     };
 
     const onSessionEnded = () => setSessionEnded(true);
@@ -137,11 +153,14 @@ export default function StudentJoin() {
     socket.on('classpulse:page_changed', onPageChanged);
     socket.on('classpulse:session_ended', onSessionEnded);
 
+    const poll = setInterval(() => refreshCurrent(false), 10_000);
+
     return () => {
       socket.off('classpulse:page_changed', onPageChanged);
       socket.off('classpulse:session_ended', onSessionEnded);
+      clearInterval(poll);
     };
-  }, [socket, joined, session]);
+  }, [socket, joined, session, refreshCurrent]);
 
   const submitResponse = useCallback(async (payload) => {
     if (!session) return;

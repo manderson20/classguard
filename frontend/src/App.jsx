@@ -81,6 +81,7 @@ import LessonBuilder      from './pages/classpulse/LessonBuilder';
 import TeachSession       from './pages/classpulse/TeachSession';
 import SessionResults     from './pages/classpulse/SessionResults';
 import LessonPreview      from './pages/classpulse/LessonPreview';
+import PresentSession     from './pages/classpulse/PresentSession';
 import StudentJoin        from './pages/classpulse/StudentJoin';
 import ClassPulseAdminPage from './pages/admin/ClassPulseAdminPage';
 
@@ -137,6 +138,9 @@ export default function App() {
       {/* Lesson preview — teacher-authed but OUTSIDE Layout, so the tab shows
           the same chrome-free shell students get at /pulse/:code */}
       <Route path="/classpulse/lessons/:id/preview" element={<RequireAuth minRole="teacher"><LessonPreview /></RequireAuth>} />
+
+      {/* Projector view — chrome-free like the preview; goes on the board */}
+      <Route path="/classpulse/sessions/:id/present" element={<RequireAuth minRole="teacher"><PresentSession /></RequireAuth>} />
 
       <Route element={<RequireAuth minRole="teacher"><Layout /></RequireAuth>}>
         <Route index element={<DefaultRedirect />} />
