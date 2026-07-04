@@ -77,7 +77,8 @@ router.post('/join/:code', authenticate, async (req, res) => {
   const { userId } = req.user;
 
   const { rows: [session] } = await query(
-    `SELECT id, class_id, current_page_id FROM classpulse_sessions
+    `SELECT id, class_id, current_page_id, join_code, classroom_lock_enabled
+     FROM classpulse_sessions
      WHERE join_code = $1 AND status = 'active'`,
     [code.toUpperCase()]
   );
@@ -101,6 +102,18 @@ router.post('/join/:code', authenticate, async (req, res) => {
     studentId: userId,
     studentName: student?.full_name || 'Student',
   });
+
+  // Focus lock is already engaged for this session — apply it to this (late)
+  // joiner too, or only students who were present when the teacher clicked
+  // Lock would ever be locked.
+  if (session.classroom_lock_enabled) {
+    events.emit('teacher:lock_request', {
+      studentId:  userId,
+      message:    `ClassPulse session in progress — code: ${session.join_code}`,
+      targetPath: `/pulse/${session.join_code}`,
+      allowPulse: true,
+    });
+  }
 
   res.json({ session_id: session.id, current_page_id: session.current_page_id });
 });
@@ -899,6 +912,33 @@ router.post('/sessions/start', async (req, res) => {
 // Sessions — Get / Dashboard / Navigation
 // ---------------------------------------------------------------------------
 
+// List the caller's own sessions (newest first) — this is how a teacher gets
+// back to a live session after closing the tab, and how they reach stored
+// results after a session ends. Admins with the classpulse permission see all.
+router.get('/sessions', async (req, res) => {
+  const { userId, role } = req.user;
+  const limit  = Math.min(parseInt(req.query.limit) || 20, 100);
+  const offset = Math.max(parseInt(req.query.offset) || 0, 0);
+  const isAdmin = ['admin', 'superadmin'].includes(role);
+
+  const { rows } = await query(
+    `SELECT s.id, s.join_code, s.mode, s.status, s.started_at, s.ended_at,
+            l.title AS lesson_title, c.name AS class_name,
+            (SELECT COUNT(*)::int FROM classpulse_session_students
+             WHERE session_id = s.id) AS student_count,
+            (SELECT COUNT(*)::int FROM classpulse_responses
+             WHERE session_id = s.id) AS response_count
+     FROM classpulse_sessions s
+     LEFT JOIN classpulse_lessons l ON l.id = s.lesson_id
+     LEFT JOIN classes c ON c.id = s.class_id
+     WHERE s.teacher_id = $1 OR $2
+     ORDER BY s.started_at DESC
+     LIMIT $3 OFFSET $4`,
+    [userId, isAdmin, limit, offset]
+  );
+  res.json(rows);
+});
+
 router.get('/sessions/:id', async (req, res) => {
   const { userId, role } = req.user;
   const { id } = req.params;
@@ -922,7 +962,11 @@ router.get('/sessions/:id/dashboard', async (req, res) => {
   const { id: sessionId } = req.params;
 
   const { rows: [session] } = await query(
-    `SELECT * FROM classpulse_sessions WHERE id = $1 AND (teacher_id = $2 OR $3)`,
+    `SELECT s.*, l.title AS lesson_title, c.name AS class_name
+     FROM classpulse_sessions s
+     LEFT JOIN classpulse_lessons l ON l.id = s.lesson_id
+     LEFT JOIN classes c ON c.id = s.class_id
+     WHERE s.id = $1 AND (s.teacher_id = $2 OR $3)`,
     [sessionId, userId, ['admin','superadmin'].includes(role)]
   );
   if (!session) return res.status(404).json({ error: 'Session not found' });
@@ -938,7 +982,7 @@ router.get('/sessions/:id/dashboard', async (req, res) => {
       [sessionId]
     ),
     query(
-      `SELECT p.id, p.position, p.title, p.content_type,
+      `SELECT p.id, p.position, p.title, p.content_type, p.body, p.teacher_notes,
               COUNT(DISTINCT q.id)::int AS question_count
        FROM classpulse_pages p
        LEFT JOIN classpulse_questions q ON q.page_id = p.id
@@ -1102,6 +1146,26 @@ router.post('/sessions/:id/end', async (req, res) => {
   }
   await redis.del(`classpulse:session:${sessionId}:offtask`).catch(() => {});
 
+  // Release the focus lock — without this, students who were locked to the
+  // session would stay locked after the teacher ends it.
+  if (session.classroom_lock_enabled) {
+    const { rows: lockedStudents } = await query(
+      `SELECT student_id FROM classpulse_session_students WHERE session_id = $1`,
+      [sessionId]
+    );
+    let targets = lockedStudents.map(s => s.student_id);
+    if (session.class_id) {
+      const { rows: roster } = await query(
+        `SELECT student_id FROM class_members WHERE class_id = $1`,
+        [session.class_id]
+      );
+      targets = [...new Set([...targets, ...roster.map(r => r.student_id)])];
+    }
+    for (const student_id of targets) {
+      events.emit('teacher:unlock_request', { studentId: student_id });
+    }
+  }
+
   events.emit('classpulse:session_ended', { sessionId, classId: session.class_id });
 
   res.json(session);
@@ -1147,15 +1211,32 @@ router.post('/sessions/:id/lock', async (req, res) => {
     [sessionId]
   );
 
-  for (const { student_id } of students) {
+  // Lock the whole class roster when the session is tied to a class (so the
+  // focus lock reaches students who haven't opened the join page yet), or
+  // just the joined students for an open session. allowPulse tells the
+  // extension to open /pulse/<code> and exempt it from the lock overlay —
+  // without that exemption the lock would block the very page students
+  // answer on.
+  let targets = students.map(s => s.student_id);
+  if (session.class_id) {
+    const { rows: roster } = await query(
+      `SELECT student_id FROM class_members WHERE class_id = $1`,
+      [session.class_id]
+    );
+    targets = [...new Set([...targets, ...roster.map(r => r.student_id)])];
+  }
+
+  for (const student_id of targets) {
     events.emit('teacher:lock_request', {
-      studentId: student_id,
-      message:   `ClassPulse session in progress — code: ${session.join_code}`,
+      studentId:  student_id,
+      message:    `ClassPulse session in progress — code: ${session.join_code}`,
+      targetPath: `/pulse/${session.join_code}`,
+      allowPulse: true,
     });
   }
 
   events.emit('classpulse:lock_changed', { sessionId, locked: true, joinCode: session.join_code });
-  res.json({ ok: true, locked_count: students.length });
+  res.json({ ok: true, locked_count: targets.length });
 });
 
 // Release ClassPulse focus lock
@@ -1171,13 +1252,22 @@ router.post('/sessions/:id/unlock', async (req, res) => {
   );
   if (!session) return res.status(404).json({ error: 'Active session not found' });
 
+  // Mirror the lock route's targeting: the lock reaches the whole class
+  // roster (not just joined students), so the release has to as well.
   const { rows: students } = await query(
-    `SELECT student_id FROM classpulse_session_students
-     WHERE session_id = $1 AND status = 'active'`,
+    `SELECT student_id FROM classpulse_session_students WHERE session_id = $1`,
     [sessionId]
   );
+  let targets = students.map(s => s.student_id);
+  if (session.class_id) {
+    const { rows: roster } = await query(
+      `SELECT student_id FROM class_members WHERE class_id = $1`,
+      [session.class_id]
+    );
+    targets = [...new Set([...targets, ...roster.map(r => r.student_id)])];
+  }
 
-  for (const { student_id } of students) {
+  for (const student_id of targets) {
     events.emit('teacher:unlock_request', { studentId: student_id });
   }
 

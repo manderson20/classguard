@@ -65,7 +65,7 @@ async function init() {
       onPolicyUpdated:   () => syncPolicy(),
       onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
       onLiveViewRequest: () => captureForLiveView(),
-      onLockRequest:     (data) => lockScreen(data?.message),
+      onLockRequest:     (data) => lockScreen(data),
       onUnlockRequest:   () => unlockScreen(),
       onOpenTabRequest:  (data) => openTab(data?.url),
       onCloseTabRequest: () => closeTab(),
@@ -117,7 +117,7 @@ async function authenticate() {
       onPolicyUpdated:   () => syncPolicy(),
       onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
       onLiveViewRequest: () => captureForLiveView(),
-      onLockRequest:     (data) => lockScreen(data?.message),
+      onLockRequest:     (data) => lockScreen(data),
       onUnlockRequest:   () => unlockScreen(),
       onOpenTabRequest:  (data) => openTab(data?.url),
       onCloseTabRequest: () => closeTab(),
@@ -297,7 +297,7 @@ async function onAlarm(alarm) {
           onPolicyUpdated:   () => syncPolicy(),
           onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
       onLiveViewRequest: () => captureForLiveView(),
-          onLockRequest:     (data) => lockScreen(data?.message),
+          onLockRequest:     (data) => lockScreen(data),
           onUnlockRequest:   () => unlockScreen(),
           onOpenTabRequest:  (data) => openTab(data?.url),
           onCloseTabRequest: () => closeTab(),
@@ -411,11 +411,35 @@ async function onTabRemoved(tabId) {
 // ---------------------------------------------------------------------------
 // Remote device commands — lock/unlock screen, open/close tab
 // ---------------------------------------------------------------------------
-async function lockScreen(message) {
-  await chrome.storage.local.set({ cg_locked: { message: message || null } });
+async function lockScreen(data) {
+  // Back-compat: pre-focus-lock callers passed a bare message string.
+  const { message = null, targetPath = null, allowPulse = false } =
+    typeof data === 'string' ? { message: data } : (data || {});
+
+  // ClassPulse focus lock: exemptOrigin lets the content script leave the
+  // session page (/pulse/<code>) usable while every other tab gets the
+  // overlay — locking that page too would block the questions themselves.
+  const serverUrl = allowPulse ? await getServerUrl() : null;
+  const exemptOrigin = serverUrl ? new URL(serverUrl).origin : null;
+
+  const lockState = { message, allowPulse, exemptOrigin };
+  await chrome.storage.local.set({ cg_locked: lockState });
+
+  // Put the student on the session page before locking: focus an existing
+  // tab if one is already there, otherwise open it.
+  if (targetPath && serverUrl) {
+    const targetUrl = serverUrl.replace(/\/$/, '') + targetPath;
+    const existing = await chrome.tabs.query({ url: targetUrl + '*' });
+    if (existing.length) {
+      await chrome.tabs.update(existing[0].id, { active: true }).catch(() => {});
+    } else {
+      await chrome.tabs.create({ url: targetUrl }).catch(() => {});
+    }
+  }
+
   const tabs = await chrome.tabs.query({});
   for (const tab of tabs) {
-    chrome.tabs.sendMessage(tab.id, { type: 'CG_LOCK_SCREEN', message: message || null }).catch(() => {});
+    chrome.tabs.sendMessage(tab.id, { type: 'CG_LOCK_SCREEN', ...lockState }).catch(() => {});
   }
 }
 
@@ -545,6 +569,27 @@ async function sendHeartbeat() {
 // ---------------------------------------------------------------------------
 async function handleMessage(msg, sender) {
   switch (msg.type) {
+    // ClassPulse auto-join: hands the student's JWT to ClassGuard's own
+    // /pulse/<code> join page so a managed device joins a session with zero
+    // sign-in friction. Strictly gated on the sender being that exact page
+    // on the configured server origin — sender.url is set by Chrome, not the
+    // page, so a lookalike page on another host can't request it.
+    case 'CG_GET_PULSE_AUTH': {
+      const serverUrl = await getServerUrl();
+      if (!serverUrl || !sender?.url) return { token: null };
+      try {
+        const sen = new URL(sender.url);
+        const srv = new URL(serverUrl);
+        if (sen.origin !== srv.origin || !sen.pathname.startsWith('/pulse/')) {
+          return { token: null };
+        }
+      } catch {
+        return { token: null };
+      }
+      const jwt = await getStoredJWT();
+      return { token: jwt || null };
+    }
+
     case 'CG_GET_STATUS': {
       const [jwt, user, policy, tsData] = await Promise.all([
         getStoredJWT(),

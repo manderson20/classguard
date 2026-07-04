@@ -30,8 +30,23 @@ export default function Login() {
   const [error, setError]       = useState('');
   const [loading, setLoading]   = useState(false);
 
+  // Optional post-login destination (?next=/pulse/ABC123). Stashed in
+  // sessionStorage because the Google flow round-trips through
+  // accounts.google.com and lands on /auth/callback with only the OAuth
+  // params — the query string here doesn't survive that trip.
+  const nextParam = searchParams.get('next');
   useEffect(() => {
-    if (user) navigate('/', { replace: true });
+    if (nextParam && nextParam.startsWith('/') && !nextParam.startsWith('//')) {
+      sessionStorage.setItem('cg_login_next', nextParam);
+    }
+  }, [nextParam]);
+
+  useEffect(() => {
+    if (user) {
+      const next = sessionStorage.getItem('cg_login_next');
+      sessionStorage.removeItem('cg_login_next');
+      navigate(next || '/', { replace: true });
+    }
   }, [user, navigate]);
 
   // Check first-run, then load public config (Google client ID)
@@ -61,7 +76,9 @@ export default function Login() {
     try {
       const { token } = await api.post('/auth/login', { email, password });
       await login(token);
-      navigate('/', { replace: true });
+      const next = sessionStorage.getItem('cg_login_next');
+      sessionStorage.removeItem('cg_login_next');
+      navigate(next || '/', { replace: true });
     } catch (err) {
       setError(err.message || 'Invalid email or password.');
     } finally {

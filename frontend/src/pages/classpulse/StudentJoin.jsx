@@ -189,7 +189,7 @@ function QuestionRenderer({ question, onSubmit, submitted }) {
 
 export default function StudentJoin() {
   const { code } = useParams();
-  const { user, loading: authLoading } = useAuth();
+  const { user, loading: authLoading, login } = useAuth();
   const { socket } = useSocket();
 
   const [loading,        setLoading]        = useState(true);
@@ -204,6 +204,24 @@ export default function StudentJoin() {
   const [submitError,    setSubmitError]    = useState(null);
 
   const heartbeatRef = useRef(null);
+
+  // Step 0: silent sign-in via the ClassGuard extension. On a managed device
+  // the extension already holds the student's JWT — ask its content script
+  // for it (the service worker only answers this exact page on the
+  // configured server origin), so students never see a sign-in prompt. On
+  // devices without the extension nothing replies and the normal
+  // sign-in card below still applies.
+  useEffect(() => {
+    if (authLoading || user) return;
+    const onAuth = (e) => {
+      if (e.source !== window || e.origin !== window.location.origin) return;
+      if (e.data?.source !== 'classguard-extension' || e.data?.type !== 'classguard:pulse-auth') return;
+      if (e.data.token) login(e.data.token).catch(() => {});
+    };
+    window.addEventListener('message', onAuth);
+    window.dispatchEvent(new CustomEvent('classguard:request-pulse-auth'));
+    return () => window.removeEventListener('message', onAuth);
+  }, [authLoading, user, login]);
 
   // Step 1: fetch session info (no auth)
   useEffect(() => {
@@ -352,16 +370,22 @@ export default function StudentJoin() {
       <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-lg p-8 max-w-sm w-full text-center">
           <div className="text-4xl mb-3">🔒</div>
-          <h1 className="text-lg font-bold text-slate-800 mb-2">Sign in required</h1>
+          <h1 className="text-lg font-bold text-slate-800 mb-2">Sign in to join</h1>
           <p className="text-sm text-slate-500 mb-4">
-            You need to be signed in to join this session. Make sure your ClassGuard extension is active.
+            Sign in with your school account so your answers are recorded under your name.
           </p>
           {session && (
-            <div className="bg-indigo-50 rounded-xl p-3 text-sm text-indigo-700">
+            <div className="bg-indigo-50 rounded-xl p-3 text-sm text-indigo-700 mb-4">
               <span className="font-semibold">{session.lesson_title || 'Untitled Lesson'}</span>
               {session.class_name ? ` — ${session.class_name}` : ''}
             </div>
           )}
+          <a
+            href={`/login?next=${encodeURIComponent(`/pulse/${code}`)}`}
+            className="block w-full py-3 rounded-xl bg-indigo-600 text-white font-semibold hover:bg-indigo-700 transition-colors"
+          >
+            Sign in
+          </a>
         </div>
       </div>
     );
