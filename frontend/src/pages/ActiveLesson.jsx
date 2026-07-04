@@ -401,7 +401,7 @@ function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRe
             className="flex-shrink-0" />
           <Avatar photoUrl={student.photo_url} name={student.full_name} email={student.email} className="w-5 h-5 text-[10px]" />
           <div className="font-semibold text-sm text-slate-800 truncate">
-            {student.given_name || student.name?.split(' ')[0] || student.email}
+            {student.given_name || student.full_name?.split(' ')[0] || student.email}
           </div>
         </div>
         {isRestricted ? (

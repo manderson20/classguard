@@ -300,8 +300,11 @@ const setupSockets = (io) => {
 
   // Remote device commands — same shape as screenshot_request above, one
   // event in, one matching command out to the student's extension socket.
-  events.on('teacher:lock_request', ({ studentId, message }) => {
-    if (studentId) io.to(`student:${studentId}`).emit('lock:engage', { message });
+  events.on('teacher:lock_request', ({ studentId, message, targetPath, allowPulse }) => {
+    // targetPath/allowPulse: ClassPulse focus-lock — the extension opens the
+    // session page and exempts it from the overlay so students can still
+    // answer questions while everything else is locked.
+    if (studentId) io.to(`student:${studentId}`).emit('lock:engage', { message, targetPath, allowPulse });
   });
 
   events.on('teacher:unlock_request', ({ studentId }) => {

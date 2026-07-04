@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../lib/api';
+import StartSessionModal from '../../components/StartPulseSessionModal';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -398,8 +399,9 @@ function AddPagePanel({ lessonId, currentPageCount, onAdded, onCancel }) {
 // ---------------------------------------------------------------------------
 // Lesson header (title / metadata editor)
 // ---------------------------------------------------------------------------
-function LessonHeader({ lesson, onSaved }) {
+function LessonHeader({ lesson, onSaved, canPresent }) {
   const [open,        setOpen]        = useState(false);
+  const [presenting,  setPresenting]  = useState(false);
   const [title,       setTitle]       = useState(lesson.title || '');
   const [description, setDescription] = useState(lesson.description || '');
   const [subject,     setSubject]     = useState(lesson.subject || '');
@@ -443,10 +445,24 @@ function LessonHeader({ lesson, onSaved }) {
             {lesson.grade_level && <span className="text-xs text-slate-400">· {lesson.grade_level}</span>}
           </div>
         </div>
-        <button onClick={() => setOpen(o => !o)} className="btn btn-secondary text-sm flex-shrink-0">
-          {open ? 'Close' : 'Edit info'}
-        </button>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <button onClick={() => setOpen(o => !o)} className="btn btn-secondary text-sm">
+            {open ? 'Close' : 'Edit info'}
+          </button>
+          <button
+            onClick={() => setPresenting(true)}
+            disabled={!canPresent}
+            title={canPresent ? 'Start a live session with this lesson' : 'Add at least one slide first'}
+            className="btn btn-primary text-sm disabled:opacity-40"
+          >
+            ▶ Present
+          </button>
+        </div>
       </div>
+
+      {presenting && (
+        <StartSessionModal lesson={lesson} onClose={() => setPresenting(false)} />
+      )}
 
       {open && (
         <div className="mt-4 max-w-5xl mx-auto grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -637,7 +653,7 @@ export default function LessonBuilder() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-slate-50">
       {/* Lesson header */}
-      {lesson && <LessonHeader lesson={lesson} onSaved={onLessonSaved} />}
+      {lesson && <LessonHeader lesson={lesson} onSaved={onLessonSaved} canPresent={pages.length > 0} />}
 
       {/* Builder body */}
       <div className="flex flex-1 overflow-hidden">
