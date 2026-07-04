@@ -54,6 +54,17 @@ async function listPresentations(teacherEmail, search = '') {
 // after the lesson's existing pages (so a re-import or second deck never
 // clobbers question pages the teacher already built).
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// Resolve a lesson's image directory with an explicit containment check —
+// lessonId is validated as a UUID first, and the resolved path must stay
+// inside SLIDE_IMAGE_DIR (path.resolve + startsWith is the barrier CodeQL's
+// path-injection query recognizes; the regex alone is not).
+function resolveLessonDir(lessonId) {
+  if (!UUID_RE.test(String(lessonId))) throw new Error('Invalid lesson id');
+  const dir = path.resolve(SLIDE_IMAGE_DIR, String(lessonId));
+  if (!dir.startsWith(SLIDE_IMAGE_DIR + path.sep)) throw new Error('Invalid lesson id');
+  return dir;
+}
 // PNG magic bytes — the only file type the Slides thumbnail API produces.
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
@@ -77,7 +88,7 @@ async function importPresentation(teacherEmail, presentationId, lessonId) {
     throw new Error(`Presentation has ${slideIds.length} slides — the import limit is ${MAX_SLIDES}. Split the deck and import in parts.`);
   }
 
-  const lessonDir = path.join(SLIDE_IMAGE_DIR, lessonId);
+  const lessonDir = resolveLessonDir(lessonId);
   fs.mkdirSync(lessonDir, { recursive: true });
 
   // Download every slide's PNG before touching the DB — a mid-deck Google
@@ -138,9 +149,8 @@ function resolveSlideImagePath(relPath) {
 // Save an uploaded image buffer for a lesson (direct graphics/diagram upload
 // on content pages — same storage + serving path as imported slides).
 function saveLessonImage(lessonId, buffer, ext) {
-  if (!UUID_RE.test(String(lessonId))) throw new Error('Invalid lesson id');
   if (!['png', 'jpg'].includes(ext)) throw new Error('Unsupported image type');
-  const lessonDir = path.join(SLIDE_IMAGE_DIR, lessonId);
+  const lessonDir = resolveLessonDir(lessonId);
   fs.mkdirSync(lessonDir, { recursive: true });
   const fileName = `${crypto.randomUUID()}.${ext}`;
   fs.writeFileSync(path.join(lessonDir, fileName), buffer);
