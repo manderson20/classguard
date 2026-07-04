@@ -123,12 +123,11 @@ export default function StudentJoin() {
           for (const q of data.page.questions || []) {
             if (q.already_responded) pre[q.id] = true;
           }
-          setSubmitted(prev => {
-            // Only wipe local state when the page actually changed
-            const changed = resetFirst || !currentPage || currentPage.id !== data.page.id;
-            return changed ? pre : prev;
-          });
-          if (resetFirst) setHelpSent(false);
+          const changed = resetFirst || !currentPage || currentPage.id !== data.page.id;
+          setSubmitted(prev => (changed ? pre : prev));
+          // New slide = fresh chance to raise a hand, however we got here
+          // (socket push or poll fallback).
+          if (changed) setHelpSent(false);
         }
       })
       .catch(() => {});

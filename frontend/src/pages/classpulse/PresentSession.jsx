@@ -89,12 +89,20 @@ export default function PresentSession() {
   const { socket } = useSocket();
   const [liveResponses, setLiveResponses] = useState({}); // { questionId: [payload] }
 
-  const { data: dashboard, refetch } = useQuery({
+  const { data: dashboard, refetch, dataUpdatedAt } = useQuery({
     queryKey: ['classpulse-present', sessionId],
     queryFn:  () => api.get(`/classpulse/sessions/${sessionId}/dashboard`),
     refetchInterval: 10_000, // poll fallback — socket is the fast path
     staleTime: 0,
   });
+
+  // Fresh REST data supersedes the live-socket cache: the server upserts a
+  // response BEFORE emitting it, so everything the socket delivered is in
+  // the poll result — and a response the teacher hid must not resurrect
+  // from a stale cached payload (this screen faces the class).
+  useEffect(() => {
+    if (dataUpdatedAt) setLiveResponses({});
+  }, [dataUpdatedAt]);
 
   const onPageChanged = useCallback(() => {
     setLiveResponses({});
