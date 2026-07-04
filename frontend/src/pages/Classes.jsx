@@ -42,7 +42,7 @@ export default function Classes() {
       <div className="flex items-center justify-between mb-6">
         <div>
           <h1 className="text-2xl font-bold text-slate-900">My Classes</h1>
-          <p className="text-slate-500 text-sm mt-0.5">Manage lessons and monitor student activity</p>
+          <p className="text-slate-500 text-sm mt-0.5">Start class sessions and monitor student activity</p>
         </div>
       </div>
 

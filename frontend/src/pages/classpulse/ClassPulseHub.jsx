@@ -74,6 +74,10 @@ export default function ClassPulseHub() {
   const { data: sessions = [] } = useQuery({
     queryKey: ['classpulse-sessions'],
     queryFn:  () => api.get('/classpulse/sessions?limit=8'),
+    // Live-session banner must reflect right-now state, not the app-default
+    // 60s stale cache.
+    staleTime: 0,
+    refetchOnMount: 'always',
   });
   const liveSessions = sessions.filter(s => s.status === 'active');
 

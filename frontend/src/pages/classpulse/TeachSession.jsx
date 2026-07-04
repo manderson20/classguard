@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useSocket } from '../../contexts/SocketContext';
 import api from '../../lib/api';
 
@@ -453,6 +453,14 @@ export default function TeachSession() {
             >
               View results
             </button>
+            {dashboard?.session?.class_id && (
+              <button
+                onClick={() => navigate(`/classes/${dashboard.session.class_id}/lesson`)}
+                className="btn btn-secondary w-full text-sm"
+              >
+                Back to class
+              </button>
+            )}
             <div className="flex gap-3">
               <button onClick={() => navigate('/classpulse/lessons')} className="btn btn-secondary flex-1 text-sm">
                 Lesson Library
@@ -490,6 +498,16 @@ export default function TeachSession() {
 
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-4 flex-shrink-0">
+        {/* Way back to the live class view this lesson was launched from */}
+        {session?.class_id && (
+          <Link
+            to={`/classes/${session.class_id}/lesson`}
+            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex-shrink-0"
+            title="Back to the live class view — this lesson keeps running"
+          >
+            ← Class
+          </Link>
+        )}
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-bold text-slate-800 truncate leading-tight">
             {session?.lesson_title || 'Live Session'}
