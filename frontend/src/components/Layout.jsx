@@ -239,6 +239,14 @@ function ContextualHelpButton({ navigate }) {
     staleTime: 60_000,
   });
 
+  // Full-screen live surfaces (ClassPulse teach view, active lesson) put
+  // their primary action buttons in the bottom-right corner, exactly where
+  // this floats — hide it there rather than covering "Next" mid-lesson.
+  if (/^\/classpulse\/sessions\/[^/]+\/teach/.test(location.pathname) ||
+      /^\/classes\/[^/]+\/lesson/.test(location.pathname)) {
+    return null;
+  }
+
   // The API already orders matches most-specific-first (exact path match,
   // then longest matching prefix) -- so the first result is always the
   // right one to jump to directly, even when a broader article (e.g.

@@ -179,7 +179,7 @@ function StudentRow({ student, activity, onPenalty, onRelease, penaltyLoading })
   return (
     <tr className="border-b border-slate-100 hover:bg-slate-50">
       <td className="px-4 py-3">
-        <div className="font-medium text-sm text-slate-900">{student.name || student.email}</div>
+        <div className="font-medium text-sm text-slate-900">{student.full_name || student.email}</div>
         <div className="text-xs text-slate-400">{student.email}</div>
       </td>
       <td className="px-4 py-3">

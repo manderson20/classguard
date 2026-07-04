@@ -33,6 +33,21 @@
     });
   });
 
+  // ClassPulse auto-join: the /pulse/<code> join page asks for the signed-in
+  // student's token so managed devices join with zero prompts. The service
+  // worker validates the requesting page's origin/path (sender.url) before
+  // answering, so listening on every page here is safe — non-ClassGuard
+  // origins always get { token: null } back.
+  window.addEventListener('classguard:request-pulse-auth', () => {
+    chrome.runtime.sendMessage({ type: 'CG_GET_PULSE_AUTH' }, (result) => {
+      window.postMessage({
+        source: 'classguard-extension',
+        type:   'classguard:pulse-auth',
+        token:  result?.token || null,
+      }, window.location.origin);
+    });
+  });
+
   window.addEventListener('classguard:submit-unblock-request', (e) => {
     const { domain, reason } = e.detail || {};
     chrome.runtime.sendMessage({ type: 'CG_SUBMIT_UNBLOCK_REQUEST', domain, reason }, (result) => {
@@ -118,7 +133,7 @@
       // Re-scan with new keyword list
       runScan();
     } else if (msg.type === 'CG_LOCK_SCREEN') {
-      showLockOverlay(msg.message);
+      if (!isPulseExempt(msg)) showLockOverlay(msg.message);
     } else if (msg.type === 'CG_UNLOCK_SCREEN') {
       hideLockOverlay();
     } else if (msg.type === 'CG_CHAT_MESSAGE') {
@@ -137,14 +152,25 @@
   // the service worker only messages tabs that are already open when it
   // locks. chrome.storage.local is the source of truth for "currently
   // locked", checked on every page load.
+  // ClassPulse focus-lock exemption: the lock explicitly allows the live
+  // session page (server origin + /pulse/...) to stay usable — that page IS
+  // the activity students are being focused on.
+  function isPulseExempt(lockState) {
+    return !!(lockState?.allowPulse &&
+      lockState.exemptOrigin &&
+      window.location.origin === lockState.exemptOrigin &&
+      window.location.pathname.startsWith('/pulse/'));
+  }
+
   chrome.storage.local.get('cg_locked', (data) => {
-    if (data.cg_locked) showLockOverlay(data.cg_locked.message);
+    if (data.cg_locked && !isPulseExempt(data.cg_locked)) showLockOverlay(data.cg_locked.message);
   });
   if (chrome.storage.onChanged) {
     chrome.storage.onChanged.addListener((changes, area) => {
       if (area !== 'local' || !changes.cg_locked) return;
-      if (changes.cg_locked.newValue) showLockOverlay(changes.cg_locked.newValue.message);
-      else hideLockOverlay();
+      if (changes.cg_locked.newValue) {
+        if (!isPulseExempt(changes.cg_locked.newValue)) showLockOverlay(changes.cg_locked.newValue.message);
+      } else hideLockOverlay();
     });
   }
 
