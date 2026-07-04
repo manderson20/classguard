@@ -169,6 +169,15 @@ export default function StartLessonModal({ onStart, onClose, loading }) {
                     placeholder="Scene name, e.g. Math Research Day"
                     value={sceneName}
                     onChange={e => setSceneName(e.target.value)}
+                    onKeyDown={e => {
+                      // Enter here must save the scene, not submit the
+                      // surrounding start-lesson form (which would start the
+                      // class instead).
+                      if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (sceneName.trim() && !saveScene.isPending) saveScene.mutate();
+                      }
+                    }}
                   />
                   {sceneErr && <p className="text-xs text-rose-600">{sceneErr}</p>}
                   <div className="flex gap-2">
