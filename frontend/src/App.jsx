@@ -134,6 +134,10 @@ export default function App() {
       {/* First-time setup wizard — requires auth but bypasses Layout */}
       <Route path="/wizard" element={<RequireAuth minRole="superadmin"><SetupWizard /></RequireAuth>} />
 
+      {/* Lesson preview — teacher-authed but OUTSIDE Layout, so the tab shows
+          the same chrome-free shell students get at /pulse/:code */}
+      <Route path="/classpulse/lessons/:id/preview" element={<RequireAuth minRole="teacher"><LessonPreview /></RequireAuth>} />
+
       <Route element={<RequireAuth minRole="teacher"><Layout /></RequireAuth>}>
         <Route index element={<DefaultRedirect />} />
 
@@ -151,7 +155,6 @@ export default function App() {
           <Route path="/classpulse/lessons"              element={<LessonLibrary />} />
           <Route path="/classpulse/lessons/new"          element={<LessonBuilder />} />
           <Route path="/classpulse/lessons/:id/edit"     element={<LessonBuilder />} />
-          <Route path="/classpulse/lessons/:id/preview"  element={<LessonPreview />} />
           <Route path="/classpulse/sessions/:id/teach"   element={<TeachSession />} />
           <Route path="/classpulse/sessions/:id/results" element={<SessionResults />} />
         </Route>
