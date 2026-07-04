@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../lib/api';
 import StartSessionModal from '../../components/StartPulseSessionModal';
@@ -183,6 +183,38 @@ function PageEditor({ page, lessonId, onPageUpdated, onPageDeleted }) {
   const [questions,    setQuestions]    = useState(page.questions || []);
   const [saving,       setSaving]       = useState(false);
   const [addQType,     setAddQType]     = useState('');
+  const [imageBusy,    setImageBusy]    = useState(false);
+  const [imageError,   setImageError]   = useState(null);
+  const fileRef = useRef(null);
+
+  const onImageChosen = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) { setImageError('Image too large (max 10 MB)'); return; }
+    setImageBusy(true);
+    setImageError(null);
+    try {
+      const form = new FormData();
+      form.append('file', file);
+      const updated = await api.post(`/classpulse/pages/${page.id}/image`, form);
+      onPageUpdated({ ...page, ...updated, questions });
+    } catch (err) {
+      setImageError(err.message || 'Upload failed');
+    } finally {
+      setImageBusy(false);
+    }
+  };
+
+  const removeImage = async () => {
+    setImageBusy(true);
+    try {
+      await api.delete(`/classpulse/pages/${page.id}/image`);
+      onPageUpdated({ ...page, image_url: null, questions });
+    } finally {
+      setImageBusy(false);
+    }
+  };
 
   // Re-sync when parent switches to a different page
   useEffect(() => {
@@ -267,13 +299,45 @@ function PageEditor({ page, lessonId, onPageUpdated, onPageDeleted }) {
         />
       </div>
 
-      {/* Imported slide image */}
+      {/* Page image — imported Google Slide or a directly uploaded
+          graphic/diagram */}
       {page.image_url && (
-        <AuthedImage
-          src={`/api/v1/classpulse/slide-image/${page.id}`}
-          alt={page.title || 'Slide'}
-          className="w-full rounded-xl border border-slate-200"
-        />
+        <div>
+          <AuthedImage
+            key={page.image_url}
+            src={`/api/v1/classpulse/slide-image/${page.id}`}
+            alt={page.title || 'Slide'}
+            className="w-full rounded-xl border border-slate-200"
+          />
+          <button
+            type="button"
+            onClick={removeImage}
+            disabled={imageBusy}
+            className="text-xs text-slate-400 hover:text-rose-500 mt-1"
+          >
+            Remove image
+          </button>
+        </div>
+      )}
+      {!page.image_url && (
+        <div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg"
+            className="hidden"
+            onChange={onImageChosen}
+          />
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={imageBusy}
+            className="text-xs font-medium text-indigo-600 hover:text-indigo-800 disabled:opacity-40"
+          >
+            {imageBusy ? 'Uploading…' : '🖼 Add an image or diagram'}
+          </button>
+          {imageError && <p className="text-xs text-rose-600 mt-1">{imageError}</p>}
+        </div>
       )}
 
       {/* Body — content slides */}
@@ -507,6 +571,7 @@ function LessonHeader({ lesson, onSaved, canPresent, onImportSlides }) {
   const [description, setDescription] = useState(lesson.description || '');
   const [subject,     setSubject]     = useState(lesson.subject || '');
   const [gradeLevel,  setGradeLevel]  = useState(lesson.grade_level || '');
+  const [folder,      setFolderName]  = useState(lesson.folder || '');
   const [status,      setStatus]      = useState(lesson.status || 'draft');
   const [tagsInput,   setTagsInput]   = useState((lesson.tags || []).join(', '));
   const [saving,      setSaving]      = useState(false);
@@ -520,6 +585,7 @@ function LessonHeader({ lesson, onSaved, canPresent, onImportSlides }) {
         description: description || null,
         subject:     subject || null,
         grade_level: gradeLevel || null,
+        folder:      folder.trim(), // '' clears the folder server-side
         status,
         tags: tagsInput.split(',').map(t => t.trim()).filter(Boolean),
       });
@@ -601,6 +667,12 @@ function LessonHeader({ lesson, onSaved, canPresent, onImportSlides }) {
           <div>
             <label className="block text-xs font-semibold text-slate-600 mb-1">Grade level</label>
             <input value={gradeLevel} onChange={e => setGradeLevel(e.target.value)} placeholder="e.g. 9th Grade" className="input w-full" />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1">
+              Folder <span className="text-slate-400 font-normal">(organizes your library)</span>
+            </label>
+            <input value={folder} onChange={e => setFolderName(e.target.value)} placeholder="e.g. Biology / Unit 3" className="input w-full" />
           </div>
           <div className="sm:col-span-2">
             <label className="block text-xs font-semibold text-slate-600 mb-1">Description</label>

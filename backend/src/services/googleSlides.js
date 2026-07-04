@@ -135,4 +135,21 @@ function resolveSlideImagePath(relPath) {
   return abs;
 }
 
-module.exports = { listPresentations, importPresentation, resolveSlideImagePath };
+// Save an uploaded image buffer for a lesson (direct graphics/diagram upload
+// on content pages — same storage + serving path as imported slides).
+function saveLessonImage(lessonId, buffer, ext) {
+  if (!UUID_RE.test(String(lessonId))) throw new Error('Invalid lesson id');
+  if (!['png', 'jpg'].includes(ext)) throw new Error('Unsupported image type');
+  const lessonDir = path.join(SLIDE_IMAGE_DIR, lessonId);
+  fs.mkdirSync(lessonDir, { recursive: true });
+  const fileName = `${crypto.randomUUID()}.${ext}`;
+  fs.writeFileSync(path.join(lessonDir, fileName), buffer);
+  return path.join('classpulse-slides', lessonId, fileName);
+}
+
+function deleteLessonImage(relPath) {
+  const abs = resolveSlideImagePath(relPath);
+  if (abs && fs.existsSync(abs)) fs.unlinkSync(abs);
+}
+
+module.exports = { listPresentations, importPresentation, resolveSlideImagePath, saveLessonImage, deleteLessonImage };

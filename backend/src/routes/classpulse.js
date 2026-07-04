@@ -6,7 +6,13 @@ const { requirePermissionIfAdmin } = require('../middleware/permissions');
 const { generateUniqueJoinCode, calcPulseScore, aggregateResponses, buildSessionReport } = require('../services/classpulse');
 const events = require('../events');
 const fs = require('fs');
+const multer = require('multer');
 const googleSlides = require('../services/googleSlides');
+
+const MAX_PAGE_IMAGE_BYTES = 10 * 1024 * 1024;
+const pageImageUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_PAGE_IMAGE_BYTES } });
+const PNG_SIG  = Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+const JPEG_SIG = Buffer.from([0xff, 0xd8, 0xff]);
 const redis  = require('../redis');
 
 // Hard cap on options per question — prevents loop-bound injection from
@@ -269,7 +275,7 @@ router.get('/slide-image/:pageId', authenticate, async (req, res) => {
   if (!page?.image_url) return res.status(404).json({ error: 'No image for this page' });
   const abs = googleSlides.resolveSlideImagePath(page.image_url);
   if (!abs || !fs.existsSync(abs)) return res.status(404).json({ error: 'Image file not found' });
-  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Content-Type', page.image_url.endsWith('.jpg') ? 'image/jpeg' : 'image/png');
   res.setHeader('Cache-Control', 'private, max-age=86400');
   fs.createReadStream(abs).pipe(res);
 });
@@ -358,7 +364,7 @@ router.get('/lessons', async (req, res) => {
             u.full_name AS teacher_name,
             COUNT(DISTINCT p.id)::int AS page_count,
             COUNT(DISTINCT q.id)::int AS question_count,
-            (NOT $7 AND EXISTS (
+            (l.teacher_id != $1 AND NOT $7 AND EXISTS (
               SELECT 1 FROM classpulse_lesson_shares s
               WHERE s.lesson_id = l.id AND (s.shared_with = $1 OR s.shared_with IS NULL)
             )) AS is_shared_with_me
@@ -486,7 +492,7 @@ router.put('/lessons/:lessonId', async (req, res) => {
        class_id          = COALESCE($6, class_id),
        estimated_minutes = COALESCE($7, estimated_minutes),
        tags              = COALESCE($8, tags),
-       folder            = COALESCE($9, folder),
+       folder            = CASE WHEN $9::text IS NULL THEN folder WHEN $9 = '' THEN NULL ELSE $9 END,
        status            = COALESCE($10, status)
      WHERE id = $1
      RETURNING *`,
@@ -621,6 +627,87 @@ router.post('/lessons/:lessonId/share', async (req, res) => {
     [lessonId, userId, sharedWith]
   );
   res.status(201).json({ ok: true });
+});
+
+// GET /classpulse/lessons/:lessonId/shares — who this lesson is shared with
+// (owner-only; drives the Share dialog)
+router.get('/lessons/:lessonId/shares', async (req, res) => {
+  const { userId, role } = req.user;
+  if (!await ownsLesson(req.params.lessonId, userId, role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  const { rows } = await query(
+    `SELECT s.id, s.shared_with, s.created_at, u.full_name, u.email
+     FROM classpulse_lesson_shares s
+     LEFT JOIN users u ON u.id = s.shared_with
+     WHERE s.lesson_id = $1
+     ORDER BY s.created_at`,
+    [req.params.lessonId]
+  );
+  res.json(rows);
+});
+
+// GET /classpulse/staff-directory?search= — minimal staff picker for the
+// Share dialog. Deliberately teacher-accessible but limited to name/email of
+// active staff (never students), capped at 20.
+router.get('/staff-directory', async (req, res) => {
+  const search = (req.query.search || '').trim();
+  const { rows } = await query(
+    `SELECT id, full_name, email FROM users
+     WHERE role IN ('teacher', 'admin', 'superadmin')
+       AND is_active = true
+       AND id != $1
+       AND ($2 = '' OR full_name ILIKE '%' || $2 || '%' OR email ILIKE '%' || $2 || '%')
+     ORDER BY full_name
+     LIMIT 20`,
+    [req.user.userId, search]
+  );
+  res.json(rows);
+});
+
+// POST /classpulse/pages/:pageId/image — direct graphics/diagram upload onto
+// a content page (same storage/serving as imported Google Slides images).
+router.post('/pages/:pageId/image', pageImageUpload.single('file'), async (req, res) => {
+  const { userId, role } = req.user;
+  const { rows: [page] } = await query(
+    `SELECT p.id, p.lesson_id, p.image_url FROM classpulse_pages p WHERE p.id = $1`,
+    [req.params.pageId]
+  );
+  if (!page) return res.status(404).json({ error: 'Page not found' });
+  if (!await ownsLesson(page.lesson_id, userId, role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  if (!req.file?.buffer?.length) return res.status(400).json({ error: 'No file uploaded' });
+
+  const buf = req.file.buffer;
+  const ext = buf.subarray(0, 4).equals(PNG_SIG) ? 'png'
+            : buf.subarray(0, 3).equals(JPEG_SIG) ? 'jpg'
+            : null;
+  if (!ext) return res.status(400).json({ error: 'Only PNG or JPEG images are supported' });
+
+  const relPath = googleSlides.saveLessonImage(page.lesson_id, buf, ext);
+  if (page.image_url) googleSlides.deleteLessonImage(page.image_url);
+  const { rows: [updated] } = await query(
+    `UPDATE classpulse_pages SET image_url = $2 WHERE id = $1 RETURNING *`,
+    [page.id, relPath]
+  );
+  res.status(201).json(updated);
+});
+
+// DELETE /classpulse/pages/:pageId/image — remove the image from a page
+router.delete('/pages/:pageId/image', async (req, res) => {
+  const { userId, role } = req.user;
+  const { rows: [page] } = await query(
+    `SELECT p.id, p.lesson_id, p.image_url FROM classpulse_pages p WHERE p.id = $1`,
+    [req.params.pageId]
+  );
+  if (!page) return res.status(404).json({ error: 'Page not found' });
+  if (!await ownsLesson(page.lesson_id, userId, role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+  if (page.image_url) googleSlides.deleteLessonImage(page.image_url);
+  await query(`UPDATE classpulse_pages SET image_url = NULL WHERE id = $1`, [page.id]);
+  res.status(204).end();
 });
 
 router.delete('/lessons/:lessonId/share', async (req, res) => {
