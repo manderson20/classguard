@@ -1060,7 +1060,14 @@ function GoogleSyncSection({ status }) {
           <pre className="bg-slate-800 text-green-300 text-xs rounded p-2 mt-1 leading-5 overflow-auto">{`https://www.googleapis.com/auth/admin.directory.user.readonly
 https://www.googleapis.com/auth/admin.directory.group.readonly
 https://www.googleapis.com/auth/admin.directory.orgunit.readonly
-https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly`}</pre>
+https://www.googleapis.com/auth/admin.directory.device.chromeos.readonly
+https://www.googleapis.com/auth/presentations.readonly
+https://www.googleapis.com/auth/drive.readonly`}</pre>
+          <p className="mt-1 text-slate-500">
+            The last two power ClassPulse's "Import from Google Slides" (each teacher's own decks,
+            read-only) — they also require the <strong>Google Slides API</strong> and{' '}
+            <strong>Google Drive API</strong> to be enabled on the service account's Cloud project.
+          </p>
         </li>
         <li>Set the Superadmin Email below to a Workspace super-admin address — the service account impersonates them to call the Admin SDK.</li>
       </ol>
