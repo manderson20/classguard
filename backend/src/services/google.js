@@ -16,6 +16,13 @@
  *        https://www.googleapis.com/auth/admin.directory.device.chromeos   (write -- only
  *          needed for Lost Mode's disable/reenable action below; omit this scope if you
  *          don't want ClassGuard able to remotely disable a Chromebook at all)
+ *        https://www.googleapis.com/auth/presentations.readonly   (ClassPulse's
+ *          "Import from Google Slides" -- reads a teacher's own deck, impersonating
+ *          the requesting teacher rather than the superadmin)
+ *        https://www.googleapis.com/auth/drive.readonly   (lists the teacher's own
+ *          Slides decks for the import picker; same per-teacher impersonation)
+ *      The Slides + Drive scopes also need the Google Slides API and Google
+ *      Drive API enabled on the service account's GCP project.
  *   3. Set the Superadmin Email (same admin UI section) to a Google Workspace
  *      super-admin address; the service account impersonates them to call the Admin SDK.
  *
