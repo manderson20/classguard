@@ -18,6 +18,38 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.10.0] - 2026-07-04
+
+### Added
+
+- **Teacher Scenes** — reusable, teacher-owned allowed-website lists (GoGuardian "Scenes" equivalent): build a site list once, save it under a name, and reapply it when starting or focusing any class. Managed from the Start Class modal; rides the existing lesson focus mechanism. (#103, migration 095)
+- **Class sessions vs lessons** — you now start a *Class* (the monitored period) and launch one or more ClassPulse *Lessons* from inside it. Starting a class defaults to **Monitor only** (students keep district filtering) with an explicit **Focus** (allow-list) option, changeable mid-class from the live-class toolbar. In-class ClassPulse launcher with live-session Rejoin. (#105, migration 096)
+- **ClassPulse: Import from Google Slides** — teachers import their own decks (per-teacher domain-wide delegation; no sharing/publish needed); each slide becomes a full-fidelity image page, with question pages interleaved in the builder. 75-slide cap; deck remembered for future refresh. (#109, migration 097)
+- **ClassPulse: lesson Preview** — see the exact student view (chrome-free) before class, from a Preview button in the builder. (#106, #107)
+- **ClassPulse: "Show to Class" projector view** — Mentimeter-style anonymous live results for the board: big join code + joined count, animated answer bars with percentages (correct answer not revealed to the class), and a live word cloud for free-text answers; flagged/hidden responses excluded. (#111)
+- **ClassPulse: Library folders, staff sharing, unarchive, image upload** — organize lessons into folders, share school-wide or with specific staff (with revoke), restore archived lessons, and upload graphics/diagrams (PNG/JPEG) directly onto content pages. (#113, migration 098)
+- **ClassPulse: session results & history** — sessions list, per-session results page (per-question tallies and per-student answers), Hub recent-sessions with live-session rejoin, and a "View results" path from the ended screen. (#104)
+- **PrintOps IP→MAC lookup** + generic API-token registry (Integrations > API Tokens). (#102, migration 094)
+
+### Fixed
+
+- **ClassPulse student flow was unreachable for real students** — the join page required a web sign-in that students were locked out of, and the extension never bridged its login. Managed devices now join silently via an origin-gated extension token bridge; student Google sign-in is permitted only for `/pulse/` destinations. (#104)
+- **ClassPulse focus lock locked students out of the session itself** — the lock now opens the session page on class members' devices and exempts it from the overlay; late joiners are locked on join; unlock and session end release the whole roster (ending a locked session used to leave students locked). Extension v0.0.21. (#104)
+- **Teacher-paced sync hardening** — a silently dropped socket could strand a student on a stale slide; the join page now polls and reconciles every 10s. Hidden responses can no longer resurface from the live-socket cache on the projector or teach dashboard. (#111, #112)
+- Teach dashboard: missing lesson/class names, invisible slide body/teacher notes, blank live text answers, double-counted answers after polls, up-to-30s-stale join counts, missing responded denominator, misleading red gauge on empty rooms/content slides. (#104)
+- Class rosters showed emails instead of student names; live-class tiles showed truncated emails; the floating help button covered the Next button on live views. (#104)
+- Safety screenshots review page could never display images in a browser (unauthenticated `<img>` against an auth-gated route) — fixed via the new authenticated image component. (#109)
+- School-wide lesson shares duplicated on every toggle (unique constraint treated NULLs as distinct). (#113, migration 098)
+- Expired-but-unreclaimed Kea leases no longer attribute a reused IP to the previous device's MAC in the PrintOps lookup. (#102)
+- CodeQL: path containment for slide-image storage, Drive query escaping, PNG signature validation on downloaded/uploaded images. (#110, #114)
+
+### Changed
+
+- Live-class toolbar restyled: neutral MDI icons on translucent buttons; color reserved for restriction state, live screen-share, and End Class. (#105)
+- Google Workspace setup instructions now include the Slides/Drive delegation scopes and API-enablement steps. (#108)
+
+---
+
 ## [0.9.3] - 2026-06-30
 
 ### Added
