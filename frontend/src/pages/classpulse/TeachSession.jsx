@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useSocket } from '../../contexts/SocketContext';
 import api from '../../lib/api';
 
@@ -152,14 +152,23 @@ function ResponseFeed({ responses, onFlag, onHide }) {
 // ---------------------------------------------------------------------------
 // Question aggregate panel
 // ---------------------------------------------------------------------------
-function QuestionPanel({ agg, liveResponses }) {
+function QuestionPanel({ agg, liveResponses, joinedCount }) {
   const { question, responses: restResponses, aggregate } = agg;
 
   // Merge REST responses with any live socket responses that arrived since the last poll.
-  // Socket payloads use camelCase (studentId) while REST rows use snake_case (student_id).
+  // Socket payloads use camelCase (studentId/textValue) while REST rows use
+  // snake_case — normalize the live rows so the feed below can render either.
   const allLive = liveResponses[question.id] || [];
   const knownStudentIds = new Set(restResponses.map(r => r.student_id));
-  const newLive = allLive.filter(r => !knownStudentIds.has(r.studentId));
+  const newLive = allLive
+    .filter(r => !knownStudentIds.has(r.studentId))
+    .map((r, i) => ({
+      ...r,
+      student_id:     r.studentId,
+      text_value:     r.textValue,
+      option_ids:     r.optionIds,
+      anonymousOrder: restResponses.length + i + 1,
+    }));
   const merged   = [...restResponses, ...newLive];
   const total    = merged.length;
 
@@ -213,7 +222,7 @@ function QuestionPanel({ agg, liveResponses }) {
           <p className="text-sm font-semibold text-slate-800 mt-0.5 leading-snug">{question.prompt}</p>
         </div>
         <span className="text-xs font-bold text-slate-500 bg-slate-100 rounded-full px-2 py-0.5 flex-shrink-0">
-          {total}/{' '}
+          {total}{joinedCount > 0 ? `/${joinedCount}` : ''}{' '}
           <span className="font-normal text-slate-400">responded</span>
         </span>
       </div>
@@ -317,6 +326,10 @@ export default function TeachSession() {
         if (prev.some(s => s.studentId === studentId)) return prev;
         return [...prev, { studentId, studentName, ts }];
       });
+      // The presence list and "N joined" header both come from the REST
+      // dashboard — without this refetch a join wouldn't show for up to 30 s,
+      // exactly while the teacher is watching the class file in.
+      fetchDashboard();
     };
 
     const onHelpRequest = (payload) => {
@@ -433,13 +446,29 @@ export default function TeachSession() {
             </p>
           )}
           <p className="text-sm text-slate-400 mb-6">Students have been notified.</p>
-          <div className="flex gap-3">
-            <button onClick={() => navigate('/classpulse/lessons')} className="btn btn-secondary flex-1 text-sm">
-              Lesson Library
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => navigate(`/classpulse/sessions/${sessionId}/results`)}
+              className="btn btn-primary w-full text-sm"
+            >
+              View results
             </button>
-            <button onClick={() => navigate('/classpulse')} className="btn btn-primary flex-1 text-sm">
-              ClassPulse Hub
-            </button>
+            {dashboard?.session?.class_id && (
+              <button
+                onClick={() => navigate(`/classes/${dashboard.session.class_id}/lesson`)}
+                className="btn btn-secondary w-full text-sm"
+              >
+                Back to class
+              </button>
+            )}
+            <div className="flex gap-3">
+              <button onClick={() => navigate('/classpulse/lessons')} className="btn btn-secondary flex-1 text-sm">
+                Lesson Library
+              </button>
+              <button onClick={() => navigate('/classpulse')} className="btn btn-secondary flex-1 text-sm">
+                ClassPulse Hub
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -469,6 +498,16 @@ export default function TeachSession() {
 
       {/* ── Header ───────────────────────────────────────────────────────── */}
       <header className="bg-white border-b border-slate-200 px-4 py-3 flex items-center gap-4 flex-shrink-0">
+        {/* Way back to the live class view this lesson was launched from */}
+        {session?.class_id && (
+          <Link
+            to={`/classes/${session.class_id}/lesson`}
+            className="text-xs text-indigo-600 hover:text-indigo-800 font-medium flex-shrink-0"
+            title="Back to the live class view — this lesson keeps running"
+          >
+            ← Class
+          </Link>
+        )}
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-bold text-slate-800 truncate leading-tight">
             {session?.lesson_title || 'Live Session'}
@@ -519,15 +558,27 @@ export default function TeachSession() {
         <aside className="w-56 flex-shrink-0 bg-white border-r border-slate-200 flex flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto divide-y divide-slate-100">
 
-            {/* Pulse gauge */}
+            {/* Pulse gauge — neutral placeholder until someone joins, so the
+                teacher isn't greeted by an alarming red 0 on an empty room */}
             <div className="px-3 py-4 flex flex-col items-center">
               <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">Pulse Score</p>
-              <PulseGauge
-                score={pulse.score}
-                participation={pulse.participation}
-                comprehension={pulse.comprehension}
-                focus={pulse.focus}
-              />
+              {studentCount === 0 || (currentPage && questionAggregates?.length === 0) ? (
+                <div className="w-44 h-32 flex flex-col items-center justify-center text-center">
+                  <span className="text-3xl font-bold text-slate-300">—</span>
+                  <span className="text-[10px] text-slate-400 mt-1">
+                    {studentCount === 0
+                      ? 'Waiting for students to join'
+                      : 'No question on this slide'}
+                  </span>
+                </div>
+              ) : (
+                <PulseGauge
+                  score={pulse.score}
+                  participation={pulse.participation}
+                  comprehension={pulse.comprehension}
+                  focus={pulse.focus}
+                />
+              )}
             </div>
 
             {/* Students */}
@@ -630,12 +681,22 @@ export default function TeachSession() {
                 )}
               </div>
 
-              {/* Slide content is fetched via the full lesson on the builder;
-                  the dashboard only returns page metadata, not the body text.
-                  Show question aggregates which include the question prompt. */}
-              {questionAggregates?.length === 0 && (
+              {/* Slide body — what the students are reading right now */}
+              {currentPage.body && (
+                <div className="px-5 py-4">
+                  <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-wrap">{currentPage.body}</p>
+                </div>
+              )}
+              {!currentPage.body && questionAggregates?.length === 0 && (
                 <div className="px-5 py-4">
                   <p className="text-sm text-slate-400 italic">Content slide — no questions on this page.</p>
+                </div>
+              )}
+              {/* Teacher notes — never shown to students */}
+              {currentPage.teacher_notes && (
+                <div className="mx-5 mb-4 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
+                  <p className="text-xs font-semibold text-amber-700 mb-1">Teacher notes (private)</p>
+                  <p className="text-sm text-amber-800 leading-relaxed whitespace-pre-wrap">{currentPage.teacher_notes}</p>
                 </div>
               )}
             </div>
@@ -648,12 +709,15 @@ export default function TeachSession() {
                 key={agg.question.id}
                 agg={agg}
                 liveResponses={liveResponses}
+                joinedCount={studentCount}
               />
             )
           ))}
 
-          {/* Empty aggregate state */}
-          {currentPage && questionAggregates?.length > 0 && questionAggregates.every(a => a?.total_responses === 0) && (
+          {/* Empty aggregate state — count live socket responses too, or this
+              keeps saying "waiting" while answers stream in between polls */}
+          {currentPage && questionAggregates?.length > 0 &&
+            questionAggregates.every(a => a && a.total_responses === 0 && !(liveResponses[a.question.id]?.length)) && (
             <div className="text-center text-xs text-slate-400 py-2">
               Waiting for student responses…
             </div>

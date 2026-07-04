@@ -112,7 +112,7 @@ function PastLessonsTab({ classId }) {
               <Fragment key={lesson.id}>
                 <tr className="hover:bg-slate-50 cursor-pointer" onClick={() => setExpanded(expanded === lesson.id ? null : lesson.id)}>
                   <td className="px-4 py-2.5">
-                    {lesson.name || 'Untitled lesson'}
+                    {lesson.name || 'Untitled session'}
                     {lesson.is_active && <span className="badge-blue ml-2">Live</span>}
                   </td>
                   <td className="px-4 py-2.5 font-mono text-xs text-slate-500 whitespace-nowrap">
@@ -179,7 +179,7 @@ function StudentRow({ student, activity, onPenalty, onRelease, penaltyLoading })
   return (
     <tr className="border-b border-slate-100 hover:bg-slate-50">
       <td className="px-4 py-3">
-        <div className="font-medium text-sm text-slate-900">{student.name || student.email}</div>
+        <div className="font-medium text-sm text-slate-900">{student.full_name || student.email}</div>
         <div className="text-xs text-slate-400">{student.email}</div>
       </td>
       <td className="px-4 py-3">
@@ -338,12 +338,14 @@ export default function ClassDetail() {
         <div className="bg-blue-50 border border-blue-200 rounded-xl px-4 py-3 mb-5 flex items-center justify-between">
           <div>
             <span className="font-semibold text-blue-900 text-sm">
-              🎓 Lesson active{cls.active_lesson?.name ? `: ${cls.active_lesson.name}` : ''}
+              🎓 Class in session{cls.active_lesson?.name ? `: ${cls.active_lesson.name}` : ''}
             </span>
             <p className="text-xs text-blue-600 mt-0.5">
-              {(cls.active_lesson?.allowed_domains || []).length > 0
-                ? `Allowed: ${(cls.active_lesson.allowed_domains).slice(0,3).join(', ')}${cls.active_lesson.allowed_domains.length > 3 ? ' +more' : ''}`
-                : 'All web access blocked'}
+              {cls.active_lesson?.restriction_mode === 'monitor'
+                ? 'Monitoring only — students keep normal filtering'
+                : (cls.active_lesson?.allowed_domains || []).length > 0
+                  ? `Focus — allowed: ${(cls.active_lesson.allowed_domains).slice(0,3).join(', ')}${cls.active_lesson.allowed_domains.length > 3 ? ' +more' : ''}`
+                  : 'Focus — all web access blocked'}
             </p>
           </div>
           <div className="flex gap-2">
@@ -355,7 +357,7 @@ export default function ClassDetail() {
               disabled={endLesson.isPending}
               className="btn btn-sm btn-secondary"
             >
-              End Lesson
+              End Class
             </button>
           </div>
         </div>
@@ -373,7 +375,7 @@ export default function ClassDetail() {
           onClick={() => setTab('history')}
           className={`px-3 py-2 text-sm font-medium border-b-2 -mb-px ${tab === 'history' ? 'border-primary-600 text-primary-700' : 'border-transparent text-slate-500 hover:text-slate-700'}`}
         >
-          Past Lessons
+          Class History
         </button>
       </div>
 
@@ -384,7 +386,7 @@ export default function ClassDetail() {
             <p className="text-sm text-slate-500">{members.length} student{members.length !== 1 ? 's' : ''}</p>
             {!hasLesson && (
               <button onClick={() => setShowModal(true)} className="btn-primary">
-                ▶ Start Lesson
+                ▶ Start Class
               </button>
             )}
           </div>

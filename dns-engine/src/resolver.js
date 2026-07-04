@@ -76,10 +76,11 @@ async function resolveQuery(name, typeNum, sourceIp) {
     policy = subnetPolicy || await policyCache.getNetworkPolicy().catch(() => null);
   }
   const mode   = policy?.mode || 'standard';
-  // Only meaningful while an active lesson is the thing actually deciding
-  // this query (mode === 'lesson') — used to tag dns_logs so a teacher can
-  // later scope a student's history to just this lesson session.
-  const lessonSessionId = mode === 'lesson' ? (policy.lessonSessionId || null) : null;
+  // Tags dns_logs so a teacher can scope a student's history to a class
+  // session. Carried whenever an active session covers the student — in
+  // monitor-only sessions the mode stays 'standard' (normal policy decides
+  // the query) but the activity still belongs to the class session.
+  const lessonSessionId = policy?.lessonSessionId || null;
 
   const allowList = [
     ...(policy?.resolvedAllowDomains || []),

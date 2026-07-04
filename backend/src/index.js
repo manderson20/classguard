@@ -109,6 +109,7 @@ app.use('/api/v1/dns',         require('./routes/dns'));
 app.use('/api/v1/dns',         require('./routes/dnsRecords'));
 app.use('/api/v1/penalty-box', require('./routes/penaltyBox'));
 app.use('/api/v1/classes',     require('./routes/classes'));
+app.use('/api/v1/scenes',      require('./routes/scenes'));
 app.use('/api/v1/extension',   require('./routes/extension'));
 app.use('/api/v1/sync',        require('./routes/sync'));
 app.use('/api/v1/dhcp',        require('./routes/dhcp'));
@@ -151,6 +152,8 @@ app.use('/api/v1/lost-mode',     require('./routes/lostMode'));
 app.use('/api/v1/filter-bypass', require('./routes/filterBypass'));
 app.use('/api/v1/kb',            require('./routes/knowledgeBase'));
 app.use('/api/v1/network-tools', require('./routes/networkTools'));
+app.use('/api/v1/lookup',        require('./routes/lookup'));
+app.use('/api/v1/api-tokens',    require('./routes/apiTokens'));
 app.use('/metrics',              require('./routes/metrics'));
 
 // Health check — used by Docker, load balancers, and the HA node registry

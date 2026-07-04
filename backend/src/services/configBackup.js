@@ -63,6 +63,7 @@ const TABLES = [
   'phone_parking_lots', 'phone_ring_groups',
   'oneroster_sources', 'youtube_video_rules',
   'unblock_requests', 'penalty_box', 'lesson_sessions', 'lockdown_sessions',
+  'teacher_scenes',
 ];
 
 // Orders TABLES so parents come before children (safe insert order) by

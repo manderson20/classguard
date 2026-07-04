@@ -186,6 +186,7 @@ async function aggregateResponses(sessionId, questionId) {
     question:  { id: q.id, type: q.question_type, prompt: q.prompt, settings: q.settings, options },
     responses: responses.map((r, i) => ({
       id:             r.id,
+      student_id:     r.student_id,
       anonymousOrder: i + 1,
       text_value:     r.text_value,
       numeric_value:  r.numeric_value,
@@ -239,6 +240,23 @@ async function buildSessionReport(sessionId) {
 
   if (!session) return null;
 
+  // Option text/correctness for every answered question — without this a
+  // report consumer only has bare option UUIDs and can't render MC answers.
+  const answeredQuestionIds = [...new Set(allResponses.map(r => r.question_id))];
+  const { rows: allOptions } = answeredQuestionIds.length
+    ? await query(
+        `SELECT id, question_id, text, is_correct, position
+         FROM classpulse_question_options
+         WHERE question_id = ANY($1)
+         ORDER BY position`,
+        [answeredQuestionIds]
+      )
+    : { rows: [] };
+  const optionsByQuestion = {};
+  for (const o of allOptions) {
+    (optionsByQuestion[o.question_id] ||= []).push(o);
+  }
+
   const durationMs = session.ended_at
     ? new Date(session.ended_at) - new Date(session.started_at)
     : Date.now() - new Date(session.started_at);
@@ -259,6 +277,7 @@ async function buildSessionReport(sessionId) {
         question_type: r.question_type,
         page_title:    r.page_title,
         page_position: r.position,
+        options:       optionsByQuestion[r.question_id] || [],
         responses:     [],
       };
     }

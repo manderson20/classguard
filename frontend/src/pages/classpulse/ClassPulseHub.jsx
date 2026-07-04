@@ -2,89 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
-
-function StartSessionModal({ lesson, onClose }) {
-  const navigate = useNavigate();
-  const [classId, setClassId]         = useState('');
-  const [lockEnabled, setLockEnabled] = useState(false);
-  const [starting, setStarting]   = useState(false);
-  const [error, setError]         = useState(null);
-
-  const { data: classes = [] } = useQuery({
-    queryKey: ['classes'],
-    queryFn:  () => api.get('/classes'),
-  });
-
-  const start = async () => {
-    setStarting(true);
-    setError(null);
-    try {
-      const session = await api.post('/classpulse/sessions/start', {
-        lesson_id: lesson.id,
-        class_id:  classId || null,
-        mode: 'teacher_paced',
-        classroom_lock_enabled: lockEnabled,
-      });
-      if (lockEnabled) await api.post(`/classpulse/sessions/${session.id}/lock`, {});
-      navigate(`/classpulse/sessions/${session.id}/teach`);
-    } catch (e) {
-      setError(e.message || 'Failed to start session');
-      setStarting(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-md">
-        <div className="px-6 pt-6 pb-4">
-          <h2 className="text-lg font-bold text-slate-800">Start session</h2>
-          <p className="text-sm text-slate-500 mt-0.5 truncate">{lesson.title}</p>
-        </div>
-        <div className="px-6 pb-6 space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Class (optional)</label>
-            <select
-              value={classId}
-              onChange={e => setClassId(e.target.value)}
-              className="input w-full"
-            >
-              <option value="">No class / open session</option>
-              {classes.map(c => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </select>
-          </div>
-
-          <label className="flex items-center gap-3 cursor-pointer select-none">
-            <input
-              type="checkbox"
-              checked={lockEnabled}
-              onChange={e => setLockEnabled(e.target.checked)}
-              className="w-4 h-4 text-indigo-600 rounded"
-            />
-            <div>
-              <p className="text-sm font-medium text-slate-700">Lock students to this session</p>
-              <p className="text-xs text-slate-400">Pushes all class members to /pulse/{'{'}code{'}'} via ClassGuard extension</p>
-            </div>
-          </label>
-
-          {error && (
-            <p className="text-sm text-rose-600">{error}</p>
-          )}
-
-          <div className="flex gap-3 pt-1">
-            <button onClick={onClose} className="btn btn-secondary flex-1" disabled={starting}>
-              Cancel
-            </button>
-            <button onClick={start} className="btn btn-primary flex-1" disabled={starting}>
-              {starting ? 'Starting…' : 'Start'}
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
+import StartSessionModal from '../../components/StartPulseSessionModal';
 
 function LessonCard({ lesson, onStart }) {
   const statusColors = {
@@ -153,6 +71,16 @@ export default function ClassPulseHub() {
     drafts:    allLessons?.filter(l => l.status === 'draft').length ?? 0,
   };
 
+  const { data: sessions = [] } = useQuery({
+    queryKey: ['classpulse-sessions'],
+    queryFn:  () => api.get('/classpulse/sessions?limit=8'),
+    // Live-session banner must reflect right-now state, not the app-default
+    // 60s stale cache.
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+  const liveSessions = sessions.filter(s => s.status === 'active');
+
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
       {/* Header */}
@@ -180,6 +108,26 @@ export default function ClassPulseHub() {
         ))}
       </div>
 
+      {/* Live session banner — the way back in after closing the teach tab */}
+      {liveSessions.map(s => (
+        <div key={s.id} className="bg-emerald-50 border border-emerald-200 rounded-2xl px-5 py-4 flex items-center justify-between gap-4 flex-wrap">
+          <div className="flex items-center gap-3">
+            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 animate-pulse flex-shrink-0" />
+            <div>
+              <p className="text-sm font-semibold text-emerald-800">
+                {s.lesson_title || 'Live session'} <span className="font-normal">is live now</span>
+              </p>
+              <p className="text-xs text-emerald-600">
+                {s.class_name ? `${s.class_name} · ` : ''}Join code {s.join_code?.toUpperCase()} · {s.student_count} joined
+              </p>
+            </div>
+          </div>
+          <Link to={`/classpulse/sessions/${s.id}/teach`} className="btn btn-primary text-sm flex-shrink-0">
+            Rejoin session
+          </Link>
+        </div>
+      ))}
+
       {/* Published lessons */}
       <div>
         <div className="flex items-center justify-between mb-3">
@@ -206,6 +154,43 @@ export default function ClassPulseHub() {
           </div>
         )}
       </div>
+
+      {/* Recent sessions — stored results stay reachable after class ends */}
+      {sessions.length > 0 && (
+        <div>
+          <h2 className="text-sm font-semibold text-slate-700 mb-3">Recent Sessions</h2>
+          <div className="bg-white rounded-2xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+            {sessions.map(s => (
+              <Link
+                key={s.id}
+                to={s.status === 'active'
+                  ? `/classpulse/sessions/${s.id}/teach`
+                  : `/classpulse/sessions/${s.id}/results`}
+                className="flex items-center justify-between gap-4 px-5 py-3 hover:bg-slate-50 transition-colors"
+              >
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-slate-700 truncate">
+                    {s.lesson_title || 'Untitled lesson'}
+                    {s.status === 'active' && (
+                      <span className="ml-2 text-[10px] font-semibold text-emerald-600 bg-emerald-50 border border-emerald-200 rounded-full px-1.5 py-0.5">LIVE</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    {s.class_name ? `${s.class_name} · ` : ''}
+                    {new Date(s.started_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+                  </p>
+                </div>
+                <div className="text-right flex-shrink-0">
+                  <p className="text-xs text-slate-500">{s.student_count} students · {s.response_count} answers</p>
+                  <p className="text-[11px] text-indigo-600 font-medium">
+                    {s.status === 'active' ? 'Rejoin →' : 'View results →'}
+                  </p>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Quick links */}
       <div className="bg-indigo-50 rounded-2xl p-5 flex flex-wrap gap-4">

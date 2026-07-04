@@ -8,6 +8,35 @@ import Avatar from '../components/Avatar';
 import { TraceContent } from '../components/WhyBlockedTrace';
 import LiveViewModal from '../components/LiveViewModal';
 import LiveThumbnailsGrid from '../components/LiveThumbnailsGrid';
+import StartLessonModal from '../components/StartLessonModal';
+import MdiIcon from '@mdi/react';
+import {
+  mdiEyeOutline, mdiTarget, mdiPresentationPlay, mdiChatOutline,
+  mdiShieldLockOutline, mdiAccountQuestionOutline, mdiViewGridOutline,
+  mdiMonitorShare, mdiMonitorOff, mdiStopCircleOutline,
+} from '@mdi/js';
+
+// Neutral toolbar button for the live-class top bar — translucent on the
+// dark bar, with color reserved for state accents and destructive actions.
+function ToolbarButton({ icon, label, onClick, disabled, title, accent = null }) {
+  const accentClass =
+    accent === 'red'       ? 'bg-red-600/90 hover:bg-red-600' :
+    accent === 'red-pulse' ? 'bg-red-600/90 hover:bg-red-600 animate-pulse' :
+    accent === 'emerald'   ? 'bg-emerald-600/80 hover:bg-emerald-600' :
+    'bg-white/10 hover:bg-white/20';
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      title={title || label}
+      className={`flex items-center gap-1.5 text-xs font-medium text-white rounded-lg px-2.5 py-1.5
+                  transition-colors disabled:opacity-40 ${accentClass}`}
+    >
+      <MdiIcon path={icon} size="1.1em" className="flex-shrink-0" />
+      <span className="whitespace-nowrap">{label}</span>
+    </button>
+  );
+}
 
 function hostnameOf(url) {
   try { return new URL(url).hostname; } catch { return url; }
@@ -401,7 +430,7 @@ function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRe
             className="flex-shrink-0" />
           <Avatar photoUrl={student.photo_url} name={student.full_name} email={student.email} className="w-5 h-5 text-[10px]" />
           <div className="font-semibold text-sm text-slate-800 truncate">
-            {student.given_name || student.name?.split(' ')[0] || student.email}
+            {student.given_name || student.full_name?.split(' ')[0] || student.email}
           </div>
         </div>
         {isRestricted ? (
@@ -493,6 +522,88 @@ function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRe
   );
 }
 
+// ---------------------------------------------------------------------------
+// ClassPulse lesson picker — launch an interactive lesson for this class
+// without leaving the live class view. Multiple lessons can run one after
+// another within the same class session.
+// ---------------------------------------------------------------------------
+function PulseLessonPicker({ onClose, onLaunch, launching, classId }) {
+  const { data: lessons = [], isLoading } = useQuery({
+    queryKey: ['classpulse-lessons-published'],
+    queryFn:  () => api.get('/classpulse/lessons?status=published'),
+  });
+  const { data: sessions = [] } = useQuery({
+    queryKey: ['classpulse-sessions'],
+    queryFn:  () => api.get('/classpulse/sessions?limit=10'),
+    // "Is a session live right now?" must not serve the app-default 60s
+    // stale cache — a session started moments ago has to show as Rejoin.
+    staleTime: 0,
+    refetchOnMount: 'always',
+  });
+  const liveForClass = sessions.find(s => s.status === 'active' && s.class_id === classId);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col">
+        <div className="px-6 py-5 border-b border-slate-100">
+          <h2 className="text-lg font-bold text-slate-900">Launch a lesson</h2>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Students in this class join live and answer as you present.
+          </p>
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+          {liveForClass && (
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-emerald-800 truncate">
+                  {liveForClass.lesson_title || 'Live session'} is already running
+                </p>
+                <p className="text-xs text-emerald-600">Code {liveForClass.join_code?.toUpperCase()}</p>
+              </div>
+              <Link to={`/classpulse/sessions/${liveForClass.id}/teach`} className="btn btn-sm btn-primary flex-shrink-0">
+                Rejoin
+              </Link>
+            </div>
+          )}
+
+          {isLoading && <p className="text-sm text-slate-400 text-center py-6">Loading lessons…</p>}
+          {!isLoading && lessons.length === 0 && (
+            <div className="text-center py-6">
+              <p className="text-sm text-slate-400 mb-3">No published lessons yet.</p>
+              <Link to="/classpulse/lessons/new" className="btn btn-sm btn-primary">Build a lesson</Link>
+            </div>
+          )}
+          {lessons.map(l => (
+            <div key={l.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 hover:border-indigo-300 transition-colors">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-800 truncate">{l.title}</p>
+                <p className="text-xs text-slate-400">
+                  {l.page_count ? `${l.page_count} slides` : l.subject || 'Lesson'}
+                </p>
+              </div>
+              <button
+                onClick={() => onLaunch(l.id)}
+                disabled={launching}
+                className="btn btn-sm btn-primary flex-shrink-0 disabled:opacity-40"
+              >
+                {launching ? 'Starting…' : '▶ Start'}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-100 flex items-center justify-between">
+          <Link to="/classpulse/lessons" className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
+            Open Lesson Library →
+          </Link>
+          <button onClick={onClose} className="btn btn-sm btn-secondary">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ActiveLesson() {
   const { classId }   = useParams();
   const navigate      = useNavigate();
@@ -512,6 +623,8 @@ export default function ActiveLesson() {
   const [fullScreenStudent, setFullScreenStudent] = useState(null);
   const [raisedHands, setRaisedHands] = useState(new Map());
   const [thumbnailsOpen, setThumbnailsOpen] = useState(false);
+  const [focusEditorOpen, setFocusEditorOpen] = useState(false);
+  const [pulsePickerOpen, setPulsePickerOpen] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
   const [broadcastError, setBroadcastError] = useState(null);
   const broadcastStreamRef = useRef(null);
@@ -629,6 +742,25 @@ export default function ActiveLesson() {
     },
   });
 
+  // Mid-class restriction change (monitor <-> focus, edit allowed sites)
+  const updateRestrictions = useMutation({
+    mutationFn: ({ lessonId, ...body }) => api.patch(`/classes/${classId}/lessons/${lessonId}`, body),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['class', classId] });
+      setFocusEditorOpen(false);
+    },
+  });
+
+  // Launch a ClassPulse lesson for this class mid-session
+  const startPulseSession = useMutation({
+    mutationFn: (lessonId) => api.post('/classpulse/sessions/start', {
+      lesson_id: lessonId,
+      class_id:  classId,
+      mode: 'teacher_paced',
+    }),
+    onSuccess: (session) => navigate(`/classpulse/sessions/${session.id}/teach`),
+  });
+
   const restrict = useMutation({
     mutationFn: (studentId) => api.post('/penalty-box', { student_id: studentId }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['class', classId] }),
@@ -731,59 +863,67 @@ export default function ActiveLesson() {
         <div className="flex items-center gap-4">
           <Link to={`/classes/${classId}`} className="text-blue-200 hover:text-white text-sm">← {cls.name}</Link>
           <div>
-            <span className="font-bold">{lesson?.name || 'Active Lesson'}</span>
+            <span className="font-bold">{lesson?.name || 'Live Class'}</span>
             <span className="text-blue-300 text-sm ml-3">{activeCount} / {members.length} online</span>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          {allowed.length > 0 && (
-            <span className="text-xs text-blue-200">
-              {allowed.slice(0,3).join(' · ')}{allowed.length > 3 ? ` +${allowed.length - 3}` : ''}
-            </span>
-          )}
-          <button
+        {/* Toolbar — neutral translucent buttons with MDI icons; color is
+            reserved for state (restriction mode, live share) and the one
+            destructive action (End Class). */}
+        <div className="flex items-center gap-2">
+          <ToolbarButton
+            icon={lesson?.restriction_mode === 'monitor' ? mdiEyeOutline : mdiTarget}
+            label={lesson?.restriction_mode === 'monitor'
+              ? 'Monitoring'
+              : `Focus${allowed.length ? `: ${allowed.slice(0, 2).join(', ')}${allowed.length > 2 ? ` +${allowed.length - 2}` : ''}` : ''}`}
+            title="Change what students can browse during this class"
+            onClick={() => setFocusEditorOpen(true)}
+            accent={lesson?.restriction_mode === 'monitor' ? null : 'emerald'}
+          />
+          <ToolbarButton
+            icon={mdiPresentationPlay}
+            label="Launch Lesson"
+            onClick={() => setPulsePickerOpen(true)}
+          />
+          <ToolbarButton
+            icon={mdiChatOutline}
+            label={`Chat${selected.size > 0 ? ` (${selected.size})` : ''}`}
             onClick={openChat}
             disabled={selected.size === 0}
-            className="btn btn-sm bg-blue-600 text-white hover:bg-blue-500 border-0 disabled:opacity-40"
-          >
-            💬 Chat {selected.size > 0 && `(${selected.size})`}
-          </button>
-          <button
+          />
+          <ToolbarButton
+            icon={mdiShieldLockOutline}
+            label={`Lockdown Test${selected.size > 0 ? ` (${selected.size})` : ''}`}
             onClick={() => setLockdownFormOpen(true)}
             disabled={selected.size === 0}
-            className="btn btn-sm bg-amber-600 text-white hover:bg-amber-700 border-0 disabled:opacity-40"
-          >
-            🔒 Lockdown Test {selected.size > 0 && `(${selected.size})`}
-          </button>
-          <button
+          />
+          <ToolbarButton
+            icon={mdiAccountQuestionOutline}
+            label="Pick Student"
             onClick={pickRandomStudent}
             disabled={members.length === 0}
-            className="btn btn-sm bg-purple-600 text-white hover:bg-purple-700 border-0 disabled:opacity-40"
-          >
-            🎲 Pick Student
-          </button>
-          <button
+          />
+          <ToolbarButton
+            icon={mdiViewGridOutline}
+            label="Thumbnails"
             onClick={() => setThumbnailsOpen(true)}
             disabled={members.length === 0}
-            className="btn btn-sm bg-slate-700 text-white hover:bg-slate-600 border-0 disabled:opacity-40"
-          >
-            🖼 Live Thumbnails
-          </button>
-          <button
+          />
+          <ToolbarButton
+            icon={broadcasting ? mdiMonitorOff : mdiMonitorShare}
+            label={broadcasting ? 'Stop Sharing' : 'Share Screen'}
             onClick={broadcasting ? stopBroadcast : startBroadcast}
             disabled={members.length === 0}
-            className={`btn btn-sm border-0 disabled:opacity-40 ${broadcasting ? 'bg-red-600 hover:bg-red-700 animate-pulse' : 'bg-teal-600 hover:bg-teal-700'} text-white`}
-          >
-            {broadcasting ? '⏹ Stop Sharing' : '📺 Share Screen'}
-          </button>
-          <button
+            accent={broadcasting ? 'red-pulse' : null}
+          />
+          <ToolbarButton
+            icon={mdiStopCircleOutline}
+            label="End Class"
             onClick={() => lesson && endLesson.mutate(lesson.id)}
             disabled={endLesson.isPending || !lesson}
-            className="btn btn-sm bg-red-600 text-white hover:bg-red-700 border-0"
-          >
-            ■ End Lesson
-          </button>
+            accent="red"
+          />
         </div>
       </div>
 
@@ -891,6 +1031,25 @@ export default function ActiveLesson() {
         <LiveThumbnailsGrid members={members} onClose={() => setThumbnailsOpen(false)} />
       )}
 
+      {focusEditorOpen && lesson && (
+        <StartLessonModal
+          initial={lesson}
+          loading={updateRestrictions.isPending}
+          onClose={() => setFocusEditorOpen(false)}
+          onStart={({ restriction_mode, allowed_domains }) =>
+            updateRestrictions.mutate({ lessonId: lesson.id, restriction_mode, allowed_domains })}
+        />
+      )}
+
+      {pulsePickerOpen && (
+        <PulseLessonPicker
+          onClose={() => setPulsePickerOpen(false)}
+          onLaunch={(lessonId) => startPulseSession.mutate(lessonId)}
+          launching={startPulseSession.isPending}
+          classId={classId}
+        />
+      )}
+
       {/* Activity log sidebar — latest events */}
       <div className="flex-shrink-0 bg-slate-800 text-white px-4 py-2 text-xs font-mono max-h-28 overflow-y-auto">
         <div className="text-slate-400 mb-1">Recent navigation</div>
@@ -899,7 +1058,7 @@ export default function ActiveLesson() {
           .slice(0, 20)
           .map(([studentId, ev]) => {
             const student = members.find(m => m.id === studentId);
-            const name    = student?.given_name || student?.name?.split(' ')[0] || '?';
+            const name    = student?.given_name || student?.full_name?.split(' ')[0] || '?';
             let host = ev.url;
             try { host = new URL(ev.url).hostname; } catch {}
             return (

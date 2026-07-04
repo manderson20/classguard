@@ -27,12 +27,21 @@ export default function AuthCallback() {
     })
       .then(({ token }) => login(token))
       .then((user) => {
-        // Students don't have access to the teacher dashboard
+        const next = sessionStorage.getItem('cg_login_next');
+        sessionStorage.removeItem('cg_login_next');
+        // Students don't have access to the teacher dashboard — but a
+        // ClassPulse join page (/pulse/<code>) is exactly where a student
+        // belongs, and it needs their signed-in identity to record answers.
+        // Every other RequireAuth route still gates on teacher+ roles.
         if (user.role === 'student') {
-          localStorage.removeItem('cg_token');
-          navigate('/login?error=student_not_allowed', { replace: true });
+          if (next && next.startsWith('/pulse/')) {
+            navigate(next, { replace: true });
+          } else {
+            localStorage.removeItem('cg_token');
+            navigate('/login?error=student_not_allowed', { replace: true });
+          }
         } else {
-          navigate('/', { replace: true });
+          navigate(next && next.startsWith('/') ? next : '/', { replace: true });
         }
       })
       .catch((err) => {
