@@ -93,8 +93,8 @@ async function resolvePolicy(studentId, location = 'any') {
   // 1. Active lesson session (teacher override — highest priority short of
   // an active lockdown). A 'monitor' session deliberately does NOT flip the
   // mode: students keep their normal policy, the session only exists for
-  // visibility. Its id still tags dns_logs/browser_history via
-  // getActiveLessonSessionId(), which matches any active session.
+  // visibility. Its id is still carried on the result (below) so DNS and
+  // browser history get tagged with the class session either way.
   const { rows: lessonRows } = await query(
     `SELECT ls.id, ls.allowed_domains, ls.teacher_id, ls.restriction_mode
      FROM lesson_sessions ls
@@ -106,10 +106,11 @@ async function resolvePolicy(studentId, location = 'any') {
     [studentId]
   );
 
-  let lessonSessionId = null;
+  // History tagging is independent of restriction mode — any active class
+  // session covering this student tags their activity.
+  const lessonSessionId = lessonRows[0]?.id || null;
   if (!mode && lessonRows[0] && lessonRows[0].restriction_mode !== 'monitor') {
     mode = 'lesson';
-    lessonSessionId = lessonRows[0].id;
     resolvedAllowDomains = lessonRows[0].allowed_domains || [];
   }
 
