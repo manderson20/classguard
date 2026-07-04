@@ -63,7 +63,15 @@ router.get('/', lookupAuth, async (req, res) => {
 
   // state 0 = active/valid. No lease, or a declined/expired-reclaimed one,
   // both mean "no current IP->MAC mapping" — same routine 404.
-  const mac = lease && lease.state === 0 ? lease['hw-address'] : null;
+  //
+  // state alone isn't sufficient: a lease whose lifetime has elapsed keeps
+  // state 0 until Kea's reclamation cycle runs, so also check cltt +
+  // valid-lft against now — otherwise a reused/expired IP would be
+  // attributed to the previous device's MAC instead of 404ing.
+  const expired = lease &&
+    Number.isFinite(lease.cltt) && Number.isFinite(lease['valid-lft']) &&
+    (lease.cltt + lease['valid-lft']) * 1000 <= Date.now();
+  const mac = lease && lease.state === 0 && !expired ? lease['hw-address'] : null;
   if (!mac) return res.status(404).json({ detail: 'No active lease for this IP' });
 
   res.json({ mac_address: mac });
