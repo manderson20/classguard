@@ -205,7 +205,10 @@ router.post('/:id/lessons', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  const { allowed_domains = [], name = null } = req.body;
+  const { allowed_domains = [], name = null, restriction_mode = 'focus' } = req.body;
+  if (!['focus', 'monitor'].includes(restriction_mode)) {
+    return res.status(400).json({ error: "restriction_mode must be 'focus' or 'monitor'" });
+  }
 
   const lesson = await withTransaction(async (client) => {
     // Close any existing active session for this class
@@ -215,10 +218,10 @@ router.post('/:id/lessons', async (req, res) => {
       [classId]
     );
     const { rows } = await client.query(
-      `INSERT INTO lesson_sessions (class_id, teacher_id, name, allowed_domains, is_active)
-       VALUES ($1,$2,$3,$4,true)
+      `INSERT INTO lesson_sessions (class_id, teacher_id, name, allowed_domains, is_active, restriction_mode)
+       VALUES ($1,$2,$3,$4,true,$5)
        RETURNING *`,
-      [classId, userId, name, JSON.stringify(allowed_domains)]
+      [classId, userId, name, JSON.stringify(allowed_domains), restriction_mode]
     );
     return rows[0];
   });
@@ -241,13 +244,19 @@ router.patch('/:id/lessons/:lessonId', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  const { allowed_domains } = req.body;
+  const { allowed_domains, restriction_mode } = req.body;
+  if (restriction_mode !== undefined && !['focus', 'monitor'].includes(restriction_mode)) {
+    return res.status(400).json({ error: "restriction_mode must be 'focus' or 'monitor'" });
+  }
   const { rows } = await query(
     `UPDATE lesson_sessions
-     SET allowed_domains = $1, updated_at = NOW()
+     SET allowed_domains = COALESCE($1, allowed_domains),
+         restriction_mode = COALESCE($4, restriction_mode),
+         updated_at = NOW()
      WHERE id = $2 AND class_id = $3 AND is_active = true
      RETURNING *`,
-    [JSON.stringify(allowed_domains || []), req.params.lessonId, req.params.id]
+    [allowed_domains !== undefined ? JSON.stringify(allowed_domains) : null,
+     req.params.lessonId, req.params.id, restriction_mode || null]
   );
   if (!rows[0]) return res.status(404).json({ error: 'Active lesson not found' });
 

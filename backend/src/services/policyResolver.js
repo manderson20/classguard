@@ -91,9 +91,12 @@ async function resolvePolicy(studentId, location = 'any') {
   }
 
   // 1. Active lesson session (teacher override — highest priority short of
-  // an active lockdown)
+  // an active lockdown). A 'monitor' session deliberately does NOT flip the
+  // mode: students keep their normal policy, the session only exists for
+  // visibility. Its id still tags dns_logs/browser_history via
+  // getActiveLessonSessionId(), which matches any active session.
   const { rows: lessonRows } = await query(
-    `SELECT ls.id, ls.allowed_domains, ls.teacher_id
+    `SELECT ls.id, ls.allowed_domains, ls.teacher_id, ls.restriction_mode
      FROM lesson_sessions ls
      JOIN class_members cm ON cm.class_id = ls.class_id
      WHERE cm.student_id = $1
@@ -104,7 +107,7 @@ async function resolvePolicy(studentId, location = 'any') {
   );
 
   let lessonSessionId = null;
-  if (!mode && lessonRows[0]) {
+  if (!mode && lessonRows[0] && lessonRows[0].restriction_mode !== 'monitor') {
     mode = 'lesson';
     lessonSessionId = lessonRows[0].id;
     resolvedAllowDomains = lessonRows[0].allowed_domains || [];
@@ -325,7 +328,18 @@ async function explainPolicyChain(studentId, location = 'any') {
     `SELECT id, target_url FROM lockdown_sessions WHERE student_id = $1 AND status = 'active' LIMIT 1`,
     [studentId]
   );
-  const activeLessonSessionId = await getActiveLessonSessionId(studentId);
+  // Unlike history tagging (getActiveLessonSessionId, any active session),
+  // only a 'focus' session actually decides the policy chain — a 'monitor'
+  // session leaves the student's normal policy in effect.
+  const { rows: focusLessonRows } = await query(
+    `SELECT ls.id FROM lesson_sessions ls
+     JOIN class_members cm ON cm.class_id = ls.class_id
+     WHERE cm.student_id = $1 AND ls.is_active = true
+       AND ls.restriction_mode != 'monitor'
+     ORDER BY ls.started_at DESC LIMIT 1`,
+    [studentId]
+  );
+  const activeLessonSessionId = focusLessonRows[0]?.id || null;
   const { rows: pbRows } = await query(
     `SELECT id FROM penalty_box
      WHERE student_id = $1 AND released_at IS NULL AND (expires_at IS NULL OR expires_at > NOW())

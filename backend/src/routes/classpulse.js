@@ -922,7 +922,7 @@ router.get('/sessions', async (req, res) => {
   const isAdmin = ['admin', 'superadmin'].includes(role);
 
   const { rows } = await query(
-    `SELECT s.id, s.join_code, s.mode, s.status, s.started_at, s.ended_at,
+    `SELECT s.id, s.join_code, s.mode, s.status, s.started_at, s.ended_at, s.class_id,
             l.title AS lesson_title, c.name AS class_name,
             (SELECT COUNT(*)::int FROM classpulse_session_students
              WHERE session_id = s.id) AS student_count,
