@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../../lib/api';
 import StartSessionModal from '../../components/StartPulseSessionModal';
+import AuthedImage from '../../components/AuthedImage';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -266,6 +267,15 @@ function PageEditor({ page, lessonId, onPageUpdated, onPageDeleted }) {
         />
       </div>
 
+      {/* Imported slide image */}
+      {page.image_url && (
+        <AuthedImage
+          src={`/api/v1/classpulse/slide-image/${page.id}`}
+          alt={page.title || 'Slide'}
+          className="w-full rounded-xl border border-slate-200"
+        />
+      )}
+
       {/* Body — content slides */}
       {showBody && (
         <div>
@@ -397,9 +407,100 @@ function AddPagePanel({ lessonId, currentPageCount, onAdded, onCancel }) {
 }
 
 // ---------------------------------------------------------------------------
+// Import from Google Slides — lists the teacher's own decks (read-only via
+// domain-wide delegation) and appends one image page per slide.
+// ---------------------------------------------------------------------------
+function SlidesImportModal({ lessonId, onImported, onClose }) {
+  const [search, setSearch]     = useState('');
+  const [decks, setDecks]       = useState(null); // null = loading
+  const [error, setError]       = useState(null);
+  const [importing, setImporting] = useState(null); // deck id while running
+
+  const load = useCallback(async (term) => {
+    setDecks(null);
+    setError(null);
+    try {
+      setDecks(await api.get(`/classpulse/google-slides/presentations?search=${encodeURIComponent(term || '')}`));
+    } catch (e) {
+      setError(e.message || 'Failed to list presentations');
+      setDecks([]);
+    }
+  }, []);
+
+  useEffect(() => { load(''); }, [load]);
+
+  const runImport = async (deck) => {
+    setImporting(deck.id);
+    setError(null);
+    try {
+      const result = await api.post(`/classpulse/lessons/${lessonId}/import-slides`, { presentation_id: deck.id });
+      onImported(result);
+    } catch (e) {
+      setError(e.message || 'Import failed');
+      setImporting(null);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col">
+        <div className="px-6 py-5 border-b border-slate-100">
+          <h2 className="text-lg font-bold text-slate-900">Import from Google Slides</h2>
+          <p className="text-sm text-slate-500 mt-0.5">
+            Each slide becomes an image page at the end of this lesson — add question
+            pages between them and reorder freely. Your deck stays untouched.
+          </p>
+        </div>
+
+        <div className="px-6 pt-4">
+          <input
+            className="input w-full text-sm"
+            placeholder="Search your presentations…"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); load(search); } }}
+          />
+        </div>
+
+        <div className="flex-1 overflow-y-auto px-6 py-4 space-y-2">
+          {error && (
+            <div className="rounded-xl bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-700">{error}</div>
+          )}
+          {decks === null && <p className="text-sm text-slate-400 text-center py-6">Loading your presentations…</p>}
+          {decks?.length === 0 && !error && (
+            <p className="text-sm text-slate-400 text-center py-6">No presentations found.</p>
+          )}
+          {decks?.map(d => (
+            <div key={d.id} className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 px-4 py-3 hover:border-indigo-300 transition-colors">
+              <div className="min-w-0">
+                <p className="text-sm font-medium text-slate-800 truncate">{d.name}</p>
+                <p className="text-xs text-slate-400">
+                  Modified {new Date(d.modifiedTime).toLocaleDateString()}
+                </p>
+              </div>
+              <button
+                onClick={() => runImport(d)}
+                disabled={!!importing}
+                className="btn btn-primary text-xs px-3 py-1.5 flex-shrink-0 disabled:opacity-40"
+              >
+                {importing === d.id ? 'Importing…' : 'Import'}
+              </button>
+            </div>
+          ))}
+        </div>
+
+        <div className="px-6 py-4 border-t border-slate-100 flex justify-end">
+          <button onClick={onClose} disabled={!!importing} className="btn btn-secondary text-sm">Close</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Lesson header (title / metadata editor)
 // ---------------------------------------------------------------------------
-function LessonHeader({ lesson, onSaved, canPresent }) {
+function LessonHeader({ lesson, onSaved, canPresent, onImportSlides }) {
   const [open,        setOpen]        = useState(false);
   const [presenting,  setPresenting]  = useState(false);
   const [title,       setTitle]       = useState(lesson.title || '');
@@ -448,6 +549,13 @@ function LessonHeader({ lesson, onSaved, canPresent }) {
         <div className="flex items-center gap-2 flex-shrink-0">
           <button onClick={() => setOpen(o => !o)} className="btn btn-secondary text-sm">
             {open ? 'Close' : 'Edit info'}
+          </button>
+          <button
+            onClick={onImportSlides}
+            title="Import a Google Slides deck — each slide becomes an image page"
+            className="btn btn-secondary text-sm"
+          >
+            Import Slides
           </button>
           <button
             onClick={() => window.open(`/classpulse/lessons/${lesson.id}/preview`, '_blank', 'noopener')}
@@ -528,6 +636,7 @@ export default function LessonBuilder() {
   const [pages,      setPages]      = useState([]);
   const [activePageId, setActivePid] = useState(null);
   const [showAddPage, setShowAdd]   = useState(false);
+  const [showSlidesImport, setShowSlidesImport] = useState(false);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState(null);
   const [creating,   setCreating]   = useState(false);
@@ -661,7 +770,30 @@ export default function LessonBuilder() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-slate-50">
       {/* Lesson header */}
-      {lesson && <LessonHeader lesson={lesson} onSaved={onLessonSaved} canPresent={pages.length > 0} />}
+      {lesson && (
+        <LessonHeader
+          lesson={lesson}
+          onSaved={onLessonSaved}
+          canPresent={pages.length > 0}
+          onImportSlides={() => setShowSlidesImport(true)}
+        />
+      )}
+
+      {showSlidesImport && (
+        <SlidesImportModal
+          lessonId={lessonId}
+          onClose={() => setShowSlidesImport(false)}
+          onImported={({ pages: newPages }) => {
+            setShowSlidesImport(false);
+            setPages(prev => {
+              const merged = [...prev, ...newPages.map(p => ({ ...p, questions: [] }))]
+                .sort((a, b) => a.position - b.position);
+              return merged;
+            });
+            if (newPages[0]) setActivePid(newPages[0].id);
+          }}
+        />
+      )}
 
       {/* Builder body */}
       <div className="flex flex-1 overflow-hidden">

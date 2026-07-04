@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useSocket } from '../../contexts/SocketContext';
 import api from '../../lib/api';
 import { QuestionRenderer } from '../../components/classpulse/QuestionRenderers';
+import AuthedImage from '../../components/AuthedImage';
 
 // ---------------------------------------------------------------------------
 // Main component
@@ -275,6 +276,14 @@ export default function StudentJoin() {
                   {currentPage.title}
                 </h2>
               </div>
+            )}
+
+            {currentPage.image_url && (
+              <AuthedImage
+                src={`/api/v1/classpulse/slide-image/${currentPage.id}`}
+                alt={currentPage.title || 'Slide'}
+                className="w-full"
+              />
             )}
 
             {currentPage.body && (

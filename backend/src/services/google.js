@@ -42,10 +42,20 @@ async function getSetting(key) {
 // Shared by initGoogleAdmin() below and routes/integrations.js's Chromebook sync —
 // same service account, different scopes per call.
 async function getServiceAccountAuth(scopes) {
+  return getImpersonatedAuth(scopes, null);
+}
+
+// Same service account, but impersonating an arbitrary domain user instead of
+// the superadmin — ClassPulse's Slides import reads the requesting TEACHER's
+// own decks this way (presentations.readonly/drive.readonly are granted
+// domain-wide, so any domain subject works; the narrow scopes keep it to
+// read-only Slides/Drive access).
+async function getImpersonatedAuth(scopes, subjectEmail) {
   const serviceAccountJson = await getSetting('google_service_account_json');
   const superadmin         = await getSetting('google_superadmin_email') || process.env.SUPERADMIN_EMAIL;
+  const subject            = subjectEmail || superadmin;
 
-  if (!superadmin) {
+  if (!subject) {
     throw new Error('Superadmin email not configured — set it under Integrations > Google Workspace > Device & Directory Sync');
   }
 
@@ -56,7 +66,7 @@ async function getServiceAccountAuth(scopes) {
     } catch {
       throw new Error('Stored Google service account JSON is not valid JSON — re-paste it under Integrations > Google Workspace');
     }
-    return new google.auth.GoogleAuth({ credentials, scopes, clientOptions: { subject: superadmin } });
+    return new google.auth.GoogleAuth({ credentials, scopes, clientOptions: { subject } });
   }
 
   // Fall back to a key file on disk, for installs set up before this moved to the DB.
@@ -64,7 +74,7 @@ async function getServiceAccountAuth(scopes) {
   if (!keyPath) {
     throw new Error('Service account not configured — paste the service account JSON under Integrations > Google Workspace > Device & Directory Sync');
   }
-  return new google.auth.GoogleAuth({ keyFile: keyPath, scopes, clientOptions: { subject: superadmin } });
+  return new google.auth.GoogleAuth({ keyFile: keyPath, scopes, clientOptions: { subject } });
 }
 
 // ---------------------------------------------------------------------------
@@ -554,7 +564,7 @@ async function updateChromebookAssetId(deviceId, assetTag) {
 }
 
 module.exports = {
-  initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits, getServiceAccountAuth,
+  initGoogleAdmin, syncAll, syncUsers, syncGroups, syncOrgUnits, getServiceAccountAuth, getImpersonatedAuth,
   getOuRoleRules, resolveRoleFromOu, backfillRolesFromOu, syncDevices, setChromeDeviceAction,
   deprovisionChromeDevice, updateChromebookAssetId,
 };

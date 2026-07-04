@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { useSocket } from '../../contexts/SocketContext';
 import api from '../../lib/api';
+import AuthedImage from '../../components/AuthedImage';
 
 // ---------------------------------------------------------------------------
 // Pulse Score Gauge (SVG arc, no library needed)
@@ -680,6 +681,15 @@ export default function TeachSession() {
                   <h2 className="text-white font-bold text-lg leading-snug mt-0.5">{currentPage.title}</h2>
                 )}
               </div>
+
+              {/* Imported slide image — what the students are seeing right now */}
+              {currentPage.image_url && (
+                <AuthedImage
+                  src={`/api/v1/classpulse/slide-image/${currentPage.id}`}
+                  alt={currentPage.title || 'Slide'}
+                  className="w-full max-h-[420px] object-contain bg-slate-50"
+                />
+              )}
 
               {/* Slide body — what the students are reading right now */}
               {currentPage.body && (

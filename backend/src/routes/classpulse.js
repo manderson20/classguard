@@ -5,6 +5,8 @@ const { requireMinRole } = require('../middleware/roles');
 const { requirePermissionIfAdmin } = require('../middleware/permissions');
 const { generateUniqueJoinCode, calcPulseScore, aggregateResponses, buildSessionReport } = require('../services/classpulse');
 const events = require('../events');
+const fs = require('fs');
+const googleSlides = require('../services/googleSlides');
 const redis  = require('../redis');
 
 // Hard cap on options per question — prevents loop-bound injection from
@@ -39,7 +41,7 @@ router.get('/join/:code', async (req, res) => {
   let currentPage = null;
   if (session.current_page_id) {
     const { rows: [page] } = await query(
-      `SELECT id, position, content_type, title, body, student_instructions
+      `SELECT id, position, content_type, title, body, student_instructions, image_url
        FROM classpulse_pages WHERE id = $1`,
       [session.current_page_id]
     );
@@ -133,7 +135,7 @@ router.get('/sessions/:id/current', authenticate, async (req, res) => {
   if (!session.current_page_id) return res.json({ page: null });
 
   const { rows: [page] } = await query(
-    `SELECT id, position, content_type, title, body, student_instructions
+    `SELECT id, position, content_type, title, body, student_instructions, image_url
      FROM classpulse_pages WHERE id = $1`,
     [session.current_page_id]
   );
@@ -254,6 +256,24 @@ router.post('/sessions/:id/response', authenticate, async (req, res) => {
 
 // All remaining routes require at minimum a teacher login.
 // Admin-only config actions additionally gate on 'classpulse' permission.
+// GET /classpulse/slide-image/:pageId — streams an imported Google Slides
+// page image. Students render these on the join page, so this sits before
+// the teacher gate; any authenticated user with the page id may fetch (the
+// image is lesson content, not sensitive data — same exposure as the page
+// body text the same routes already return).
+router.get('/slide-image/:pageId', authenticate, async (req, res) => {
+  const { rows: [page] } = await query(
+    `SELECT image_url FROM classpulse_pages WHERE id = $1`,
+    [req.params.pageId]
+  );
+  if (!page?.image_url) return res.status(404).json({ error: 'No image for this page' });
+  const abs = googleSlides.resolveSlideImagePath(page.image_url);
+  if (!abs || !fs.existsSync(abs)) return res.status(404).json({ error: 'Image file not found' });
+  res.setHeader('Content-Type', 'image/png');
+  res.setHeader('Cache-Control', 'private, max-age=86400');
+  fs.createReadStream(abs).pipe(res);
+});
+
 router.use(authenticate, requireMinRole('teacher'));
 
 // ---------------------------------------------------------------------------
@@ -413,6 +433,39 @@ router.get('/lessons/:lessonId', async (req, res) => {
 // ---------------------------------------------------------------------------
 // Lessons — Update
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// Google Slides import — teacher's own decks via domain-wide delegation
+// ---------------------------------------------------------------------------
+
+router.get('/google-slides/presentations', async (req, res) => {
+  try {
+    const files = await googleSlides.listPresentations(req.user.email, req.query.search || '');
+    res.json(files);
+  } catch (err) {
+    // Common, actionable failures: API not enabled on the GCP project, scope
+    // missing from the delegation grant, or a non-Workspace account.
+    res.status(502).json({ error: `Google Slides listing failed: ${err.message}` });
+  }
+});
+
+router.post('/lessons/:lessonId/import-slides', async (req, res) => {
+  const { userId, role, email } = req.user;
+  const { lessonId } = req.params;
+  const { presentation_id } = req.body;
+
+  if (!presentation_id) return res.status(400).json({ error: 'presentation_id is required' });
+  if (!await ownsLesson(lessonId, userId, role)) {
+    return res.status(403).json({ error: 'Forbidden' });
+  }
+
+  try {
+    const result = await googleSlides.importPresentation(email, presentation_id, lessonId);
+    res.status(201).json(result);
+  } catch (err) {
+    res.status(502).json({ error: `Slides import failed: ${err.message}` });
+  }
+});
 
 router.put('/lessons/:lessonId', async (req, res) => {
   const { userId, role } = req.user;
@@ -982,7 +1035,7 @@ router.get('/sessions/:id/dashboard', async (req, res) => {
       [sessionId]
     ),
     query(
-      `SELECT p.id, p.position, p.title, p.content_type, p.body, p.teacher_notes,
+      `SELECT p.id, p.position, p.title, p.content_type, p.body, p.teacher_notes, p.image_url,
               COUNT(DISTINCT q.id)::int AS question_count
        FROM classpulse_pages p
        LEFT JOIN classpulse_questions q ON q.page_id = p.id
@@ -1349,7 +1402,7 @@ router.post('/responses/:responseId/hide', async (req, res) => {
 
 async function getPageForBroadcast(pageId) {
   const { rows: [page] } = await query(
-    `SELECT id, position, content_type, title, body, student_instructions
+    `SELECT id, position, content_type, title, body, student_instructions, image_url
      FROM classpulse_pages WHERE id = $1`,
     [pageId]
   );
