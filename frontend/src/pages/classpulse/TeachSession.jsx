@@ -518,6 +518,15 @@ export default function TeachSession() {
           </p>
         </div>
 
+        {/* Projector view — anonymous live results for the board */}
+        <button
+          onClick={() => window.open(`/classpulse/sessions/${sessionId}/present`, '_blank', 'noopener')}
+          title="Open the class-facing results screen (word clouds, live bars, big join code) — put it on the projector"
+          className="flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg border bg-indigo-50 border-indigo-200 text-indigo-700 hover:bg-indigo-100 transition-colors flex-shrink-0"
+        >
+          Show to Class
+        </button>
+
         {/* Join code */}
         <div className="flex items-center gap-1.5 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-1.5 flex-shrink-0">
           <span className="text-[10px] text-indigo-400 font-semibold uppercase">Join</span>
