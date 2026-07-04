@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import AuthedImage from '../../components/AuthedImage';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
@@ -111,7 +112,7 @@ function ScreenshotModal({ screenshot, onClose, onUpdate }) {
         </div>
 
         <div className="p-4">
-          <img
+          <AuthedImage
             src={imgUrl}
             alt="Screenshot"
             className="w-full rounded border border-slate-200"

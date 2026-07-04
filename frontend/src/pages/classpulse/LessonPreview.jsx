@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
 import { QuestionRenderer } from '../../components/classpulse/QuestionRenderers';
+import AuthedImage from '../../components/AuthedImage';
 
 // Teacher-facing preview: renders each page exactly the way the student join
 // page (/pulse/:code) does, without a live session. Answers aren't recorded —
@@ -72,6 +73,14 @@ export default function LessonPreview() {
                 <h2 className="text-white font-bold text-lg leading-snug">{page.title}</h2>
               </div>
             )}
+            {page.image_url && (
+              <AuthedImage
+                src={`/api/v1/classpulse/slide-image/${page.id}`}
+                alt={page.title || 'Slide'}
+                className="w-full"
+              />
+            )}
+
             {page.body && (
               <div className="px-5 py-4">
                 <p className="text-slate-700 text-sm leading-relaxed whitespace-pre-wrap">{page.body}</p>
