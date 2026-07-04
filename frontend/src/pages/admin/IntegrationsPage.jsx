@@ -2279,9 +2279,139 @@ function InfosecIqSection() {
 }
 
 // ---------------------------------------------------------------------------
+// API Tokens — shared-secret tokens for read-only external integrations
+// that authenticate via a static X-ClassGuard-Token header (e.g. PrintOps'
+// IP->MAC lookup). A list rather than one bespoke settings field per
+// integration, so the next external API is a new row here, not new UI.
+// Token values are always server-generated, never hand-typed, so rotating
+// a suspected-compromised one is always a single click.
+// ---------------------------------------------------------------------------
+function ApiTokensSection() {
+  const qc = useQueryClient();
+  const { data: tokens = [], isLoading } = useQuery({
+    queryKey: ['api-tokens'],
+    queryFn:  () => api.get('/api-tokens'),
+  });
+
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ name: '', label: '', description: '' });
+  const [formError, setFormError] = useState(null);
+  const [copied, setCopied] = useState('');
+  const [confirmDelete, setConfirmDelete] = useState(null);
+
+  const copy = (key, text) => {
+    navigator.clipboard.writeText(text);
+    setCopied(key);
+    setTimeout(() => setCopied(''), 2000);
+  };
+
+  const invalidate = () => qc.invalidateQueries({ queryKey: ['api-tokens'] });
+
+  const create = useMutation({
+    mutationFn: () => api.post('/api-tokens', form),
+    onSuccess: () => { invalidate(); setForm({ name: '', label: '', description: '' }); setShowAdd(false); setFormError(null); },
+    onError:   (e) => setFormError(e.message || 'Failed to create token'),
+  });
+
+  const regenerate   = useMutation({ mutationFn: (id) => api.post(`/api-tokens/${id}/regenerate`), onSuccess: invalidate });
+  const toggleActive = useMutation({ mutationFn: ({ id, is_active }) => api.put(`/api-tokens/${id}`, { is_active }), onSuccess: invalidate });
+  const remove       = useMutation({ mutationFn: (id) => api.delete(`/api-tokens/${id}`), onSuccess: () => { invalidate(); setConfirmDelete(null); } });
+
+  return (
+    <div className="flex flex-col gap-5 max-w-3xl">
+      <p className="text-sm text-slate-600">
+        Shared-secret tokens for read-only external integrations that authenticate with a static
+        <code className="bg-slate-100 px-1 rounded font-mono text-xs mx-1">X-ClassGuard-Token</code>
+        header — e.g. PrintOps' IP→MAC lookup. Values are always generated here, never hand-typed;
+        rotate a suspected-compromised token with one click, or deactivate it to kill it instantly
+        without losing its config.
+      </p>
+
+      {isLoading ? (
+        <div className="text-slate-400 text-sm">Loading…</div>
+      ) : (
+        <div className="flex flex-col gap-3">
+          {tokens.map(t => (
+            <div key={t.id} className="bg-white border border-slate-200 rounded-xl p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <StatusDot ok={t.is_active}/>
+                    <span className="font-semibold text-slate-900 text-sm">{t.label}</span>
+                    <code className="text-xs text-slate-400 font-mono">{t.name}</code>
+                  </div>
+                  {t.description && <p className="text-xs text-slate-500 mt-1">{t.description}</p>}
+                </div>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={() => toggleActive.mutate({ id: t.id, is_active: !t.is_active })}
+                    className="text-xs px-3 py-1 rounded-lg font-medium bg-slate-100 text-slate-700 hover:bg-slate-200"
+                  >
+                    {t.is_active ? 'Deactivate' : 'Activate'}
+                  </button>
+                  <button
+                    onClick={() => { if (confirm(`Regenerate the token for "${t.label}"? Anything using the old value will stop working immediately.`)) regenerate.mutate(t.id); }}
+                    className="text-xs px-3 py-1 rounded-lg font-medium bg-primary-50 text-primary-700 hover:bg-primary-100"
+                  >
+                    Regenerate
+                  </button>
+                  {confirmDelete === t.id ? (
+                    <button onClick={() => remove.mutate(t.id)} className="text-xs px-3 py-1 rounded-lg font-medium bg-red-600 text-white hover:bg-red-700">
+                      Confirm Delete
+                    </button>
+                  ) : (
+                    <button onClick={() => setConfirmDelete(t.id)} className="text-xs px-3 py-1 rounded-lg font-medium text-red-600 hover:bg-red-50">
+                      Delete
+                    </button>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-1.5 mt-3">
+                <code className={`bg-slate-100 rounded px-2 py-1 text-xs font-mono flex-1 truncate ${!t.is_active ? 'opacity-40' : ''}`}>{t.token}</code>
+                <button onClick={() => copy(t.id, t.token)} className="text-xs bg-slate-600 hover:bg-slate-500 text-white px-2 py-1 rounded flex-shrink-0">
+                  {copied === t.id ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+              <div className="text-xs text-slate-400 mt-2">
+                {t.last_used_at ? `Last used: ${new Date(t.last_used_at).toLocaleString()}` : 'Never used'}
+                {' · '}Created {new Date(t.created_at).toLocaleDateString()}
+              </div>
+            </div>
+          ))}
+          {tokens.length === 0 && <p className="text-sm text-slate-400">No API tokens yet.</p>}
+        </div>
+      )}
+
+      {showAdd ? (
+        <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 flex flex-col gap-3">
+          <Field label="Name" hint="Stable slug a backend route checks against — lowercase letters, numbers, underscores only, e.g. some_vendor_lookup">
+            <input className={INPUT} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="some_vendor_lookup"/>
+          </Field>
+          <Field label="Label" hint="Display name">
+            <input className={INPUT} value={form.label} onChange={e => setForm(f => ({ ...f, label: e.target.value }))} placeholder="Some Vendor Integration"/>
+          </Field>
+          <Field label="Description" hint="What it's used for and who consumes it">
+            <input className={INPUT} value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="What is this token for?"/>
+          </Field>
+          {formError && <p className="text-red-500 text-xs">{formError}</p>}
+          <div className="flex items-center gap-3">
+            <button onClick={() => create.mutate()} disabled={create.isPending || !form.name || !form.label} className="btn-primary text-sm disabled:opacity-40">
+              {create.isPending ? 'Creating…' : 'Create Token'}
+            </button>
+            <button onClick={() => { setShowAdd(false); setFormError(null); }} className="btn-secondary text-sm">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <button onClick={() => setShowAdd(true)} className="btn-secondary text-sm self-start">+ Add Token</button>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Overview','All Devices','Google Workspace','Mosyle','Snipe-IT','Zammad','Infosec IQ','IPAM Import'];
+const TABS = ['Overview','All Devices','Google Workspace','Mosyle','Snipe-IT','Zammad','Infosec IQ','API Tokens','IPAM Import'];
 
 export default function IntegrationsPage() {
   const [tab, setTab] = useState('Overview');
@@ -2378,6 +2508,7 @@ export default function IntegrationsPage() {
       {tab==='Snipe-IT'           && <SnipeitSection status={status}/>}
       {tab==='Zammad'             && <ZammadSection status={status}/>}
       {tab==='Infosec IQ'         && <InfosecIqSection/>}
+      {tab==='API Tokens'         && <ApiTokensSection/>}
       {tab==='IPAM Import'        && <IpamImportSection/>}
     </div>
   );

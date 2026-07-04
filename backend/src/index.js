@@ -151,6 +151,8 @@ app.use('/api/v1/lost-mode',     require('./routes/lostMode'));
 app.use('/api/v1/filter-bypass', require('./routes/filterBypass'));
 app.use('/api/v1/kb',            require('./routes/knowledgeBase'));
 app.use('/api/v1/network-tools', require('./routes/networkTools'));
+app.use('/api/v1/lookup',        require('./routes/lookup'));
+app.use('/api/v1/api-tokens',    require('./routes/apiTokens'));
 app.use('/metrics',              require('./routes/metrics'));
 
 // Health check — used by Docker, load balancers, and the HA node registry
