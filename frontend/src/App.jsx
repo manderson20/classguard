@@ -80,6 +80,7 @@ import LessonLibrary      from './pages/classpulse/LessonLibrary';
 import LessonBuilder      from './pages/classpulse/LessonBuilder';
 import TeachSession       from './pages/classpulse/TeachSession';
 import SessionResults     from './pages/classpulse/SessionResults';
+import LessonPreview      from './pages/classpulse/LessonPreview';
 import StudentJoin        from './pages/classpulse/StudentJoin';
 import ClassPulseAdminPage from './pages/admin/ClassPulseAdminPage';
 
@@ -150,6 +151,7 @@ export default function App() {
           <Route path="/classpulse/lessons"              element={<LessonLibrary />} />
           <Route path="/classpulse/lessons/new"          element={<LessonBuilder />} />
           <Route path="/classpulse/lessons/:id/edit"     element={<LessonBuilder />} />
+          <Route path="/classpulse/lessons/:id/preview"  element={<LessonPreview />} />
           <Route path="/classpulse/sessions/:id/teach"   element={<TeachSession />} />
           <Route path="/classpulse/sessions/:id/results" element={<SessionResults />} />
         </Route>
