@@ -11,7 +11,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { google } = require('googleapis');
 const { getImpersonatedAuth } = require('./google');
-const { query, withTransaction } = require('../db');
+const { withTransaction } = require('../db');
 
 const SLIDES_SCOPES = ['https://www.googleapis.com/auth/presentations.readonly'];
 const DRIVE_SCOPES  = ['https://www.googleapis.com/auth/drive.readonly'];
@@ -36,8 +36,10 @@ async function listPresentations(teacherEmail, search = '') {
 
   let q = "mimeType='application/vnd.google-apps.presentation' and trashed=false";
   if (search) {
-    // Drive's q syntax: escape single quotes in the user-supplied term
-    q += ` and name contains '${String(search).replace(/'/g, "\\'")}'`;
+    // Drive's q syntax: backslashes escape first, then single quotes — the
+    // reverse order (or quotes alone) lets a term ending in \ break out.
+    const term = String(search).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+    q += ` and name contains '${term}'`;
   }
   const res = await drive.files.list({
     q,
@@ -51,7 +53,17 @@ async function listPresentations(teacherEmail, search = '') {
 // Import a deck into a lesson: one image content-page per slide, appended
 // after the lesson's existing pages (so a re-import or second deck never
 // clobbers question pages the teacher already built).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// PNG magic bytes — the only file type the Slides thumbnail API produces.
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
 async function importPresentation(teacherEmail, presentationId, lessonId) {
+  // lessonId comes from a request param — it has already passed an ownership
+  // check against the DB, but validate the shape explicitly before it ever
+  // touches a filesystem path.
+  if (!UUID_RE.test(String(lessonId))) throw new Error('Invalid lesson id');
+
   const auth   = await getImpersonatedAuth(SLIDES_SCOPES, teacherEmail);
   const slides = google.slides({ version: 'v1', auth });
 
@@ -80,6 +92,10 @@ async function importPresentation(teacherEmail, presentationId, lessonId) {
     const resp = await fetch(thumb.data.contentUrl);
     if (!resp.ok) throw new Error(`Slide image download failed (HTTP ${resp.status})`);
     const buf = Buffer.from(await resp.arrayBuffer());
+    if (buf.length > MAX_IMAGE_BYTES) throw new Error('Slide image unexpectedly large — aborting import');
+    if (!buf.subarray(0, 8).equals(PNG_SIGNATURE)) {
+      throw new Error('Slide image response was not a PNG — aborting import');
+    }
     const fileName = `${crypto.randomUUID()}.png`;
     fs.writeFileSync(path.join(lessonDir, fileName), buf);
     files.push(path.join('classpulse-slides', lessonId, fileName));
