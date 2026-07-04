@@ -41,7 +41,7 @@ export const api = {
   post:   (path, body)  => apiFetch(path, { method: 'POST',   body }),
   patch:  (path, body)  => apiFetch(path, { method: 'PATCH',  body }),
   put:    (path, body)  => apiFetch(path, { method: 'PUT',    body }),
-  delete: (path)        => apiFetch(path, { method: 'DELETE' }),
+  delete: (path, body)  => apiFetch(path, { method: 'DELETE', ...(body !== undefined ? { body } : {}) }),
 };
 
 export default api;
