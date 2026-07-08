@@ -10,7 +10,7 @@
 # release zips: no checksums are published for those, whereas building from
 # a pinned git tag gets Go's module checksum verification (go.sum) for
 # every transitive dependency for free.
-FROM golang:1.26.4-alpine AS build
+FROM golang:1.27rc2-alpine AS build
 
 ARG SCEP_VERSION=v2.3.0
 RUN apk add --no-cache git
