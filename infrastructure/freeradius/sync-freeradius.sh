@@ -83,6 +83,15 @@ if [ ! -f "$FR_DIR/certs/server.crt" ]; then
   logger "ClassGuard freeradius-sync: generated EAP TLS certificate"
 fi
 
+# The API's authorize/authenticate responses reference control:ClassGuard-VLAN,
+# which must exist in a dictionary or rlm_rest can't map the returned JSON.
+# 3000-3999 is the range FreeRADIUS reserves for site-local internal attributes.
+if ! grep -q "^ATTRIBUTE[[:space:]]\+ClassGuard-VLAN[[:space:]]" "$FR_DIR/dictionary" 2>/dev/null; then
+  printf 'ATTRIBUTE\tClassGuard-VLAN\t\t3900\tstring\n' >> "$FR_DIR/dictionary"
+  NEEDS_RESTART=true
+  logger "ClassGuard freeradius-sync: added ClassGuard-VLAN to local dictionary"
+fi
+
 systemctl is-enabled --quiet freeradius 2>/dev/null || systemctl enable freeradius >/dev/null 2>&1 || true
 
 if [ "$NEEDS_RESTART" = "true" ]; then

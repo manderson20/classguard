@@ -170,11 +170,14 @@ router.post('/authorize', radiusSecret, async (req, res) => {
          LEFT JOIN radius_user_policies rp ON (
            rp.user_id = u.id
            OR rp.group_id IN (SELECT group_id FROM group_members WHERE user_id = u.id)
+           OR (rp.google_ou IS NOT NULL AND u.google_ou IS NOT NULL
+               AND (u.google_ou = rp.google_ou OR u.google_ou LIKE rp.google_ou || '/%'))
            OR (rp.email_domain IS NOT NULL AND rp.email_domain = lower(split_part(u.email, '@', 2)))
-           OR (rp.user_id IS NULL AND rp.group_id IS NULL AND rp.email_domain IS NULL) -- default/catch-all policy
+           OR (rp.user_id IS NULL AND rp.group_id IS NULL AND rp.google_ou IS NULL AND rp.email_domain IS NULL) -- default/catch-all policy
          ) AND (rp.ssid IS NULL OR rp.ssid = $2)
          WHERE lower(u.email) = lower($1) AND u.is_active = true
          ORDER BY (rp.user_id IS NOT NULL) DESC, (rp.group_id IS NOT NULL) DESC,
+                  (rp.google_ou IS NOT NULL) DESC, length(rp.google_ou) DESC NULLS LAST,
                   (rp.email_domain IS NOT NULL) DESC, rp.priority DESC NULLS LAST
          LIMIT 1`,
         [username, ssid || '']
@@ -535,23 +538,46 @@ router.get('/policies', ...auth, async (req, res) => {
   res.json(rows);
 });
 
+// Same data as /api/v1/policies/ou-list, but reachable with the `radius`
+// permission — a RADIUS admin isn't guaranteed the `policies` permission.
+router.get('/ou-list', ...auth, async (req, res) => {
+  const [fromSettings, fromUsers] = await Promise.all([
+    pool.query(`SELECT value FROM settings WHERE key = 'google_ous'`),
+    pool.query(`SELECT DISTINCT google_ou AS path FROM users
+                WHERE google_ou IS NOT NULL AND google_ou <> ''`),
+  ]);
+  let fromTree = [];
+  try {
+    fromTree = (JSON.parse(fromSettings.rows[0]?.value || '[]')).map(ou => ou.path).filter(Boolean);
+  } catch { /* google_ous not set or not valid JSON yet — fall back to synced users */ }
+  res.json([...new Set([...fromTree, ...fromUsers.rows.map(r => r.path)])].sort());
+});
+
 router.post('/policies', ...auth, async (req, res) => {
-  const { user_id, group_id, email_domain, ssid, vlan, can_access, priority, notes } = req.body;
-  // A policy with none of user_id/group_id/email_domain is a default/catch-all
-  // that applies to anyone authenticating — require an SSID so it can't
-  // accidentally apply org-wide across every network by omission. A
-  // domain rule needs an SSID for the same reason: it can otherwise match
-  // every account in that domain across every network on the cluster.
-  if (!user_id && !group_id && !email_domain && !ssid) {
-    return res.status(400).json({ error: 'user_id, group_id, email_domain, or (for a default policy) ssid is required' });
+  const { user_id, group_id, google_ou, email_domain, ssid, vlan, can_access, priority, notes } = req.body;
+  // A policy with none of user_id/group_id/google_ou/email_domain is a
+  // default/catch-all that applies to anyone authenticating — require an
+  // SSID so it can't accidentally apply org-wide across every network by
+  // omission. OU and domain rules need an SSID for the same reason: they
+  // can otherwise match a whole population across every network on the
+  // cluster.
+  if (!user_id && !group_id && !google_ou && !email_domain && !ssid) {
+    return res.status(400).json({ error: 'user_id, group_id, google_ou, email_domain, or (for a default policy) ssid is required' });
   }
   if (email_domain && !ssid) {
     return res.status(400).json({ error: 'ssid is required for a domain-based policy' });
   }
+  if (google_ou && !ssid) {
+    return res.status(400).json({ error: 'ssid is required for an OU-based policy' });
+  }
+  if (google_ou && !google_ou.startsWith('/')) {
+    return res.status(400).json({ error: 'google_ou must be a full OU path starting with / (e.g. /Students/High School)' });
+  }
   const { rows } = await pool.query(
-    `INSERT INTO radius_user_policies (user_id, group_id, email_domain, ssid, vlan, can_access, priority, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [user_id || null, group_id || null, email_domain ? email_domain.toLowerCase() : null, ssid || null,
+    `INSERT INTO radius_user_policies (user_id, group_id, google_ou, email_domain, ssid, vlan, can_access, priority, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [user_id || null, group_id || null, google_ou ? google_ou.replace(/\/+$/, '') || '/' : null,
+     email_domain ? email_domain.toLowerCase() : null, ssid || null,
      vlan || null, can_access ?? true, priority || 0, notes || null]
   );
   res.status(201).json(rows[0]);
@@ -701,8 +727,8 @@ router.get('/freeradius-sync', async (req, res) => {
     res.json({
       enabled:      true,
       clients_conf: keepalived.generateFreeRadiusClients(nasRows),
-      rest_conf:    keepalived.generateFreeRadiusRestMod('http://localhost:3001', internalSecret),
-      classguard_conf: keepalived.generateFreeRadiusVirtualServer(),
+      rest_conf:    keepalived.generateFreeRadiusRestMod('http://localhost:3001'),
+      classguard_conf: keepalived.generateFreeRadiusVirtualServer(internalSecret),
       eap_conf:     keepalived.generateEapMod(),
     });
   } catch (err) {
