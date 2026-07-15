@@ -326,9 +326,20 @@ server inner-tunnel {
     }
 
     authenticate {
-        Auth-Type PAP {
+        # /authorize answers the inner user lookup with control:Auth-Type =
+        # rest (same response it gives the outer server), overriding the pap
+        # module — so this block, not Auth-Type PAP, is what actually runs
+        # for EAP-TTLS inner auth. Without it FreeRADIUS has no authenticate
+        # method for the request and rejects before ever calling /authenticate.
+        Auth-Type rest {
             ${setSecret}
             rest  # sends cleartext password to ClassGuard → Google Secure LDAP
+        }
+        # Kept for completeness: runs only if authorize didn't set Auth-Type
+        # (e.g. REST unreachable and a Cleartext-Password were ever present).
+        Auth-Type PAP {
+            ${setSecret}
+            rest
         }
     }
 }
