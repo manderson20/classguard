@@ -947,7 +947,211 @@ function HaConfigTab() {
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Overview','NAS Clients','Devices / NAC','Wi-Fi Policies','Auth Log','HA & Config'];
+// ---------------------------------------------------------------------------
+// UniFi Setup Tab
+// Wires ClassGuard into the UniFi controller as its RADIUS server: one
+// "ClassGuard" RADIUS profile shared by every WLAN, then per-WLAN switches
+// for 802.1X (BYOD) or PSK + MAC auth (corporate NAC). All buttons push a
+// change to the live controller immediately, hence the confirm()s.
+// ---------------------------------------------------------------------------
+const MAC_FORMAT_LABELS = {
+  none_lower:   'aabbccddeeff',
+  hyphen_lower: 'aa-bb-cc-dd-ee-ff',
+  colon_lower:  'aa:bb:cc:dd:ee:ff',
+  none_upper:   'AABBCCDDEEFF',
+  hyphen_upper: 'AA-BB-CC-DD-EE-FF',
+  colon_upper:  'AA:BB:CC:DD:EE:FF',
+};
+
+function SecurityBadge({ security }) {
+  const map = {
+    wpaeap: { cls: 'bg-indigo-100 text-indigo-700', label: '802.1X (Enterprise)' },
+    wpapsk: { cls: 'bg-slate-100 text-slate-600',   label: 'WPA-PSK' },
+    open:   { cls: 'bg-amber-100 text-amber-700',   label: 'Open' },
+  };
+  const s = map[security] || { cls: 'bg-slate-100 text-slate-500', label: security };
+  return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;
+}
+
+function UnifiTab() {
+  const qc = useQueryClient();
+  const [macFormat, setMacFormat] = useState('none_lower');
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['radius-unifi-setup'],
+    queryFn:  () => api.get('/radius/unifi/setup'),
+    retry: false,
+    staleTime: 30_000,
+  });
+
+  const invalidate = () => qc.invalidateQueries({queryKey:['radius-unifi-setup']});
+  const profileMut = useMutation({
+    mutationFn: () => api.post('/radius/unifi/profile', {}),
+    onSuccess: invalidate,
+  });
+  const wlanMut = useMutation({
+    mutationFn: ({ id, action }) => api.put(`/radius/unifi/wlans/${id}`, { action, mac_format: macFormat }),
+    onSuccess: invalidate,
+  });
+
+  if (isLoading) return <p className="text-sm text-slate-400">Contacting UniFi controller…</p>;
+  if (error) return (
+    <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+      {error.message || 'Could not reach the UniFi controller'}
+      <button onClick={()=>refetch()} className="ml-3 underline">Retry</button>
+    </div>
+  );
+  if (!data.configured) return (
+    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+      No active UniFi controller — add one under Admin → Integrations → Network first.
+    </div>
+  );
+
+  const cg = data.classguard_profile;
+  const anyMutErr = profileMut.error || wlanMut.error;
+
+  // Districts typically have one WLAN entry per building/AP-group sharing the
+  // same SSID name — group them so "Devices ×8" reads as one network.
+  const groups = [];
+  for (const w of data.wlans) {
+    const g = groups.find(g => g.name === w.name);
+    if (g) g.wlans.push(w); else groups.push({ name: w.name, wlans: [w] });
+  }
+
+  const applyAll = async (wlans, action, label) => {
+    if (!confirm(`${label} for all ${wlans.length} "${wlans[0].name}" WLANs? This pushes to the UniFi controller immediately.`)) return;
+    for (const w of wlans) await wlanMut.mutateAsync({ id: w._id, action });
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {anyMutErr && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
+          {anyMutErr.message}
+        </div>
+      )}
+
+      {/* RADIUS profile card */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-semibold text-slate-900 text-sm">ClassGuard RADIUS profile</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              One profile serves both networks — BYOD WLANs use it for 802.1X, corporate WLANs for MAC auth.
+              Auth/accounting point at the RADIUS virtual IP <span className="font-mono">{data.radius_server.ip || 'not set'}</span> with
+              the shared NAS secret{data.radius_server.secret_set ? '' : ' (NOT SET — fix in HA & Config first)'}.
+            </p>
+            {cg ? (
+              <div className="mt-2 text-xs text-slate-600 flex flex-wrap gap-3">
+                <span>Auth: <span className="font-mono">{cg.auth_servers.map(s=>`${s.ip}:${s.port}`).join(', ') || '—'}</span></span>
+                <span>Accounting: {cg.accounting_enabled ? 'on' : 'off'}</span>
+                <span>RADIUS-assigned VLAN: {cg.vlan_enabled ? cg.vlan_wlan_mode : 'disabled'}</span>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-amber-700">Profile doesn't exist in the controller yet.</p>
+            )}
+          </div>
+          <button
+            onClick={()=>{ if (confirm(`${cg ? 'Update' : 'Create'} the "ClassGuard" RADIUS profile on the UniFi controller?`)) profileMut.mutate(); }}
+            disabled={profileMut.isPending || !data.radius_server.ip || !data.radius_server.secret_set}
+            className="flex-shrink-0 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+            {profileMut.isPending ? 'Pushing…' : cg ? 'Update profile' : 'Create profile'}
+          </button>
+        </div>
+      </div>
+
+      {/* How VLANs behave */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+        <strong>How VLANs behave:</strong> the profile is created with RADIUS-assigned VLAN set to <em>optional</em> —
+        when a Wi-Fi Policy assigns a VLAN (BYOD), the client lands on it at every building, so their subnet follows them.
+        When ClassGuard sends no VLAN (corporate MAC auth), the client stays on the WLAN's own per-building network,
+        so a device moving between buildings picks up that building's corporate subnet automatically.
+      </div>
+
+      {/* MAC format */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">
+        <div className="flex-1">
+          <h3 className="font-semibold text-slate-900 text-sm">MAC Address Format</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Applied when enabling MAC auth below. ClassGuard accepts every format, so this only affects how MACs look in controller logs.
+          </p>
+        </div>
+        <div className="w-56 flex-shrink-0">
+          <select className={SELECT + ' font-mono'} value={macFormat} onChange={e=>setMacFormat(e.target.value)}>
+            {(data.mac_formats || Object.keys(MAC_FORMAT_LABELS)).map(f=>(
+              <option key={f} value={f}>{MAC_FORMAT_LABELS[f] || f}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* WLANs */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-xs text-slate-500 uppercase">
+            <tr>
+              <th className="px-4 py-2">WLAN</th>
+              <th className="px-4 py-2">Security</th>
+              <th className="px-4 py-2">MAC auth</th>
+              <th className="px-4 py-2">RADIUS profile</th>
+              <th className="px-4 py-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map(g => g.wlans.map((w, i) => (
+              <tr key={w._id} className={`border-t border-slate-100 ${!w.enabled ? 'opacity-40' : ''}`}>
+                <td className="px-4 py-2 font-medium text-slate-800">
+                  {i === 0 ? g.name : <span className="text-slate-300 pl-3">└</span>}
+                  {i === 0 && g.wlans.length > 1 && <span className="ml-2 text-xs text-slate-400">×{g.wlans.length} (per building)</span>}
+                  {!w.enabled && <span className="ml-2 text-xs text-slate-400">disabled</span>}
+                </td>
+                <td className="px-4 py-2"><SecurityBadge security={w.security}/></td>
+                <td className="px-4 py-2 text-xs">
+                  {w.macauth_enabled
+                    ? <span className="text-green-700 font-semibold">on <span className="font-mono font-normal text-slate-400">({MAC_FORMAT_LABELS[w.radius_mac_auth_format] || w.radius_mac_auth_format})</span></span>
+                    : <span className="text-slate-400">off</span>}
+                </td>
+                <td className="px-4 py-2 text-xs">
+                  {w.uses_classguard
+                    ? <span className="text-green-700 font-semibold">ClassGuard</span>
+                    : w.radiusprofile_id
+                      ? <span className="text-slate-500">{(data.other_profiles.find(p=>p._id===w.radiusprofile_id)||{}).name || 'other'}</span>
+                      : <span className="text-slate-400">—</span>}
+                </td>
+                <td className="px-4 py-2 text-right whitespace-nowrap">
+                  {w.security === 'wpapsk' && !w.macauth_enabled && (
+                    <button disabled={!cg || wlanMut.isPending}
+                      onClick={()=>{ if (i === 0 && g.wlans.length > 1) { applyAll(g.wlans.filter(x=>x.security==='wpapsk' && !x.macauth_enabled), 'enable_macauth', 'Enable MAC auth'); } else if (confirm(`Enable MAC auth on "${w.name}"? Unapproved devices will be kicked off this WLAN.`)) wlanMut.mutate({ id: w._id, action: 'enable_macauth' }); }}
+                      className="text-xs font-medium text-primary-700 hover:underline disabled:opacity-40 disabled:no-underline mr-3"
+                      title={!cg ? 'Create the ClassGuard profile first' : undefined}>
+                      {i === 0 && g.wlans.length > 1 ? 'Add MAC auth (all)' : 'Add MAC auth'}
+                    </button>
+                  )}
+                  {w.macauth_enabled && (
+                    <button disabled={wlanMut.isPending}
+                      onClick={()=>{ if (confirm(`Disable MAC auth on "${w.name}"?`)) wlanMut.mutate({ id: w._id, action: 'disable_macauth' }); }}
+                      className="text-xs font-medium text-red-600 hover:underline disabled:opacity-40 mr-3">
+                      Remove MAC auth
+                    </button>
+                  )}
+                  {w.security === 'wpaeap' && !w.uses_classguard && (
+                    <button disabled={!cg || wlanMut.isPending}
+                      onClick={()=>{ if (i === 0 && g.wlans.length > 1) { applyAll(g.wlans.filter(x=>x.security==='wpaeap' && !x.uses_classguard), 'enable_byod', 'Point 802.1X at ClassGuard'); } else if (confirm(`Point "${w.name}" 802.1X at ClassGuard? Every client on it will re-authenticate against ClassGuard.`)) wlanMut.mutate({ id: w._id, action: 'enable_byod' }); }}
+                      className="text-xs font-medium text-primary-700 hover:underline disabled:opacity-40 disabled:no-underline"
+                      title={!cg ? 'Create the ClassGuard profile first' : undefined}>
+                      {i === 0 && g.wlans.length > 1 ? 'Use ClassGuard (all)' : 'Use ClassGuard'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const TABS = ['Overview','NAS Clients','Devices / NAC','Wi-Fi Policies','Auth Log','UniFi Setup','HA & Config'];
 
 export default function RadiusPage() {
   const [tab, setTab] = useState('Overview');
@@ -976,6 +1180,7 @@ export default function RadiusPage() {
       {tab==='Devices / NAC' && <DevicesTab/>}
       {tab==='Wi-Fi Policies' && <PoliciesTab/>}
       {tab==='Auth Log'     && <LogTab/>}
+      {tab==='UniFi Setup'  && <UnifiTab/>}
       {tab==='HA & Config'  && <HaConfigTab/>}
     </div>
   );

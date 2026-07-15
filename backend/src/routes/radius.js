@@ -123,6 +123,20 @@ router.post('/authorize', radiusSecret, async (req, res) => {
         );
       }
 
+      // A device without its own VLAN falls back to the NAS's default_vlan
+      // (set per-AP/switch in the NAS Clients tab). Lets a district pin a
+      // building's corporate VLAN on that building's NAS entries so devices
+      // "float" — same SSID, different VLAN/subnet per building. When neither
+      // is set, no Tunnel-* attrs are returned and the client stays on the
+      // WLAN's own network, which on a per-building WLAN achieves the same.
+      if (result === 'accepted' && !vlan && nasIp) {
+        const { rows: [nasRow] } = await pool.query(
+          `SELECT default_vlan FROM radius_nas WHERE ip_address = $1::inet AND is_active = true`,
+          [nasIp]
+        ).catch(() => ({ rows: [] }));
+        vlan = nasRow?.default_vlan || null;
+      }
+
       // Log it
       await pool.query(
         `INSERT INTO radius_auth_log
@@ -357,6 +371,154 @@ router.put('/nas/:id', ...auth, async (req, res) => {
 router.delete('/nas/:id', ...superauth, async (req, res) => {
   await pool.query('DELETE FROM radius_nas WHERE id = $1', [req.params.id]);
   res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// UniFi setup — wire ClassGuard into the controller as its RADIUS server
+// straight from the UI: create/refresh a "ClassGuard" RADIUS profile, then
+// flip individual WLANs to 802.1X (BYOD) or PSK+MAC-auth (corporate NAC).
+// Every change is an explicit admin action against a named WLAN — nothing
+// here runs automatically.
+// ---------------------------------------------------------------------------
+
+const CG_PROFILE_NAME = 'ClassGuard';
+// UniFi's WLAN "MAC Address Format" values. ClassGuard's own parser accepts
+// every one of them (parseMac strips separators), so the choice only matters
+// for readability in external logs.
+const MAC_FORMATS = ['none_lower', 'hyphen_lower', 'colon_lower', 'none_upper', 'hyphen_upper', 'colon_upper'];
+
+async function getUnifiController() {
+  const { rows: [ctrl] } = await pool.query(
+    `SELECT * FROM network_controllers WHERE vendor = 'unifi' AND is_active = true ORDER BY created_at LIMIT 1`
+  );
+  return ctrl || null;
+}
+
+async function getRadiusServerConfig() {
+  const [{ rows: [ha] }, { rows: [secretRow] }] = await Promise.all([
+    pool.query(`SELECT vip_address FROM radius_ha_config LIMIT 1`),
+    pool.query(`SELECT value FROM settings WHERE key = 'radius_default_nas_secret'`),
+  ]);
+  return { serverIp: ha?.vip_address || null, secret: secretRow?.value || null };
+}
+
+// GET /radius/unifi/setup — controller + profiles + WLANs in one shot
+router.get('/unifi/setup', ...auth, async (req, res) => {
+  try {
+    const ctrl = await getUnifiController();
+    if (!ctrl) return res.json({ configured: false });
+
+    const unifi = require('../services/network/unifi');
+    const [{ serverIp, secret }, profiles, wlans] = await Promise.all([
+      getRadiusServerConfig(),
+      unifi.fetchRadiusProfiles(ctrl),
+      unifi.fetchWlans(ctrl),
+    ]);
+
+    const cgProfile = profiles.find(p => p.name === CG_PROFILE_NAME) || null;
+    res.json({
+      configured: true,
+      controller: { id: ctrl.id, name: ctrl.name, base_url: ctrl.base_url, site_id: ctrl.site_id },
+      radius_server: { ip: serverIp, secret_set: !!secret },
+      classguard_profile: cgProfile && {
+        _id: cgProfile._id,
+        auth_servers: (cgProfile.auth_servers || []).map(s => ({ ip: s.ip, port: s.port })),
+        acct_servers: (cgProfile.acct_servers || []).map(s => ({ ip: s.ip, port: s.port })),
+        accounting_enabled: !!cgProfile.accounting_enabled,
+        vlan_enabled: !!cgProfile.vlan_enabled,
+        vlan_wlan_mode: cgProfile.vlan_wlan_mode || 'disabled',
+      },
+      other_profiles: profiles.filter(p => p.name !== CG_PROFILE_NAME).map(p => ({ _id: p._id, name: p.name })),
+      wlans: wlans.map(w => ({
+        _id: w._id, name: w.name, enabled: w.enabled, security: w.security,
+        macauth_enabled: !!w.macauth_enabled,
+        radius_mac_auth_format: w.radius_mac_auth_format || 'none_lower',
+        radiusprofile_id: w.radiusprofile_id || null,
+        uses_classguard: !!cgProfile && w.radiusprofile_id === cgProfile._id,
+        networkconf_id: w.networkconf_id || null,
+      })),
+      mac_formats: MAC_FORMATS,
+    });
+  } catch (err) {
+    console.error('[radius/unifi/setup]', err.message);
+    res.status(502).json({ error: `UniFi controller: ${err.message}` });
+  }
+});
+
+// POST /radius/unifi/profile — create or refresh the ClassGuard RADIUS profile
+router.post('/unifi/profile', ...auth, async (req, res) => {
+  try {
+    const ctrl = await getUnifiController();
+    if (!ctrl) return res.status(400).json({ error: 'No active UniFi controller configured (Integrations → Network)' });
+
+    const { serverIp, secret } = await getRadiusServerConfig();
+    if (!serverIp) return res.status(400).json({ error: 'RADIUS virtual IP not configured (HA & Config tab)' });
+    if (!secret)   return res.status(400).json({ error: 'radius_default_nas_secret not set (HA & Config tab)' });
+
+    const desired = {
+      name: CG_PROFILE_NAME,
+      auth_servers: [{ ip: serverIp, port: 1812, x_secret: secret }],
+      acct_servers: [{ ip: serverIp, port: 1813, x_secret: secret }],
+      accounting_enabled: true,
+      interim_update_enabled: true,
+      interim_update_interval: 3600,
+      // "optional" = APs honor Tunnel-Private-Group-Id when ClassGuard sends
+      // one (BYOD policies) and keep the WLAN's own network when it doesn't
+      // (corporate MAB) — exactly the split-VLAN behavior we document in the UI.
+      vlan_enabled: true,
+      vlan_wlan_mode: 'optional',
+      use_usg_auth_server: false,
+    };
+
+    const unifi   = require('../services/network/unifi');
+    const existing = (await unifi.fetchRadiusProfiles(ctrl)).find(p => p.name === CG_PROFILE_NAME);
+    const profile  = existing
+      ? await unifi.updateRadiusProfile(ctrl, existing._id, desired)
+      : await unifi.createRadiusProfile(ctrl, desired);
+    res.json({ ok: true, created: !existing, profile_id: profile?._id || existing?._id });
+  } catch (err) {
+    console.error('[radius/unifi/profile]', err.message);
+    res.status(502).json({ error: `UniFi controller: ${err.message}` });
+  }
+});
+
+// PUT /radius/unifi/wlans/:id — apply a RADIUS role to one WLAN
+router.put('/unifi/wlans/:id', ...auth, async (req, res) => {
+  try {
+    const { action, mac_format } = req.body;
+    const ctrl = await getUnifiController();
+    if (!ctrl) return res.status(400).json({ error: 'No active UniFi controller configured' });
+    if (mac_format && !MAC_FORMATS.includes(mac_format)) {
+      return res.status(400).json({ error: `mac_format must be one of ${MAC_FORMATS.join(', ')}` });
+    }
+
+    const unifi = require('../services/network/unifi');
+    const cgProfile = (await unifi.fetchRadiusProfiles(ctrl)).find(p => p.name === CG_PROFILE_NAME);
+    if (!cgProfile && action !== 'disable_macauth') {
+      return res.status(400).json({ error: 'Create the ClassGuard RADIUS profile first' });
+    }
+
+    let patch;
+    if (action === 'enable_byod') {
+      // WPA-Enterprise: users sign in with Google credentials via EAP-TTLS
+      patch = { security: 'wpaeap', radiusprofile_id: cgProfile._id };
+    } else if (action === 'enable_macauth') {
+      // Keeps the WLAN's existing security (PSK) and adds RADIUS MAC auth on top
+      patch = { macauth_enabled: true, radiusprofile_id: cgProfile._id, radius_mac_auth_format: mac_format || 'none_lower' };
+    } else if (action === 'disable_macauth') {
+      patch = { macauth_enabled: false };
+    } else if (action === 'set_mac_format') {
+      patch = { radius_mac_auth_format: mac_format || 'none_lower' };
+    } else {
+      return res.status(400).json({ error: 'action must be enable_byod, enable_macauth, disable_macauth or set_mac_format' });
+    }
+
+    const wlan = await unifi.updateWlan(ctrl, req.params.id, patch);
+    res.json({ ok: true, wlan: wlan && { _id: wlan._id, name: wlan.name, security: wlan.security, macauth_enabled: !!wlan.macauth_enabled } });
+  } catch (err) {
+    console.error('[radius/unifi/wlan]', err.message);
+    res.status(502).json({ error: `UniFi controller: ${err.message}` });
+  }
 });
 
 // ---------------------------------------------------------------------------
