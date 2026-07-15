@@ -71,6 +71,54 @@ function attr(body, key) {
 // FreeRADIUS rlm_rest hooks
 // ---------------------------------------------------------------------------
 
+// Evaluate Wi-Fi policies for a user on an SSID → { allowed, reason?, vlan? }.
+// Runs in BOTH /authorize and /authenticate: the EAP-TTLS/GTC flow (what a
+// profile-less iPhone does) reaches /authenticate via the eap module without
+// ever passing through /authorize's policy pass, so /authenticate cannot
+// assume policies were already enforced.
+async function evaluateUserPolicy(username, ssid) {
+  // Domain-level policy first, independent of whether this email exists in
+  // ClassGuard's own `users` table at all — a district that hasn't (or never
+  // will) sync students into `users` still needs a real "deny
+  // students.<domain>" decision, not an accidental pass because the
+  // deny-by-domain rule could never run for an unsynced user.
+  const domain = username.includes('@') ? username.split('@').pop().toLowerCase() : null;
+  if (domain) {
+    const { rows: domainRows } = await pool.query(
+      `SELECT can_access FROM radius_user_policies
+       WHERE email_domain = $1 AND (ssid IS NULL OR ssid = $2)
+       ORDER BY priority DESC NULLS LAST LIMIT 1`,
+      [domain, ssid || '']
+    );
+    if (domainRows.length && domainRows[0].can_access === false) {
+      return { allowed: false, reason: 'domain policy denied' };
+    }
+  }
+
+  const { rows } = await pool.query(
+    `SELECT u.*, rp.vlan, rp.can_access
+     FROM users u
+     LEFT JOIN radius_user_policies rp ON (
+       rp.user_id = u.id
+       OR rp.group_id IN (SELECT group_id FROM group_members WHERE user_id = u.id)
+       OR (rp.google_ou IS NOT NULL AND u.google_ou IS NOT NULL
+           AND (u.google_ou = rp.google_ou OR u.google_ou LIKE rp.google_ou || '/%'))
+       OR (rp.email_domain IS NOT NULL AND rp.email_domain = lower(split_part(u.email, '@', 2)))
+       OR (rp.user_id IS NULL AND rp.group_id IS NULL AND rp.google_ou IS NULL AND rp.email_domain IS NULL) -- default/catch-all policy
+     ) AND (rp.ssid IS NULL OR rp.ssid = $2)
+     WHERE lower(u.email) = lower($1) AND u.is_active = true
+     ORDER BY (rp.user_id IS NOT NULL) DESC, (rp.group_id IS NOT NULL) DESC,
+              (rp.google_ou IS NOT NULL) DESC, length(rp.google_ou) DESC NULLS LAST,
+              (rp.email_domain IS NOT NULL) DESC, rp.priority DESC NULLS LAST
+     LIMIT 1`,
+    [username, ssid || '']
+  );
+
+  if (!rows.length) return { allowed: false, reason: 'user not found or inactive' };
+  if (rows[0].can_access === false) return { allowed: false, reason: 'user policy denied' };
+  return { allowed: true, vlan: rows[0].vlan || null };
+}
+
 // POST /api/v1/radius/authorize
 // Called for every auth request. Handles both MAB and EAP-TTLS user auth.
 router.post('/authorize', radiusSecret, async (req, res) => {
@@ -157,61 +205,16 @@ router.post('/authorize', radiusSecret, async (req, res) => {
         [username, parseMac(callingId), nasIp, ssid, reason]
       ).catch(() => {}); // logging failure shouldn't block the reject response
 
-      // Domain-level policy check first, independent of whether this email
-      // exists in ClassGuard's own `users` table at all -- a district that
-      // hasn't (or never will) sync students into `users` still needs a
-      // real "deny students.<domain>" decision, not an accidental pass
-      // because the deny-by-domain rule could never run for an unsynced
-      // user. Runs before the `users` lookup below so a denied domain never
-      // even reaches it.
-      const domain = username.includes('@') ? username.split('@').pop().toLowerCase() : null;
-      if (domain) {
-        const { rows: domainRows } = await pool.query(
-          `SELECT can_access FROM radius_user_policies
-           WHERE email_domain = $1 AND (ssid IS NULL OR ssid = $2)
-           ORDER BY priority DESC NULLS LAST LIMIT 1`,
-          [domain, ssid || '']
-        );
-        if (domainRows.length && domainRows[0].can_access === false) {
-          await logReject('domain policy denied');
-          return res.json(radiusReject('domain policy denied'));
-        }
-      }
-
-      const { rows } = await pool.query(
-        `SELECT u.*, rp.vlan, rp.can_access
-         FROM users u
-         LEFT JOIN radius_user_policies rp ON (
-           rp.user_id = u.id
-           OR rp.group_id IN (SELECT group_id FROM group_members WHERE user_id = u.id)
-           OR (rp.google_ou IS NOT NULL AND u.google_ou IS NOT NULL
-               AND (u.google_ou = rp.google_ou OR u.google_ou LIKE rp.google_ou || '/%'))
-           OR (rp.email_domain IS NOT NULL AND rp.email_domain = lower(split_part(u.email, '@', 2)))
-           OR (rp.user_id IS NULL AND rp.group_id IS NULL AND rp.google_ou IS NULL AND rp.email_domain IS NULL) -- default/catch-all policy
-         ) AND (rp.ssid IS NULL OR rp.ssid = $2)
-         WHERE lower(u.email) = lower($1) AND u.is_active = true
-         ORDER BY (rp.user_id IS NOT NULL) DESC, (rp.group_id IS NOT NULL) DESC,
-                  (rp.google_ou IS NOT NULL) DESC, length(rp.google_ou) DESC NULLS LAST,
-                  (rp.email_domain IS NOT NULL) DESC, rp.priority DESC NULLS LAST
-         LIMIT 1`,
-        [username, ssid || '']
-      );
-
-      if (!rows.length) {
-        await logReject('user not found or inactive');
-        return res.json(radiusReject('user not found or inactive'));
-      }
-
-      const user = rows[0];
-      if (user.can_access === false) {
-        await logReject('user policy denied');
-        return res.json(radiusReject('user policy denied'));
+      const policy = await evaluateUserPolicy(username, ssid);
+      if (!policy.allowed) {
+        await logReject(policy.reason);
+        return res.json(radiusReject(policy.reason));
       }
 
       // Tell FreeRADIUS to use our REST authenticate endpoint
       return res.json({
         'control:Auth-Type': { value: ['rest'] },
-        'control:ClassGuard-VLAN': { value: [String(user.vlan || '')] },
+        'control:ClassGuard-VLAN': { value: [String(policy.vlan || '')] },
       });
     }
 
@@ -234,7 +237,15 @@ router.post('/authenticate', radiusSecret, async (req, res) => {
     const mac      = parseMac(attr(req.body, 'Calling-Station-Id'));
     const vlanHint = attr(req.body, 'control:ClassGuard-VLAN');
 
-    const result = await radiusLdap.authenticateUser(username, password);
+    // Policy check must happen HERE, not just in /authorize: the TTLS/GTC
+    // flow (profile-less iPhones) arrives via the inner-tunnel eap module,
+    // which never runs the REST /authorize policy pass. For the TTLS/PAP
+    // flow this repeats /authorize's verdict — same answer, no harm.
+    const policy = await evaluateUserPolicy(username || '', ssid);
+    const result = policy.allowed
+      ? await radiusLdap.authenticateUser(username, password)
+      : { ok: false, reason: policy.reason };
+    const vlan = result.ok ? (policy.vlan ?? vlanHint ?? null) : null;
 
     await pool.query(
       `INSERT INTO radius_auth_log
@@ -243,11 +254,11 @@ router.post('/authenticate', radiusSecret, async (req, res) => {
       [username, mac, nasIp, ssid,
        result.ok ? 'accepted' : 'rejected',
        result.ok ? null : result.reason,
-       result.ok ? (vlanHint || null) : null]
+       vlan]
     );
 
     if (result.ok) {
-      return res.json(radiusAccept(vlanHint || null));
+      return res.json(radiusAccept(vlan));
     } else {
       return res.json(radiusReject(result.reason));
     }

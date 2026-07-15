@@ -251,9 +251,11 @@ function generateFreeRadiusVirtualServer(internalSecret) {
 # Disable:   rm sites-enabled/default sites-enabled/inner-tunnel
 #
 # Auth flow:
-#   EAP-TTLS/PAP (user WiFi via Google Workspace):
-#     authorize  → ClassGuard looks up user, sets Auth-Type = rest
-#     authenticate (inner-tunnel PAP) → ClassGuard validates via Google Secure LDAP
+#   EAP-TTLS user WiFi via Google Workspace — two inner variants:
+#     GTC (manual joins; iOS/macOS/Android):  inner-tunnel eap → gtc →
+#       Auth-Type rest → /authenticate (policy check + LDAP bind)
+#     PAP (profiles/eapol_test): authorize REST sets Auth-Type = rest →
+#       /authenticate (policy check + LDAP bind)
 #
 #   MAB (device WiFi — Calling-Station-Id = MAC address):
 #     authorize  → ClassGuard checks radius_devices → Accept/Reject + VLAN attrs
@@ -320,20 +322,36 @@ server inner-tunnel {
     }
 
     authorize {
-        ${setSecret}
-        rest
-        pap
+        # Inner EAP (TTLS proposes GTC — the profile-less iPhone path):
+        # the eap module owns these requests. It returns ok for the
+        # identity round but *updated* for the GTC response, so the
+        # ok = return short-circuit alone can't keep REST away — gate the
+        # REST pass on EAP-Message too, or its control:Auth-Type = rest
+        # reply overwrites Auth-Type eap and the gtc module never runs
+        # ("Auth-Type = REST for a request that does not contain a
+        # User-Password"). Skipping REST /authorize for EAP requests is
+        # safe because gtc.auth_type = rest routes the password to
+        # /authenticate, which runs the same policy checks itself.
+        eap { ok = return }
+        if (!&EAP-Message) {
+            ${setSecret}
+            rest
+            pap
+        }
     }
 
     authenticate {
-        # /authorize answers the inner user lookup with control:Auth-Type =
-        # rest (same response it gives the outer server), overriding the pap
-        # module — so this block, not Auth-Type PAP, is what actually runs
-        # for EAP-TTLS inner auth. Without it FreeRADIUS has no authenticate
-        # method for the request and rejects before ever calling /authenticate.
+        # Drives the inner EAP-GTC challenge/response; the gtc module then
+        # invokes Auth-Type rest below with User-Password filled in.
+        Auth-Type eap {
+            eap
+        }
+        # Runs for both flows — GTC (via gtc.auth_type) and plain TTLS/PAP
+        # (via /authorize's control:Auth-Type = rest). Sends the tunneled
+        # cleartext password to ClassGuard → Google Secure LDAP bind.
         Auth-Type rest {
             ${setSecret}
-            rest  # sends cleartext password to ClassGuard → Google Secure LDAP
+            rest
         }
         # Kept for completeness: runs only if authorize didn't set Auth-Type
         # (e.g. REST unreachable and a Cleartext-Password were ever present).
@@ -351,11 +369,12 @@ function generateEapMod() {
 # Deploy to: /etc/freeradius/3.0/mods-available/eap
 # (replaces the default eap module config)
 #
-# EAP-TTLS/PAP is the recommended method:
-#   - Works on iOS without any profile (auto-negotiated)
-#   - Works on Android when WiFi profile pushed via MDM or manually configured
-#   - Works on macOS, Windows, ChromeOS
-#   - No MSCHAPv2 needed → no NTLM hash issues with Google passwords
+# EAP-TTLS with inner GTC (manual joins) or inner PAP (profiles):
+#   - iOS/macOS join manually with no profile — server proposes GTC and
+#     the device sends the typed password through the TLS tunnel
+#   - Android: manual join with PAP selected, or GTC
+#   - No MSCHAPv2 anywhere → no NTLM-hash requirement, which Google
+#     Secure LDAP could never satisfy (bind-only, no hashes)
 
 eap {
     default_eap_type = ttls
@@ -364,6 +383,16 @@ eap {
     ignore_unknown_eap_types = no
     cisco_accounting_username_bug = no
     max_sessions = 4096
+
+    # Inner method for TTLS. GTC = the client types a password and it is
+    # sent through the TLS tunnel — the only inner method iOS/macOS agree
+    # to on a manual (profile-less) join that still yields a bindable
+    # password for Google Secure LDAP. auth_type names the inner-tunnel
+    # authenticate block that verifies it: our REST → /authenticate.
+    gtc {
+        challenge = "Password: "
+        auth_type = rest
+    }
 
     tls-config tls-common {
         # Generate with: openssl req -x509 -newkey rsa:4096 -keyout /etc/freeradius/3.0/certs/server.key
@@ -384,9 +413,12 @@ eap {
 
     ttls {
         tls          = tls-common
-        # Inner method is PAP — ClassGuard receives the cleartext password
-        # and validates it against Google Secure LDAP
-        default_eap_type     = md5
+        # Propose GTC when the client wants an EAP method inside the
+        # tunnel (what iPhones do on a manual join). Clients that send
+        # plain TTLS/PAP AVPs instead skip this and hit the inner-tunnel
+        # pap/REST path directly. copy_request_to_tunnel carries the
+        # outer Called-Station-Id in, so SSID policies see the real SSID.
+        default_eap_type     = gtc
         copy_request_to_tunnel = yes
         use_tunneled_reply     = yes
         virtual_server         = "inner-tunnel"
