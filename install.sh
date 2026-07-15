@@ -226,8 +226,11 @@ EOF
   warn "DB password and JWT secret are stored in .env — keep this file private"
 fi
 
-# Source DB_PASSWORD for use below
-DB_PASSWORD=$(grep '^DB_PASSWORD=' .env | cut -d= -f2-)
+# Source DB_PASSWORD for use below. Same set -e trap as NODE_ROLE below: a
+# failed grep inside an assignment substitution exits the script silently,
+# so check it explicitly and fail with a message instead.
+DB_PASSWORD=$(grep '^DB_PASSWORD=' .env | cut -d= -f2- || true)
+[[ -n "$DB_PASSWORD" ]] || error "DB_PASSWORD missing from .env — cannot continue"
 
 # ---------------------------------------------------------------------------
 # 5. Build and start the stack
@@ -305,7 +308,17 @@ if [[ "$SSL_STATUS" != "on" ]]; then
   info "Postgres SSL enabled"
 fi
 
-NODE_ROLE_CURRENT=$(grep '^NODE_ROLE=' .env | cut -d= -f2-)
+# A .env from before HA support has no NODE_ROLE line. grep then exits 1,
+# and under set -euo pipefail a failed command substitution in an assignment
+# kills the whole script with no output at all — the update just dies right
+# after "Checking Postgres SSL status..." with nothing in the log. Fall back
+# to primary, which is what the backend (config.js) and docker-compose both
+# already default to when the variable is unset.
+NODE_ROLE_CURRENT=$(grep '^NODE_ROLE=' .env | cut -d= -f2- || true)
+if [[ -z "$NODE_ROLE_CURRENT" ]]; then
+  warn "NODE_ROLE missing from .env — assuming primary (matches the runtime default)"
+  NODE_ROLE_CURRENT=primary
+fi
 
 # Standbys have a read-only streaming replica — migrations would fail with
 # "cannot execute ... on a read-only transaction". Schema is already in sync
