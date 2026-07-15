@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import MdiIcon from '@mdi/react';
+import { Icon as MdiIcon } from '@mdi/react';
 import { mdiCalendarClock } from '@mdi/js';
 import api from '../../lib/api';
 

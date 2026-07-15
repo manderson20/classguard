@@ -589,7 +589,7 @@ function DevicesTab() {
 // shape for a BYOD/personal-device SSID where any Google Workspace user
 // should be able to connect without being added to a group first.
 // ---------------------------------------------------------------------------
-const EMPTY_POLICY = { target: 'default', user_id: '', group_id: '', email_domain: '', ssid: '', vlan: '', can_access: true, priority: 0, notes: '' };
+const EMPTY_POLICY = { target: 'default', user_id: '', group_id: '', google_ou: '', email_domain: '', ssid: '', vlan: '', can_access: true, priority: 0, notes: '' };
 
 function PolicyModal({ initial, onSave, onCancel, isPending }) {
   const [form, setForm] = useState(initial || EMPTY_POLICY);
@@ -606,8 +606,18 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
     queryFn:  () => api.get('/groups'),
     enabled:  form.target === 'group',
   });
+  const { data: ous = [] } = useQuery({
+    queryKey: ['radius-ou-list'],
+    queryFn:  () => api.get('/radius/ou-list'),
+    enabled:  form.target === 'ou',
+  });
 
-  const canSave = (form.target === 'default' || form.target === 'domain') ? !!form.ssid : true;
+  const canSave =
+    form.target === 'default' ? !!form.ssid :
+    form.target === 'domain' ? !!form.ssid && !!form.email_domain :
+    form.target === 'ou'    ? !!form.ssid && !!form.google_ou :
+    form.target === 'user'  ? !!form.user_id :
+    form.target === 'group' ? !!form.group_id : true;
 
   return (
     <div className="flex flex-col gap-3">
@@ -616,6 +626,7 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
           <option value="default">Anyone (default for this SSID)</option>
           <option value="user">A specific user</option>
           <option value="group">A specific group</option>
+          <option value="ou">A Google OU</option>
           <option value="domain">An email domain</option>
         </select>
       </Field>
@@ -623,9 +634,11 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
       {form.target === 'user' && (
         <Field label="User" hint="search by name or email">
           <input className={INPUT} value={userSearch} onChange={e=>setUserSearch(e.target.value)} placeholder="Start typing…"/>
-          {users.length > 0 && (
+          {(users.length > 0 || form.user_id) && (
             <select className={SELECT + ' mt-1'} value={form.user_id} onChange={e=>f('user_id', e.target.value)}>
               <option value="">Select a user…</option>
+              {form.user_id && !users.some(u=>String(u.id)===String(form.user_id)) &&
+                <option value={form.user_id}>{form._userLabel || 'Current selection'}</option>}
               {users.map(u=><option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
             </select>
           )}
@@ -639,6 +652,16 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
             {groups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
           </select>
           {!groups.length && <p className="text-xs text-amber-600 mt-1">No groups exist yet.</p>}
+        </Field>
+      )}
+
+      {form.target === 'ou' && (
+        <Field label="Google OU" hint="includes all sub-OUs — a policy for /Students also covers /Students/High School">
+          <select className={SELECT} value={form.google_ou} onChange={e=>f('google_ou', e.target.value)}>
+            <option value="">Select an OU…</option>
+            {ous.map(path=><option key={path} value={path}>{path}</option>)}
+          </select>
+          {!ous.length && <p className="text-xs text-amber-600 mt-1">No OUs synced yet — run a Google Workspace sync first.</p>}
         </Field>
       )}
 
@@ -660,7 +683,13 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
         </p>
       )}
 
-      <Field label="SSID" hint={(form.target === 'default' || form.target === 'domain') ? 'required' : 'leave blank to apply to all SSIDs'}>
+      {form.target === 'ou' && (
+        <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+          Applies to every account in this OU <strong>or any OU beneath it</strong>, on the SSID below. Only works for accounts synced from Google Admin — an account ClassGuard has never synced has no OU to match, so pair a broad OU allow with a deny default policy on the same SSID. An SSID is required so it can't accidentally apply across every network.
+        </p>
+      )}
+
+      <Field label="SSID" hint={(form.target === 'default' || form.target === 'domain' || form.target === 'ou') ? 'required' : 'leave blank to apply to all SSIDs'}>
         <input className={INPUT} value={form.ssid} onChange={e=>f('ssid', e.target.value)} placeholder="e.g. SchoolName-BYOD"/>
       </Field>
       <Field label="VLAN" hint="leave blank to use the NAS default VLAN">
@@ -698,15 +727,32 @@ function PoliciesTab() {
     queryFn:  () => api.get('/radius/policies'),
   });
 
+  const toPayload = form => ({
+    user_id:      form.target === 'user'   ? form.user_id     || null : null,
+    group_id:     form.target === 'group'  ? form.group_id    || null : null,
+    google_ou:    form.target === 'ou'     ? form.google_ou   || null : null,
+    email_domain: form.target === 'domain' ? form.email_domain || null : null,
+    ssid: form.ssid || null, vlan: form.vlan || null,
+    can_access: form.can_access, priority: form.priority || 0, notes: form.notes || null,
+  });
+
   const add = useMutation({
-    mutationFn: form => api.post('/radius/policies', {
-      user_id:      form.target === 'user'   ? form.user_id     || null : null,
-      group_id:     form.target === 'group'  ? form.group_id    || null : null,
-      email_domain: form.target === 'domain' ? form.email_domain || null : null,
-      ssid: form.ssid || null, vlan: form.vlan || null,
-      can_access: form.can_access, priority: form.priority || 0, notes: form.notes || null,
-    }),
+    mutationFn: form => api.post('/radius/policies', toPayload(form)),
     onSuccess: () => { qc.invalidateQueries({queryKey:['radius-policies']}); setModal(null); },
+  });
+
+  const edit = useMutation({
+    mutationFn: ({ id, form }) => api.put(`/radius/policies/${id}`, toPayload(form)),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['radius-policies']}); setModal(null); },
+  });
+
+  // Map a policy row back into the modal's form shape. _userLabel keeps the
+  // current user's name visible in the select before any new search runs.
+  const toForm = p => ({
+    target: p.user_id ? 'user' : p.group_id ? 'group' : p.google_ou ? 'ou' : p.email_domain ? 'domain' : 'default',
+    user_id: p.user_id || '', group_id: p.group_id || '', google_ou: p.google_ou || '', email_domain: p.email_domain || '',
+    ssid: p.ssid || '', vlan: p.vlan ?? '', can_access: p.can_access, priority: p.priority ?? 0, notes: p.notes || '',
+    _userLabel: p.full_name ? `${p.full_name} (${p.email})` : '',
   });
 
   const del = useMutation({
@@ -714,12 +760,13 @@ function PoliciesTab() {
     onSuccess: () => qc.invalidateQueries({queryKey:['radius-policies']}),
   });
 
-  const targetLabel = p => p.full_name ? `${p.full_name} (${p.email})` : p.group_name ? `Group: ${p.group_name}` : p.email_domain ? `Domain: @${p.email_domain}` : 'Anyone (default)';
+  const targetLabel = p => p.full_name ? `${p.full_name} (${p.email})` : p.group_name ? `Group: ${p.group_name}` : p.google_ou ? `OU: ${p.google_ou}` : p.email_domain ? `Domain: @${p.email_domain}` : 'Anyone (default)';
 
   return (
     <div className="flex flex-col gap-4">
       <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-        Controls which SSID a user/group/email domain can authenticate on (via username + Google credentials, EAP) and which VLAN they land in.
+        Controls which SSID a user/group/Google OU/email domain can authenticate on (via username + Google credentials, EAP) and which VLAN they land in.
+        An OU rule covers the OU and everything beneath it (e.g. /Students covers /Students/High School/11th Grade) and follows users automatically as Google sync moves them between OUs.
         A domain rule (e.g. deny @students.school.org on the staff SSID) is checked before ClassGuard even needs to know who the
         specific user is, so it works regardless of whether that account is synced into Users.
         Doesn't apply to MAC-based device auth (Devices / NAC tab) — that's governed by device approval status instead.
@@ -745,7 +792,8 @@ function PoliciesTab() {
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-500">{p.priority}</td>
                 <td className="px-3 py-2 text-xs text-slate-400">{p.notes || '—'}</td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <button onClick={()=>setModal({ mode:'edit', policy:p })} className="text-xs text-primary-600 hover:underline mr-3">Edit</button>
                   <button onClick={()=>del.mutate(p.id)} className="text-xs text-red-500 hover:underline">Remove</button>
                 </td>
               </tr>
@@ -759,6 +807,13 @@ function PoliciesTab() {
           <PolicyModal onSave={form=>add.mutate(form)} onCancel={()=>setModal(null)} isPending={add.isPending}/>
         </Modal>
       )}
+      {modal?.mode==='edit' && (
+        <Modal title="Edit Wi-Fi Policy" onClose={()=>setModal(null)}>
+          <PolicyModal initial={toForm(modal.policy)}
+            onSave={form=>edit.mutate({ id: modal.policy.id, form })}
+            onCancel={()=>setModal(null)} isPending={edit.isPending}/>
+        </Modal>
+      )}
     </div>
   );
 }
@@ -768,16 +823,17 @@ function PoliciesTab() {
 // ---------------------------------------------------------------------------
 function LogTab() {
   const [resultFilter, setResultFilter] = useState('');
+  const [search, setSearch] = useState('');
 
   const { data: log = [] } = useQuery({
-    queryKey: ['radius-log', resultFilter],
-    queryFn:  () => api.get(`/radius/log?limit=200${resultFilter ? '&result='+resultFilter : ''}`),
+    queryKey: ['radius-log', resultFilter, search],
+    queryFn:  () => api.get(`/radius/log?limit=200${resultFilter ? '&result='+resultFilter : ''}${search ? '&search='+encodeURIComponent(search) : ''}`),
     refetchInterval: 10_000,
   });
 
   return (
     <>
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 items-center">
         {[['','All'],['accepted','Accepted'],['rejected','Rejected']].map(([v,l])=>(
           <button key={v} onClick={()=>setResultFilter(v)}
             className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors
@@ -785,6 +841,8 @@ function LogTab() {
             {l}
           </button>
         ))}
+        <input className={INPUT + ' !w-64 text-xs'} value={search} onChange={e=>setSearch(e.target.value)}
+          placeholder="Filter by user or MAC…"/>
         <span className="ml-auto text-xs text-slate-400 self-center">auto-refreshes every 10s</span>
       </div>
       <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -811,6 +869,59 @@ function LogTab() {
         </table>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// User Devices Tab — every (user, device) pair seen by Wi-Fi user auth:
+// which devices has this person connected with, when, and where. Grouped
+// from the auth log, so it needs no extra bookkeeping and covers history
+// as far back as the log goes. MAC-auth devices are excluded — those live
+// on the Devices / NAC tab, keyed by device rather than person.
+// ---------------------------------------------------------------------------
+function UserDevicesTab() {
+  const [search, setSearch] = useState('');
+
+  const { data: rows = [] } = useQuery({
+    queryKey: ['radius-user-devices', search],
+    queryFn:  () => api.get(`/radius/user-devices${search ? '?search='+encodeURIComponent(search) : ''}`),
+    refetchInterval: 30_000,
+  });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+        Every device each user has authenticated with on Wi-Fi (from the auth log).
+        Note: personal devices ship with per-network randomized MAC addresses, so the same
+        phone shows one stable MAC per SSID — still useful for "how many devices does this
+        account sign in from" and spotting shared credentials.
+      </div>
+      <input className={INPUT + ' !w-72 text-xs'} value={search} onChange={e=>setSearch(e.target.value)}
+        placeholder="Filter by user or MAC…"/>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>{['User','Device MAC','SSIDs','Last VLAN','Accepted','Rejected','First seen','Last seen'].map(h=>
+              <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map(r=>(
+              <tr key={`${r.username}|${r.mac_address}`} className="hover:bg-slate-50">
+                <td className="px-3 py-2 text-xs text-slate-700">{r.username}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-600">{r.mac_address}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{(r.ssids || []).join(', ') || '—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{r.last_vlan ?? '—'}</td>
+                <td className="px-3 py-2 text-xs text-green-700">{r.accepts}</td>
+                <td className="px-3 py-2 text-xs text-red-600">{r.rejects}</td>
+                <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{new Date(r.first_seen).toLocaleString()}</td>
+                <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{new Date(r.last_seen).toLocaleString()}</td>
+              </tr>
+            ))}
+            {!rows.length && <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-400">No user authentications logged yet</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -921,7 +1032,211 @@ function HaConfigTab() {
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Overview','NAS Clients','Devices / NAC','Wi-Fi Policies','Auth Log','HA & Config'];
+// ---------------------------------------------------------------------------
+// UniFi Setup Tab
+// Wires ClassGuard into the UniFi controller as its RADIUS server: one
+// "ClassGuard" RADIUS profile shared by every WLAN, then per-WLAN switches
+// for 802.1X (BYOD) or PSK + MAC auth (corporate NAC). All buttons push a
+// change to the live controller immediately, hence the confirm()s.
+// ---------------------------------------------------------------------------
+const MAC_FORMAT_LABELS = {
+  none_lower:   'aabbccddeeff',
+  hyphen_lower: 'aa-bb-cc-dd-ee-ff',
+  colon_lower:  'aa:bb:cc:dd:ee:ff',
+  none_upper:   'AABBCCDDEEFF',
+  hyphen_upper: 'AA-BB-CC-DD-EE-FF',
+  colon_upper:  'AA:BB:CC:DD:EE:FF',
+};
+
+function SecurityBadge({ security }) {
+  const map = {
+    wpaeap: { cls: 'bg-indigo-100 text-indigo-700', label: '802.1X (Enterprise)' },
+    wpapsk: { cls: 'bg-slate-100 text-slate-600',   label: 'WPA-PSK' },
+    open:   { cls: 'bg-amber-100 text-amber-700',   label: 'Open' },
+  };
+  const s = map[security] || { cls: 'bg-slate-100 text-slate-500', label: security };
+  return <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${s.cls}`}>{s.label}</span>;
+}
+
+function UnifiTab() {
+  const qc = useQueryClient();
+  const [macFormat, setMacFormat] = useState('none_lower');
+  const { data, isLoading, error, refetch } = useQuery({
+    queryKey: ['radius-unifi-setup'],
+    queryFn:  () => api.get('/radius/unifi/setup'),
+    retry: false,
+    staleTime: 30_000,
+  });
+
+  const invalidate = () => qc.invalidateQueries({queryKey:['radius-unifi-setup']});
+  const profileMut = useMutation({
+    mutationFn: () => api.post('/radius/unifi/profile', {}),
+    onSuccess: invalidate,
+  });
+  const wlanMut = useMutation({
+    mutationFn: ({ id, action }) => api.put(`/radius/unifi/wlans/${id}`, { action, mac_format: macFormat }),
+    onSuccess: invalidate,
+  });
+
+  if (isLoading) return <p className="text-sm text-slate-400">Contacting UniFi controller…</p>;
+  if (error) return (
+    <div className="bg-red-50 border border-red-200 rounded-xl p-4 text-sm text-red-700">
+      {error.message || 'Could not reach the UniFi controller'}
+      <button onClick={()=>refetch()} className="ml-3 underline">Retry</button>
+    </div>
+  );
+  if (!data.configured) return (
+    <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
+      No active UniFi controller — add one under Admin → Integrations → Network first.
+    </div>
+  );
+
+  const cg = data.classguard_profile;
+  const anyMutErr = profileMut.error || wlanMut.error;
+
+  // Districts typically have one WLAN entry per building/AP-group sharing the
+  // same SSID name — group them so "Devices ×8" reads as one network.
+  const groups = [];
+  for (const w of data.wlans) {
+    const g = groups.find(g => g.name === w.name);
+    if (g) g.wlans.push(w); else groups.push({ name: w.name, wlans: [w] });
+  }
+
+  const applyAll = async (wlans, action, label) => {
+    if (!confirm(`${label} for all ${wlans.length} "${wlans[0].name}" WLANs? This pushes to the UniFi controller immediately.`)) return;
+    for (const w of wlans) await wlanMut.mutateAsync({ id: w._id, action });
+  };
+
+  return (
+    <div className="flex flex-col gap-4">
+      {anyMutErr && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-3 text-sm text-red-700">
+          {anyMutErr.message}
+        </div>
+      )}
+
+      {/* RADIUS profile card */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-semibold text-slate-900 text-sm">ClassGuard RADIUS profile</h3>
+            <p className="text-xs text-slate-500 mt-1">
+              One profile serves both networks — BYOD WLANs use it for 802.1X, corporate WLANs for MAC auth.
+              Auth/accounting point at the RADIUS virtual IP <span className="font-mono">{data.radius_server.ip || 'not set'}</span> with
+              the shared NAS secret{data.radius_server.secret_set ? '' : ' (NOT SET — fix in HA & Config first)'}.
+            </p>
+            {cg ? (
+              <div className="mt-2 text-xs text-slate-600 flex flex-wrap gap-3">
+                <span>Auth: <span className="font-mono">{cg.auth_servers.map(s=>`${s.ip}:${s.port}`).join(', ') || '—'}</span></span>
+                <span>Accounting: {cg.accounting_enabled ? 'on' : 'off'}</span>
+                <span>RADIUS-assigned VLAN: {cg.vlan_enabled ? cg.vlan_wlan_mode : 'disabled'}</span>
+              </div>
+            ) : (
+              <p className="mt-2 text-xs text-amber-700">Profile doesn't exist in the controller yet.</p>
+            )}
+          </div>
+          <button
+            onClick={()=>{ if (confirm(`${cg ? 'Update' : 'Create'} the "ClassGuard" RADIUS profile on the UniFi controller?`)) profileMut.mutate(); }}
+            disabled={profileMut.isPending || !data.radius_server.ip || !data.radius_server.secret_set}
+            className="flex-shrink-0 bg-primary-600 hover:bg-primary-700 text-white text-sm font-medium px-4 py-2 rounded-lg disabled:opacity-50">
+            {profileMut.isPending ? 'Pushing…' : cg ? 'Update profile' : 'Create profile'}
+          </button>
+        </div>
+      </div>
+
+      {/* How VLANs behave */}
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+        <strong>How VLANs behave:</strong> the profile is created with RADIUS-assigned VLAN set to <em>optional</em> —
+        when a Wi-Fi Policy assigns a VLAN (BYOD), the client lands on it at every building, so their subnet follows them.
+        When ClassGuard sends no VLAN (corporate MAC auth), the client stays on the WLAN's own per-building network,
+        so a device moving between buildings picks up that building's corporate subnet automatically.
+      </div>
+
+      {/* MAC format */}
+      <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-3">
+        <div className="flex-1">
+          <h3 className="font-semibold text-slate-900 text-sm">MAC Address Format</h3>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Applied when enabling MAC auth below. ClassGuard accepts every format, so this only affects how MACs look in controller logs.
+          </p>
+        </div>
+        <div className="w-56 flex-shrink-0">
+          <select className={SELECT + ' font-mono'} value={macFormat} onChange={e=>setMacFormat(e.target.value)}>
+            {(data.mac_formats || Object.keys(MAC_FORMAT_LABELS)).map(f=>(
+              <option key={f} value={f}>{MAC_FORMAT_LABELS[f] || f}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {/* WLANs */}
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-left text-xs text-slate-500 uppercase">
+            <tr>
+              <th className="px-4 py-2">WLAN</th>
+              <th className="px-4 py-2">Security</th>
+              <th className="px-4 py-2">MAC auth</th>
+              <th className="px-4 py-2">RADIUS profile</th>
+              <th className="px-4 py-2 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {groups.map(g => g.wlans.map((w, i) => (
+              <tr key={w._id} className={`border-t border-slate-100 ${!w.enabled ? 'opacity-40' : ''}`}>
+                <td className="px-4 py-2 font-medium text-slate-800">
+                  {i === 0 ? g.name : <span className="text-slate-300 pl-3">└</span>}
+                  {i === 0 && g.wlans.length > 1 && <span className="ml-2 text-xs text-slate-400">×{g.wlans.length} (per building)</span>}
+                  {!w.enabled && <span className="ml-2 text-xs text-slate-400">disabled</span>}
+                </td>
+                <td className="px-4 py-2"><SecurityBadge security={w.security}/></td>
+                <td className="px-4 py-2 text-xs">
+                  {w.macauth_enabled
+                    ? <span className="text-green-700 font-semibold">on <span className="font-mono font-normal text-slate-400">({MAC_FORMAT_LABELS[w.radius_mac_auth_format] || w.radius_mac_auth_format})</span></span>
+                    : <span className="text-slate-400">off</span>}
+                </td>
+                <td className="px-4 py-2 text-xs">
+                  {w.uses_classguard
+                    ? <span className="text-green-700 font-semibold">ClassGuard</span>
+                    : w.radiusprofile_id
+                      ? <span className="text-slate-500">{(data.other_profiles.find(p=>p._id===w.radiusprofile_id)||{}).name || 'other'}</span>
+                      : <span className="text-slate-400">—</span>}
+                </td>
+                <td className="px-4 py-2 text-right whitespace-nowrap">
+                  {w.security === 'wpapsk' && !w.macauth_enabled && (
+                    <button disabled={!cg || wlanMut.isPending}
+                      onClick={()=>{ if (i === 0 && g.wlans.length > 1) { applyAll(g.wlans.filter(x=>x.security==='wpapsk' && !x.macauth_enabled), 'enable_macauth', 'Enable MAC auth'); } else if (confirm(`Enable MAC auth on "${w.name}"? Unapproved devices will be kicked off this WLAN.`)) wlanMut.mutate({ id: w._id, action: 'enable_macauth' }); }}
+                      className="text-xs font-medium text-primary-700 hover:underline disabled:opacity-40 disabled:no-underline mr-3"
+                      title={!cg ? 'Create the ClassGuard profile first' : undefined}>
+                      {i === 0 && g.wlans.length > 1 ? 'Add MAC auth (all)' : 'Add MAC auth'}
+                    </button>
+                  )}
+                  {w.macauth_enabled && (
+                    <button disabled={wlanMut.isPending}
+                      onClick={()=>{ if (confirm(`Disable MAC auth on "${w.name}"?`)) wlanMut.mutate({ id: w._id, action: 'disable_macauth' }); }}
+                      className="text-xs font-medium text-red-600 hover:underline disabled:opacity-40 mr-3">
+                      Remove MAC auth
+                    </button>
+                  )}
+                  {w.security === 'wpaeap' && !w.uses_classguard && (
+                    <button disabled={!cg || wlanMut.isPending}
+                      onClick={()=>{ if (i === 0 && g.wlans.length > 1) { applyAll(g.wlans.filter(x=>x.security==='wpaeap' && !x.uses_classguard), 'enable_byod', 'Point 802.1X at ClassGuard'); } else if (confirm(`Point "${w.name}" 802.1X at ClassGuard? Every client on it will re-authenticate against ClassGuard.`)) wlanMut.mutate({ id: w._id, action: 'enable_byod' }); }}
+                      className="text-xs font-medium text-primary-700 hover:underline disabled:opacity-40 disabled:no-underline"
+                      title={!cg ? 'Create the ClassGuard profile first' : undefined}>
+                      {i === 0 && g.wlans.length > 1 ? 'Use ClassGuard (all)' : 'Use ClassGuard'}
+                    </button>
+                  )}
+                </td>
+              </tr>
+            )))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+const TABS = ['Overview','NAS Clients','Devices / NAC','Wi-Fi Policies','Auth Log','User Devices','UniFi Setup','HA & Config'];
 
 export default function RadiusPage() {
   const [tab, setTab] = useState('Overview');
@@ -950,6 +1265,8 @@ export default function RadiusPage() {
       {tab==='Devices / NAC' && <DevicesTab/>}
       {tab==='Wi-Fi Policies' && <PoliciesTab/>}
       {tab==='Auth Log'     && <LogTab/>}
+      {tab==='User Devices' && <UserDevicesTab/>}
+      {tab==='UniFi Setup'  && <UnifiTab/>}
       {tab==='HA & Config'  && <HaConfigTab/>}
     </div>
   );
