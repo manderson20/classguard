@@ -238,10 +238,18 @@ function RestoreSection() {
               <p className="text-xs text-amber-800 mb-2">
                 <strong>One manual step:</strong> this backup carries the original server's identity keys — apply
                 them so existing logins stay valid and deployed Chrome extensions keep trusting this server. Run
-                this in your ClassGuard directory on the host, then restart:
+                this in your ClassGuard directory on the host:
               </p>
+              {/* Replace-or-append per key: a fresh install's .env may not have the
+                  line at all (install.sh doesn't write EXTENSION_SIGNING_KEY), and a
+                  replace-only sed would silently drop that key. Then force-recreate —
+                  NOT `compose restart`, which documentedly does not re-read env_file —
+                  exactly the services that consume the changed keys. */}
               <pre className="text-[11px] font-mono bg-white border border-amber-200 rounded p-2 overflow-x-auto select-all">
-{Object.entries(result.envIdentity).map(([k, v]) => `sed -i "s#^${k}=.*#${k}=${v}#" .env`).join('\n') + '\ndocker compose restart api'}
+{Object.entries(result.envIdentity)
+  .map(([k, v]) => `grep -q "^${k}=" .env && sed -i "s#^${k}=.*#${k}=${v}#" .env || echo "${k}=${v}" >> .env`)
+  .join('\n')
+  + `\ndocker compose up -d --force-recreate ${['api', ...(result.envIdentity.EXTENSION_SIGNING_KEY ? ['extension-builder'] : [])].join(' ')}`}
               </pre>
             </div>
           )}
