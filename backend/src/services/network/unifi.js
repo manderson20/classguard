@@ -204,9 +204,9 @@ async function restCall(config, method, restPath, body) {
     // different things (missing CSRF vs. an account without write rights).
     const msg = err.response?.data?.meta?.msg || err.response?.data?.error?.message;
     if (msg === 'api.err.NoPermission') {
-      throw new Error(`account '${config.username}' can read but not modify the Network app (api.err.NoPermission) — in UniFi OS → Admins & Users, change its Network role from View Only to Full Management, then retry`);
+      throw new Error(`account '${config.username}' can read but not modify the Network app (api.err.NoPermission) — in UniFi OS → Admins & Users, change its Network role from View Only to Full Management, then retry`, { cause: err });
     }
-    if (msg) throw new Error(`${msg} (HTTP ${err.response.status})`);
+    if (msg) throw new Error(`${msg} (HTTP ${err.response.status})`, { cause: err });
     throw err;
   }
 }
