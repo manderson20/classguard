@@ -613,8 +613,11 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
   });
 
   const canSave =
-    (form.target === 'default' || form.target === 'domain') ? !!form.ssid :
-    form.target === 'ou' ? !!form.ssid && !!form.google_ou : true;
+    form.target === 'default' ? !!form.ssid :
+    form.target === 'domain' ? !!form.ssid && !!form.email_domain :
+    form.target === 'ou'    ? !!form.ssid && !!form.google_ou :
+    form.target === 'user'  ? !!form.user_id :
+    form.target === 'group' ? !!form.group_id : true;
 
   return (
     <div className="flex flex-col gap-3">
@@ -631,9 +634,11 @@ function PolicyModal({ initial, onSave, onCancel, isPending }) {
       {form.target === 'user' && (
         <Field label="User" hint="search by name or email">
           <input className={INPUT} value={userSearch} onChange={e=>setUserSearch(e.target.value)} placeholder="Start typing…"/>
-          {users.length > 0 && (
+          {(users.length > 0 || form.user_id) && (
             <select className={SELECT + ' mt-1'} value={form.user_id} onChange={e=>f('user_id', e.target.value)}>
               <option value="">Select a user…</option>
+              {form.user_id && !users.some(u=>String(u.id)===String(form.user_id)) &&
+                <option value={form.user_id}>{form._userLabel || 'Current selection'}</option>}
               {users.map(u=><option key={u.id} value={u.id}>{u.full_name} ({u.email})</option>)}
             </select>
           )}
@@ -722,16 +727,32 @@ function PoliciesTab() {
     queryFn:  () => api.get('/radius/policies'),
   });
 
+  const toPayload = form => ({
+    user_id:      form.target === 'user'   ? form.user_id     || null : null,
+    group_id:     form.target === 'group'  ? form.group_id    || null : null,
+    google_ou:    form.target === 'ou'     ? form.google_ou   || null : null,
+    email_domain: form.target === 'domain' ? form.email_domain || null : null,
+    ssid: form.ssid || null, vlan: form.vlan || null,
+    can_access: form.can_access, priority: form.priority || 0, notes: form.notes || null,
+  });
+
   const add = useMutation({
-    mutationFn: form => api.post('/radius/policies', {
-      user_id:      form.target === 'user'   ? form.user_id     || null : null,
-      group_id:     form.target === 'group'  ? form.group_id    || null : null,
-      google_ou:    form.target === 'ou'     ? form.google_ou   || null : null,
-      email_domain: form.target === 'domain' ? form.email_domain || null : null,
-      ssid: form.ssid || null, vlan: form.vlan || null,
-      can_access: form.can_access, priority: form.priority || 0, notes: form.notes || null,
-    }),
+    mutationFn: form => api.post('/radius/policies', toPayload(form)),
     onSuccess: () => { qc.invalidateQueries({queryKey:['radius-policies']}); setModal(null); },
+  });
+
+  const edit = useMutation({
+    mutationFn: ({ id, form }) => api.put(`/radius/policies/${id}`, toPayload(form)),
+    onSuccess: () => { qc.invalidateQueries({queryKey:['radius-policies']}); setModal(null); },
+  });
+
+  // Map a policy row back into the modal's form shape. _userLabel keeps the
+  // current user's name visible in the select before any new search runs.
+  const toForm = p => ({
+    target: p.user_id ? 'user' : p.group_id ? 'group' : p.google_ou ? 'ou' : p.email_domain ? 'domain' : 'default',
+    user_id: p.user_id || '', group_id: p.group_id || '', google_ou: p.google_ou || '', email_domain: p.email_domain || '',
+    ssid: p.ssid || '', vlan: p.vlan ?? '', can_access: p.can_access, priority: p.priority ?? 0, notes: p.notes || '',
+    _userLabel: p.full_name ? `${p.full_name} (${p.email})` : '',
   });
 
   const del = useMutation({
@@ -771,7 +792,8 @@ function PoliciesTab() {
                 </td>
                 <td className="px-3 py-2 text-xs text-slate-500">{p.priority}</td>
                 <td className="px-3 py-2 text-xs text-slate-400">{p.notes || '—'}</td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2 whitespace-nowrap">
+                  <button onClick={()=>setModal({ mode:'edit', policy:p })} className="text-xs text-primary-600 hover:underline mr-3">Edit</button>
                   <button onClick={()=>del.mutate(p.id)} className="text-xs text-red-500 hover:underline">Remove</button>
                 </td>
               </tr>
@@ -783,6 +805,13 @@ function PoliciesTab() {
       {modal==='add' && (
         <Modal title="Add Wi-Fi Policy" onClose={()=>setModal(null)}>
           <PolicyModal onSave={form=>add.mutate(form)} onCancel={()=>setModal(null)} isPending={add.isPending}/>
+        </Modal>
+      )}
+      {modal?.mode==='edit' && (
+        <Modal title="Edit Wi-Fi Policy" onClose={()=>setModal(null)}>
+          <PolicyModal initial={toForm(modal.policy)}
+            onSave={form=>edit.mutate({ id: modal.policy.id, form })}
+            onCancel={()=>setModal(null)} isPending={edit.isPending}/>
         </Modal>
       )}
     </div>

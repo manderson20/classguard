@@ -745,19 +745,51 @@ router.post('/policies', ...auth, async (req, res) => {
   res.status(201).json(rows[0]);
 });
 
+// Fields present in the body are set (including to null/blank to clear them);
+// absent fields are left untouched. The merged result must satisfy the same
+// invariants as POST — otherwise an edit could turn an SSID-scoped rule into
+// an accidental org-wide catch-all.
 router.put('/policies/:id', ...auth, async (req, res) => {
-  const { ssid, vlan, can_access, priority, notes } = req.body;
+  const { rows: existing } = await pool.query(
+    'SELECT * FROM radius_user_policies WHERE id = $1', [req.params.id]
+  );
+  if (!existing.length) return res.status(404).json({ error: 'not found' });
+  const cur = existing[0];
+  const has = k => Object.prototype.hasOwnProperty.call(req.body, k);
+
+  const next = {
+    user_id:      has('user_id')      ? req.body.user_id  || null : cur.user_id,
+    group_id:     has('group_id')     ? req.body.group_id || null : cur.group_id,
+    google_ou:    has('google_ou')    ? (req.body.google_ou ? req.body.google_ou.replace(/\/+$/, '') || '/' : null) : cur.google_ou,
+    email_domain: has('email_domain') ? (req.body.email_domain ? req.body.email_domain.toLowerCase() : null) : cur.email_domain,
+    ssid:         has('ssid')         ? req.body.ssid || null : cur.ssid,
+    vlan:         has('vlan')         ? req.body.vlan || null : cur.vlan,
+    can_access:   has('can_access')   ? (req.body.can_access ?? cur.can_access) : cur.can_access,
+    priority:     has('priority')     ? (req.body.priority ?? 0) : cur.priority,
+    notes:        has('notes')        ? req.body.notes || null : cur.notes,
+  };
+
+  if (!next.user_id && !next.group_id && !next.google_ou && !next.email_domain && !next.ssid) {
+    return res.status(400).json({ error: 'user_id, group_id, google_ou, email_domain, or (for a default policy) ssid is required' });
+  }
+  if (next.email_domain && !next.ssid) {
+    return res.status(400).json({ error: 'ssid is required for a domain-based policy' });
+  }
+  if (next.google_ou && !next.ssid) {
+    return res.status(400).json({ error: 'ssid is required for an OU-based policy' });
+  }
+  if (next.google_ou && !next.google_ou.startsWith('/')) {
+    return res.status(400).json({ error: 'google_ou must be a full OU path starting with / (e.g. /Students/High School)' });
+  }
+
   const { rows } = await pool.query(
     `UPDATE radius_user_policies SET
-       ssid       = COALESCE($1, ssid),
-       vlan       = COALESCE($2, vlan),
-       can_access = COALESCE($3, can_access),
-       priority   = COALESCE($4, priority),
-       notes      = COALESCE($5, notes)
-     WHERE id = $6 RETURNING *`,
-    [ssid, vlan || null, can_access ?? null, priority ?? null, notes, req.params.id]
+       user_id = $1, group_id = $2, google_ou = $3, email_domain = $4,
+       ssid = $5, vlan = $6, can_access = $7, priority = $8, notes = $9
+     WHERE id = $10 RETURNING *`,
+    [next.user_id, next.group_id, next.google_ou, next.email_domain,
+     next.ssid, next.vlan, next.can_access, next.priority, next.notes, req.params.id]
   );
-  if (!rows.length) return res.status(404).json({ error: 'not found' });
   res.json(rows[0]);
 });
 
