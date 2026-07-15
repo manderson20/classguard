@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
-import MdiIcon from '@mdi/react';
+import { Icon as MdiIcon } from '@mdi/react';
 import {
   mdiViewDashboardOutline,
   mdiMonitor,
