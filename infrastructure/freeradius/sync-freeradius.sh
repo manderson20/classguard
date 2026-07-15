@@ -83,6 +83,32 @@ if [ ! -f "$FR_DIR/certs/server.crt" ]; then
   logger "ClassGuard freeradius-sync: generated EAP TLS certificate"
 fi
 
+# Prefer the ACME (Let's Encrypt) cert ClassGuard already maintains for its
+# web UI, served through this same sync payload from the shared tls_config
+# table — so every HA node converges on the same EAP cert and renewals
+# propagate on the next poll, no file sync or certbot hooks. Android and
+# Windows BYOD users can then validate the RADIUS server against system CAs
+# (newer Android has no "don't validate" escape hatch for self-signed).
+# Accepted trade-off: manually-joined Apple devices pin the leaf cert, so
+# each ~60-day renewal re-prompts them to tap Trust once on next connect —
+# managed Apple devices live on the corporate (MAC-auth) SSID and never see
+# it. The self-signed block above stays as the no-ACME fallback; dh and
+# ca.crt are left alone (ca_file only matters for EAP-TLS client certs,
+# unused here).
+EAP_TLS_CERT=$(echo "$RESPONSE" | jq -r '.eap_tls_cert // empty')
+EAP_TLS_KEY=$(echo "$RESPONSE"  | jq -r '.eap_tls_key // empty')
+if [ -n "$EAP_TLS_CERT" ] && [ -n "$EAP_TLS_KEY" ]; then
+  if ! diff -q <(echo "$EAP_TLS_CERT") "$FR_DIR/certs/server.crt" >/dev/null 2>&1; then
+    echo "$EAP_TLS_CERT" > "$FR_DIR/certs/server.crt"
+    chmod 644 "$FR_DIR/certs/server.crt"
+    rm -f "$FR_DIR/certs/server.key"
+    (umask 027; echo "$EAP_TLS_KEY" > "$FR_DIR/certs/server.key")
+    chown root:freerad "$FR_DIR/certs/server.key" 2>/dev/null || true
+    NEEDS_RESTART=true
+    logger "ClassGuard freeradius-sync: deployed ACME cert for EAP"
+  fi
+fi
+
 # The API's authorize/authenticate responses reference control:ClassGuard-VLAN,
 # which must exist in a dictionary or rlm_rest can't map the returned JSON.
 # 3000-3999 is the range FreeRADIUS reserves for site-local internal attributes.

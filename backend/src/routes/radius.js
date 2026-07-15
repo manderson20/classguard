@@ -836,12 +836,50 @@ router.delete('/sessions/:id', ...auth, async (req, res) => {
 // ---------------------------------------------------------------------------
 
 router.get('/log', ...auth, async (req, res) => {
-  const { result, limit = 200, offset = 0 } = req.query;
-  const where  = result ? 'WHERE result = $3' : '';
-  const params = result ? [limit, offset, result] : [limit, offset];
+  const { result, search, limit = 200, offset = 0 } = req.query;
+  const conds  = [];
+  const params = [limit, offset];
+  if (result) { params.push(result); conds.push(`result = $${params.length}`); }
+  if (search) {
+    // One box searches both identities of a client: who (username) and
+    // what (MAC). mac_address is macaddr-typed, so match its text form.
+    params.push(`%${search}%`);
+    conds.push(`(username ILIKE $${params.length} OR mac_address::text ILIKE $${params.length})`);
+  }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const { rows } = await pool.query(
     `SELECT * FROM radius_auth_log ${where}
      ORDER BY logged_at DESC LIMIT $1 OFFSET $2`,
+    params
+  );
+  res.json(rows);
+});
+
+// GET /radius/user-devices — every (user, device) pair seen by RADIUS user
+// auth, with first/last seen and outcome counts: "what devices has this
+// person authenticated with?" for tracking and filtering. MAB device auth is
+// excluded — those are tracked as devices (radius_devices), not users.
+router.get('/user-devices', ...auth, async (req, res) => {
+  const { search, limit = 500 } = req.query;
+  const params = [limit];
+  let where = `WHERE auth_type <> 'mab' AND username IS NOT NULL AND mac_address IS NOT NULL`;
+  if (search) {
+    params.push(`%${search}%`);
+    where += ` AND (username ILIKE $${params.length} OR mac_address::text ILIKE $${params.length})`;
+  }
+  const { rows } = await pool.query(
+    `SELECT username, mac_address,
+            MIN(logged_at) AS first_seen,
+            MAX(logged_at) AS last_seen,
+            COUNT(*) FILTER (WHERE result = 'accepted') AS accepts,
+            COUNT(*) FILTER (WHERE result = 'rejected') AS rejects,
+            ARRAY_AGG(DISTINCT ssid) FILTER (WHERE ssid IS NOT NULL) AS ssids,
+            (ARRAY_AGG(vlan_assigned ORDER BY logged_at DESC)
+               FILTER (WHERE vlan_assigned IS NOT NULL))[1] AS last_vlan
+     FROM radius_auth_log ${where}
+     GROUP BY username, mac_address
+     ORDER BY MAX(logged_at) DESC
+     LIMIT $1`,
     params
   );
   res.json(rows);
@@ -929,12 +967,27 @@ router.get('/freeradius-sync', async (req, res) => {
     );
     const internalSecret = process.env.INTERNAL_SECRET || '';
 
+    // The ACME (Let's Encrypt) cert issued for the web UI doubles as the
+    // EAP server cert: BYOD Android/Windows can then validate RADIUS
+    // against system CAs instead of blind-trusting a self-signed cert, and
+    // renewals propagate to every node on the next sync poll — tls_config
+    // lives in the shared/replicated DB, so the HA peer serves the same
+    // cert without any file sync. Absent/disabled → sync script keeps its
+    // generate-once self-signed fallback.
+    const { rows: [tls] } = await pool.query(
+      `SELECT cert_pem, privkey_pem FROM tls_config
+       WHERE enabled = true AND cert_pem IS NOT NULL AND privkey_pem IS NOT NULL
+       LIMIT 1`
+    );
+
     res.json({
       enabled:      true,
       clients_conf: keepalived.generateFreeRadiusClients(nasRows),
       rest_conf:    keepalived.generateFreeRadiusRestMod('http://localhost:3001'),
       classguard_conf: keepalived.generateFreeRadiusVirtualServer(internalSecret),
       eap_conf:     keepalived.generateEapMod(),
+      eap_tls_cert: tls?.cert_pem    || null,
+      eap_tls_key:  tls?.privkey_pem || null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

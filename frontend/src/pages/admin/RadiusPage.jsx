@@ -823,16 +823,17 @@ function PoliciesTab() {
 // ---------------------------------------------------------------------------
 function LogTab() {
   const [resultFilter, setResultFilter] = useState('');
+  const [search, setSearch] = useState('');
 
   const { data: log = [] } = useQuery({
-    queryKey: ['radius-log', resultFilter],
-    queryFn:  () => api.get(`/radius/log?limit=200${resultFilter ? '&result='+resultFilter : ''}`),
+    queryKey: ['radius-log', resultFilter, search],
+    queryFn:  () => api.get(`/radius/log?limit=200${resultFilter ? '&result='+resultFilter : ''}${search ? '&search='+encodeURIComponent(search) : ''}`),
     refetchInterval: 10_000,
   });
 
   return (
     <>
-      <div className="flex gap-2 mb-4">
+      <div className="flex gap-2 mb-4 items-center">
         {[['','All'],['accepted','Accepted'],['rejected','Rejected']].map(([v,l])=>(
           <button key={v} onClick={()=>setResultFilter(v)}
             className={`px-3 py-1 rounded-full text-xs font-semibold border transition-colors
@@ -840,6 +841,8 @@ function LogTab() {
             {l}
           </button>
         ))}
+        <input className={INPUT + ' !w-64 text-xs'} value={search} onChange={e=>setSearch(e.target.value)}
+          placeholder="Filter by user or MAC…"/>
         <span className="ml-auto text-xs text-slate-400 self-center">auto-refreshes every 10s</span>
       </div>
       <div className="overflow-x-auto rounded-lg border border-slate-200">
@@ -866,6 +869,59 @@ function LogTab() {
         </table>
       </div>
     </>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// User Devices Tab — every (user, device) pair seen by Wi-Fi user auth:
+// which devices has this person connected with, when, and where. Grouped
+// from the auth log, so it needs no extra bookkeeping and covers history
+// as far back as the log goes. MAC-auth devices are excluded — those live
+// on the Devices / NAC tab, keyed by device rather than person.
+// ---------------------------------------------------------------------------
+function UserDevicesTab() {
+  const [search, setSearch] = useState('');
+
+  const { data: rows = [] } = useQuery({
+    queryKey: ['radius-user-devices', search],
+    queryFn:  () => api.get(`/radius/user-devices${search ? '?search='+encodeURIComponent(search) : ''}`),
+    refetchInterval: 30_000,
+  });
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
+        Every device each user has authenticated with on Wi-Fi (from the auth log).
+        Note: personal devices ship with per-network randomized MAC addresses, so the same
+        phone shows one stable MAC per SSID — still useful for "how many devices does this
+        account sign in from" and spotting shared credentials.
+      </div>
+      <input className={INPUT + ' !w-72 text-xs'} value={search} onChange={e=>setSearch(e.target.value)}
+        placeholder="Filter by user or MAC…"/>
+      <div className="overflow-x-auto rounded-lg border border-slate-200">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase">
+            <tr>{['User','Device MAC','SSIDs','Last VLAN','Accepted','Rejected','First seen','Last seen'].map(h=>
+              <th key={h} className="px-3 py-2 text-left">{h}</th>)}</tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {rows.map(r=>(
+              <tr key={`${r.username}|${r.mac_address}`} className="hover:bg-slate-50">
+                <td className="px-3 py-2 text-xs text-slate-700">{r.username}</td>
+                <td className="px-3 py-2 font-mono text-xs text-slate-600">{r.mac_address}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{(r.ssids || []).join(', ') || '—'}</td>
+                <td className="px-3 py-2 text-xs text-slate-500">{r.last_vlan ?? '—'}</td>
+                <td className="px-3 py-2 text-xs text-green-700">{r.accepts}</td>
+                <td className="px-3 py-2 text-xs text-red-600">{r.rejects}</td>
+                <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{new Date(r.first_seen).toLocaleString()}</td>
+                <td className="px-3 py-2 text-xs text-slate-400 whitespace-nowrap">{new Date(r.last_seen).toLocaleString()}</td>
+              </tr>
+            ))}
+            {!rows.length && <tr><td colSpan={8} className="px-3 py-8 text-center text-sm text-slate-400">No user authentications logged yet</td></tr>}
+          </tbody>
+        </table>
+      </div>
+    </div>
   );
 }
 
@@ -1180,7 +1236,7 @@ function UnifiTab() {
   );
 }
 
-const TABS = ['Overview','NAS Clients','Devices / NAC','Wi-Fi Policies','Auth Log','UniFi Setup','HA & Config'];
+const TABS = ['Overview','NAS Clients','Devices / NAC','Wi-Fi Policies','Auth Log','User Devices','UniFi Setup','HA & Config'];
 
 export default function RadiusPage() {
   const [tab, setTab] = useState('Overview');
@@ -1209,6 +1265,7 @@ export default function RadiusPage() {
       {tab==='Devices / NAC' && <DevicesTab/>}
       {tab==='Wi-Fi Policies' && <PoliciesTab/>}
       {tab==='Auth Log'     && <LogTab/>}
+      {tab==='User Devices' && <UserDevicesTab/>}
       {tab==='UniFi Setup'  && <UnifiTab/>}
       {tab==='HA & Config'  && <HaConfigTab/>}
     </div>
