@@ -100,7 +100,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y freeradius freeradius-rest openssl
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: steps.radius_check.outputs.exists == 'true'
         with:
           node-version: '20'
