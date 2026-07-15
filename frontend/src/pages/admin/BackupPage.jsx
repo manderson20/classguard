@@ -52,9 +52,10 @@ function ExportSection() {
       <h2 className="text-sm font-semibold text-slate-700 mb-1">Export Backup</h2>
       <p className="text-xs text-slate-500 mb-4">
         Downloads an encrypted file with this district's configuration — policies, settings, roster, network/DHCP/
-        RADIUS/phone config, integrations, etc. Deliberately excludes activity history (DNS logs, browser history,
-        chat, audit trails) and cluster topology. Choose a passphrase you'll remember — there is no way to recover
-        this file without it.
+        RADIUS/phone config, integrations, etc. — plus the Google LDAP client certificate files and (for superadmin
+        exports) this server's identity keys, so a restore onto new hardware is complete. Deliberately excludes
+        activity history (DNS logs, browser history, chat, audit trails) and cluster topology. Choose a passphrase
+        you'll remember — there is no way to recover this file without it.
       </p>
       <div className="space-y-3 max-w-sm">
         <div>
@@ -178,6 +179,12 @@ function RestoreSection() {
                 <p><strong>Created:</strong> {new Date(preview.createdAt).toLocaleString()}</p>
                 <p><strong>From ClassGuard version:</strong> {preview.classguardVersion} (node {preview.nodeId})</p>
                 <p><strong>Tables:</strong> {preview.tables.length} · <strong>Total rows:</strong> {totalRows.toLocaleString()}</p>
+                {preview.files?.length > 0 && (
+                  <p><strong>Files:</strong> {preview.files.join(', ')}</p>
+                )}
+                {preview.envKeys?.length > 0 && (
+                  <p><strong>Server identity keys:</strong> {preview.envKeys.join(', ')} (shown after restore)</p>
+                )}
               </div>
 
               <div>
@@ -221,10 +228,29 @@ function RestoreSection() {
               Skipped (don't exist on this server's current schema): {result.skippedTables.join(', ')}
             </p>
           )}
+          {result.restoredFiles?.length > 0 && (
+            <p className="text-xs text-slate-500 mb-2">
+              Restored files: {result.restoredFiles.join(', ')}
+            </p>
+          )}
+          {result.envIdentity && Object.keys(result.envIdentity).length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-3">
+              <p className="text-xs text-amber-800 mb-2">
+                <strong>One manual step:</strong> this backup carries the original server's identity keys — apply
+                them so existing logins stay valid and deployed Chrome extensions keep trusting this server. Run
+                this in your ClassGuard directory on the host, then restart:
+              </p>
+              <pre className="text-[11px] font-mono bg-white border border-amber-200 rounded p-2 overflow-x-auto select-all">
+{Object.entries(result.envIdentity).map(([k, v]) => `sed -i "s#^${k}=.*#${k}=${v}#" .env`).join('\n') + '\ndocker compose restart api'}
+              </pre>
+            </div>
+          )}
           <p className="text-xs text-slate-500 mb-3">
             If the domain/IP for this server is different from where the backup was taken, update DNS and re-issue
             a TLS certificate if needed (Settings → TLS). A restart of the API container is recommended so caches
-            reflect the restored data immediately rather than waiting for their normal TTL.
+            reflect the restored data immediately rather than waiting for their normal TTL. On a new server, also
+            re-pair any HA standby and let the device/category syncs run — synced datasets aren't in the backup by
+            design and rebuild themselves.
           </p>
           <button className="btn-secondary text-sm" onClick={reset}>Restore another file</button>
         </div>

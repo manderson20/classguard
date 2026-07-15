@@ -20,7 +20,12 @@ router.post('/export', authenticate, requirePermission('backup_export'), async (
     return res.status(400).json({ error: 'A passphrase of at least 8 characters is required' });
   }
   try {
-    const buffer = await configBackup.createBackup(passphrase);
+    // Env identity (JWT_SECRET / EXTENSION_SIGNING_KEY) rides along only in
+    // superadmin exports — see configBackup.js for why a delegated exporter
+    // must not receive it.
+    const buffer = await configBackup.createBackup(passphrase, {
+      includeEnvIdentity: req.user?.role === 'superadmin',
+    });
     const filename = `classguard-backup-${new Date().toISOString().slice(0, 10)}.cgbk`;
     res.set({
       'Content-Type': 'application/octet-stream',
