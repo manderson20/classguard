@@ -22,7 +22,7 @@
     "express-rate-limit": "^8.5.2",
     "google-auth-library": "^10.9.0",
     "googleapis": "^173.0.0",
-    "helmet": "^8.0.0",
+    "helmet": "^8.3.0",
     "ioredis": "^5.4.2",
     "jsonwebtoken": "^9.0.2",
     "ldapjs": "^3.0.7",
@@ -36,7 +36,7 @@
     "uuid": "^14.0.1"
   },
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "^0.110.0"
+    "@anthropic-ai/sdk": "^0.111.0"
   },
   "overrides": {
     "exceljs": {
@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.6.0"
+    "eslint": "^10.7.0"
   },
   "engines": {
     "node": ">=20.0.0"
