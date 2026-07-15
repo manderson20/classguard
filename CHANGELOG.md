@@ -14,7 +14,18 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ## [Unreleased]
 
-> No changes staged yet.
+### Added
+
+- **RADIUS: Google-OU-based Wi-Fi policies** — BYOD policies can now target a Google OU (subtree match: `/Students` covers every grade OU beneath it; a deeper OU rule overrides a broader one, so "deny `/Employees/Inactive Employees`" beats "allow `/Employees`"). New "A Google OU" option in Wi-Fi Policies with an OU picker fed by `GET /radius/ou-list`. Policy specificity is now user > group > OU (deepest first) > email domain > default. (migration 099)
+- **RADIUS: UniFi Setup tab** — wire ClassGuard into the UniFi controller from the UI: one-click creation of the "ClassGuard" RADIUS profile (auth/accounting at the RADIUS VIP with the shared NAS secret, RADIUS-assigned VLAN set to *optional*), per-WLAN actions to point 802.1X at ClassGuard (BYOD) or add MAC auth on top of an existing PSK (corporate NAC), and a MAC Address Format picker. WLAN entries sharing an SSID (one per building/AP group) group into a single row with apply-to-all. Every action confirms before pushing to the live controller.
+- **RADIUS: per-NAS default VLAN for device auth** — a MAC-auth accept for a device without its own VLAN now falls back to the NAS entry's default VLAN (NAS Clients tab), so a building's APs/switches can pin that building's corporate VLAN. When neither is set, no Tunnel attributes are returned and the client keeps the WLAN's own network — on per-building WLANs, corporate devices "float" to each building's subnet while VLAN-carrying BYOD policies follow the user everywhere.
+
+### Fixed
+
+- **RADIUS: every over-the-wire authentication failed with a silent 401** — the generated rlm_rest config used a `header {}` block that FreeRADIUS 3.x doesn't support, so the `X-Internal-Secret` header was never sent; and because host FreeRADIUS reaches the API through the Docker port mapping, the API saw the bridge-gateway IP rather than 127.0.0.1 and the localhost bypass never applied. The secret is now injected per-request via `update control { &REST-HTTP-Header += ... }` before every `rest` call in the generated virtual server.
+- **RADIUS: `ClassGuard-VLAN` attribute was never defined** — authorize/authenticate responses reference `control:ClassGuard-VLAN`, but no dictionary declared it, breaking attribute mapping on accepts. `sync-freeradius.sh` now adds it (site-local attribute 3900) to the FreeRADIUS local dictionary.
+- **RADIUS: EAP-TTLS inner authentication never ran** — `/authorize` answers the inner-tunnel user lookup with `control:Auth-Type = rest`, but the generated inner-tunnel virtual server only defined an `Auth-Type PAP` authenticate section, so FreeRADIUS rejected every real EAP-TTLS attempt before the password ever reached Google LDAP. Added the missing `Auth-Type rest` block; verified end-to-end with eapol_test.
+- **Blank white screen after login** — Vite 8's rolldown bundler resolves default imports from webpack-built CJS packages (here `@mdi/react`) to the module namespace object instead of the component, so React threw error #130 while rendering the app shell and every authenticated page was blank. Switched to the named `Icon` export, which resolves correctly under both old and new interop.
 
 ---
 

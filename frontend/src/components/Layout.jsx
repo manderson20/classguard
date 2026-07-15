@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
-import MdiIcon from '@mdi/react';
+import { Icon as MdiIcon } from '@mdi/react';
 import {
   mdiViewDashboardOutline,
   mdiChartLine,

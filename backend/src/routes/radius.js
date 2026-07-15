@@ -71,6 +71,54 @@ function attr(body, key) {
 // FreeRADIUS rlm_rest hooks
 // ---------------------------------------------------------------------------
 
+// Evaluate Wi-Fi policies for a user on an SSID → { allowed, reason?, vlan? }.
+// Runs in BOTH /authorize and /authenticate: the EAP-TTLS/GTC flow (what a
+// profile-less iPhone does) reaches /authenticate via the eap module without
+// ever passing through /authorize's policy pass, so /authenticate cannot
+// assume policies were already enforced.
+async function evaluateUserPolicy(username, ssid) {
+  // Domain-level policy first, independent of whether this email exists in
+  // ClassGuard's own `users` table at all — a district that hasn't (or never
+  // will) sync students into `users` still needs a real "deny
+  // students.<domain>" decision, not an accidental pass because the
+  // deny-by-domain rule could never run for an unsynced user.
+  const domain = username.includes('@') ? username.split('@').pop().toLowerCase() : null;
+  if (domain) {
+    const { rows: domainRows } = await pool.query(
+      `SELECT can_access FROM radius_user_policies
+       WHERE email_domain = $1 AND (ssid IS NULL OR ssid = $2)
+       ORDER BY priority DESC NULLS LAST LIMIT 1`,
+      [domain, ssid || '']
+    );
+    if (domainRows.length && domainRows[0].can_access === false) {
+      return { allowed: false, reason: 'domain policy denied' };
+    }
+  }
+
+  const { rows } = await pool.query(
+    `SELECT u.*, rp.vlan, rp.can_access
+     FROM users u
+     LEFT JOIN radius_user_policies rp ON (
+       rp.user_id = u.id
+       OR rp.group_id IN (SELECT group_id FROM group_members WHERE user_id = u.id)
+       OR (rp.google_ou IS NOT NULL AND u.google_ou IS NOT NULL
+           AND (u.google_ou = rp.google_ou OR u.google_ou LIKE rp.google_ou || '/%'))
+       OR (rp.email_domain IS NOT NULL AND rp.email_domain = lower(split_part(u.email, '@', 2)))
+       OR (rp.user_id IS NULL AND rp.group_id IS NULL AND rp.google_ou IS NULL AND rp.email_domain IS NULL) -- default/catch-all policy
+     ) AND (rp.ssid IS NULL OR rp.ssid = $2)
+     WHERE lower(u.email) = lower($1) AND u.is_active = true
+     ORDER BY (rp.user_id IS NOT NULL) DESC, (rp.group_id IS NOT NULL) DESC,
+              (rp.google_ou IS NOT NULL) DESC, length(rp.google_ou) DESC NULLS LAST,
+              (rp.email_domain IS NOT NULL) DESC, rp.priority DESC NULLS LAST
+     LIMIT 1`,
+    [username, ssid || '']
+  );
+
+  if (!rows.length) return { allowed: false, reason: 'user not found or inactive' };
+  if (rows[0].can_access === false) return { allowed: false, reason: 'user policy denied' };
+  return { allowed: true, vlan: rows[0].vlan || null };
+}
+
 // POST /api/v1/radius/authorize
 // Called for every auth request. Handles both MAB and EAP-TTLS user auth.
 router.post('/authorize', radiusSecret, async (req, res) => {
@@ -123,6 +171,20 @@ router.post('/authorize', radiusSecret, async (req, res) => {
         );
       }
 
+      // A device without its own VLAN falls back to the NAS's default_vlan
+      // (set per-AP/switch in the NAS Clients tab). Lets a district pin a
+      // building's corporate VLAN on that building's NAS entries so devices
+      // "float" — same SSID, different VLAN/subnet per building. When neither
+      // is set, no Tunnel-* attrs are returned and the client stays on the
+      // WLAN's own network, which on a per-building WLAN achieves the same.
+      if (result === 'accepted' && !vlan && nasIp) {
+        const { rows: [nasRow] } = await pool.query(
+          `SELECT default_vlan FROM radius_nas WHERE ip_address = $1::inet AND is_active = true`,
+          [nasIp]
+        ).catch(() => ({ rows: [] }));
+        vlan = nasRow?.default_vlan || null;
+      }
+
       // Log it
       await pool.query(
         `INSERT INTO radius_auth_log
@@ -143,58 +205,16 @@ router.post('/authorize', radiusSecret, async (req, res) => {
         [username, parseMac(callingId), nasIp, ssid, reason]
       ).catch(() => {}); // logging failure shouldn't block the reject response
 
-      // Domain-level policy check first, independent of whether this email
-      // exists in ClassGuard's own `users` table at all -- a district that
-      // hasn't (or never will) sync students into `users` still needs a
-      // real "deny students.<domain>" decision, not an accidental pass
-      // because the deny-by-domain rule could never run for an unsynced
-      // user. Runs before the `users` lookup below so a denied domain never
-      // even reaches it.
-      const domain = username.includes('@') ? username.split('@').pop().toLowerCase() : null;
-      if (domain) {
-        const { rows: domainRows } = await pool.query(
-          `SELECT can_access FROM radius_user_policies
-           WHERE email_domain = $1 AND (ssid IS NULL OR ssid = $2)
-           ORDER BY priority DESC NULLS LAST LIMIT 1`,
-          [domain, ssid || '']
-        );
-        if (domainRows.length && domainRows[0].can_access === false) {
-          await logReject('domain policy denied');
-          return res.json(radiusReject('domain policy denied'));
-        }
-      }
-
-      const { rows } = await pool.query(
-        `SELECT u.*, rp.vlan, rp.can_access
-         FROM users u
-         LEFT JOIN radius_user_policies rp ON (
-           rp.user_id = u.id
-           OR rp.group_id IN (SELECT group_id FROM group_members WHERE user_id = u.id)
-           OR (rp.email_domain IS NOT NULL AND rp.email_domain = lower(split_part(u.email, '@', 2)))
-           OR (rp.user_id IS NULL AND rp.group_id IS NULL AND rp.email_domain IS NULL) -- default/catch-all policy
-         ) AND (rp.ssid IS NULL OR rp.ssid = $2)
-         WHERE lower(u.email) = lower($1) AND u.is_active = true
-         ORDER BY (rp.user_id IS NOT NULL) DESC, (rp.group_id IS NOT NULL) DESC,
-                  (rp.email_domain IS NOT NULL) DESC, rp.priority DESC NULLS LAST
-         LIMIT 1`,
-        [username, ssid || '']
-      );
-
-      if (!rows.length) {
-        await logReject('user not found or inactive');
-        return res.json(radiusReject('user not found or inactive'));
-      }
-
-      const user = rows[0];
-      if (user.can_access === false) {
-        await logReject('user policy denied');
-        return res.json(radiusReject('user policy denied'));
+      const policy = await evaluateUserPolicy(username, ssid);
+      if (!policy.allowed) {
+        await logReject(policy.reason);
+        return res.json(radiusReject(policy.reason));
       }
 
       // Tell FreeRADIUS to use our REST authenticate endpoint
       return res.json({
         'control:Auth-Type': { value: ['rest'] },
-        'control:ClassGuard-VLAN': { value: [String(user.vlan || '')] },
+        'control:ClassGuard-VLAN': { value: [String(policy.vlan || '')] },
       });
     }
 
@@ -217,7 +237,15 @@ router.post('/authenticate', radiusSecret, async (req, res) => {
     const mac      = parseMac(attr(req.body, 'Calling-Station-Id'));
     const vlanHint = attr(req.body, 'control:ClassGuard-VLAN');
 
-    const result = await radiusLdap.authenticateUser(username, password);
+    // Policy check must happen HERE, not just in /authorize: the TTLS/GTC
+    // flow (profile-less iPhones) arrives via the inner-tunnel eap module,
+    // which never runs the REST /authorize policy pass. For the TTLS/PAP
+    // flow this repeats /authorize's verdict — same answer, no harm.
+    const policy = await evaluateUserPolicy(username || '', ssid);
+    const result = policy.allowed
+      ? await radiusLdap.authenticateUser(username, password)
+      : { ok: false, reason: policy.reason };
+    const vlan = result.ok ? (policy.vlan ?? vlanHint ?? null) : null;
 
     await pool.query(
       `INSERT INTO radius_auth_log
@@ -226,11 +254,11 @@ router.post('/authenticate', radiusSecret, async (req, res) => {
       [username, mac, nasIp, ssid,
        result.ok ? 'accepted' : 'rejected',
        result.ok ? null : result.reason,
-       result.ok ? (vlanHint || null) : null]
+       vlan]
     );
 
     if (result.ok) {
-      return res.json(radiusAccept(vlanHint || null));
+      return res.json(radiusAccept(vlan));
     } else {
       return res.json(radiusReject(result.reason));
     }
@@ -354,6 +382,154 @@ router.put('/nas/:id', ...auth, async (req, res) => {
 router.delete('/nas/:id', ...superauth, async (req, res) => {
   await pool.query('DELETE FROM radius_nas WHERE id = $1', [req.params.id]);
   res.json({ deleted: true });
+});
+
+// ---------------------------------------------------------------------------
+// UniFi setup — wire ClassGuard into the controller as its RADIUS server
+// straight from the UI: create/refresh a "ClassGuard" RADIUS profile, then
+// flip individual WLANs to 802.1X (BYOD) or PSK+MAC-auth (corporate NAC).
+// Every change is an explicit admin action against a named WLAN — nothing
+// here runs automatically.
+// ---------------------------------------------------------------------------
+
+const CG_PROFILE_NAME = 'ClassGuard';
+// UniFi's WLAN "MAC Address Format" values. ClassGuard's own parser accepts
+// every one of them (parseMac strips separators), so the choice only matters
+// for readability in external logs.
+const MAC_FORMATS = ['none_lower', 'hyphen_lower', 'colon_lower', 'none_upper', 'hyphen_upper', 'colon_upper'];
+
+async function getUnifiController() {
+  const { rows: [ctrl] } = await pool.query(
+    `SELECT * FROM network_controllers WHERE vendor = 'unifi' AND is_active = true ORDER BY created_at LIMIT 1`
+  );
+  return ctrl || null;
+}
+
+async function getRadiusServerConfig() {
+  const [{ rows: [ha] }, { rows: [secretRow] }] = await Promise.all([
+    pool.query(`SELECT vip_address FROM radius_ha_config LIMIT 1`),
+    pool.query(`SELECT value FROM settings WHERE key = 'radius_default_nas_secret'`),
+  ]);
+  return { serverIp: ha?.vip_address || null, secret: secretRow?.value || null };
+}
+
+// GET /radius/unifi/setup — controller + profiles + WLANs in one shot
+router.get('/unifi/setup', ...auth, async (req, res) => {
+  try {
+    const ctrl = await getUnifiController();
+    if (!ctrl) return res.json({ configured: false });
+
+    const unifi = require('../services/network/unifi');
+    const [{ serverIp, secret }, profiles, wlans] = await Promise.all([
+      getRadiusServerConfig(),
+      unifi.fetchRadiusProfiles(ctrl),
+      unifi.fetchWlans(ctrl),
+    ]);
+
+    const cgProfile = profiles.find(p => p.name === CG_PROFILE_NAME) || null;
+    res.json({
+      configured: true,
+      controller: { id: ctrl.id, name: ctrl.name, base_url: ctrl.base_url, site_id: ctrl.site_id },
+      radius_server: { ip: serverIp, secret_set: !!secret },
+      classguard_profile: cgProfile && {
+        _id: cgProfile._id,
+        auth_servers: (cgProfile.auth_servers || []).map(s => ({ ip: s.ip, port: s.port })),
+        acct_servers: (cgProfile.acct_servers || []).map(s => ({ ip: s.ip, port: s.port })),
+        accounting_enabled: !!cgProfile.accounting_enabled,
+        vlan_enabled: !!cgProfile.vlan_enabled,
+        vlan_wlan_mode: cgProfile.vlan_wlan_mode || 'disabled',
+      },
+      other_profiles: profiles.filter(p => p.name !== CG_PROFILE_NAME).map(p => ({ _id: p._id, name: p.name })),
+      wlans: wlans.map(w => ({
+        _id: w._id, name: w.name, enabled: w.enabled, security: w.security,
+        macauth_enabled: !!w.macauth_enabled,
+        radius_mac_auth_format: w.radius_mac_auth_format || 'none_lower',
+        radiusprofile_id: w.radiusprofile_id || null,
+        uses_classguard: !!cgProfile && w.radiusprofile_id === cgProfile._id,
+        networkconf_id: w.networkconf_id || null,
+      })),
+      mac_formats: MAC_FORMATS,
+    });
+  } catch (err) {
+    console.error('[radius/unifi/setup]', err.message);
+    res.status(502).json({ error: `UniFi controller: ${err.message}` });
+  }
+});
+
+// POST /radius/unifi/profile — create or refresh the ClassGuard RADIUS profile
+router.post('/unifi/profile', ...auth, async (req, res) => {
+  try {
+    const ctrl = await getUnifiController();
+    if (!ctrl) return res.status(400).json({ error: 'No active UniFi controller configured (Integrations → Network)' });
+
+    const { serverIp, secret } = await getRadiusServerConfig();
+    if (!serverIp) return res.status(400).json({ error: 'RADIUS virtual IP not configured (HA & Config tab)' });
+    if (!secret)   return res.status(400).json({ error: 'radius_default_nas_secret not set (HA & Config tab)' });
+
+    const desired = {
+      name: CG_PROFILE_NAME,
+      auth_servers: [{ ip: serverIp, port: 1812, x_secret: secret }],
+      acct_servers: [{ ip: serverIp, port: 1813, x_secret: secret }],
+      accounting_enabled: true,
+      interim_update_enabled: true,
+      interim_update_interval: 3600,
+      // "optional" = APs honor Tunnel-Private-Group-Id when ClassGuard sends
+      // one (BYOD policies) and keep the WLAN's own network when it doesn't
+      // (corporate MAB) — exactly the split-VLAN behavior we document in the UI.
+      vlan_enabled: true,
+      vlan_wlan_mode: 'optional',
+      use_usg_auth_server: false,
+    };
+
+    const unifi   = require('../services/network/unifi');
+    const existing = (await unifi.fetchRadiusProfiles(ctrl)).find(p => p.name === CG_PROFILE_NAME);
+    const profile  = existing
+      ? await unifi.updateRadiusProfile(ctrl, existing._id, desired)
+      : await unifi.createRadiusProfile(ctrl, desired);
+    res.json({ ok: true, created: !existing, profile_id: profile?._id || existing?._id });
+  } catch (err) {
+    console.error('[radius/unifi/profile]', err.message);
+    res.status(502).json({ error: `UniFi controller: ${err.message}` });
+  }
+});
+
+// PUT /radius/unifi/wlans/:id — apply a RADIUS role to one WLAN
+router.put('/unifi/wlans/:id', ...auth, async (req, res) => {
+  try {
+    const { action, mac_format } = req.body;
+    const ctrl = await getUnifiController();
+    if (!ctrl) return res.status(400).json({ error: 'No active UniFi controller configured' });
+    if (mac_format && !MAC_FORMATS.includes(mac_format)) {
+      return res.status(400).json({ error: `mac_format must be one of ${MAC_FORMATS.join(', ')}` });
+    }
+
+    const unifi = require('../services/network/unifi');
+    const cgProfile = (await unifi.fetchRadiusProfiles(ctrl)).find(p => p.name === CG_PROFILE_NAME);
+    if (!cgProfile && action !== 'disable_macauth') {
+      return res.status(400).json({ error: 'Create the ClassGuard RADIUS profile first' });
+    }
+
+    let patch;
+    if (action === 'enable_byod') {
+      // WPA-Enterprise: users sign in with Google credentials via EAP-TTLS
+      patch = { security: 'wpaeap', radiusprofile_id: cgProfile._id };
+    } else if (action === 'enable_macauth') {
+      // Keeps the WLAN's existing security (PSK) and adds RADIUS MAC auth on top
+      patch = { macauth_enabled: true, radiusprofile_id: cgProfile._id, radius_mac_auth_format: mac_format || 'none_lower' };
+    } else if (action === 'disable_macauth') {
+      patch = { macauth_enabled: false };
+    } else if (action === 'set_mac_format') {
+      patch = { radius_mac_auth_format: mac_format || 'none_lower' };
+    } else {
+      return res.status(400).json({ error: 'action must be enable_byod, enable_macauth, disable_macauth or set_mac_format' });
+    }
+
+    const wlan = await unifi.updateWlan(ctrl, req.params.id, patch);
+    res.json({ ok: true, wlan: wlan && { _id: wlan._id, name: wlan.name, security: wlan.security, macauth_enabled: !!wlan.macauth_enabled } });
+  } catch (err) {
+    console.error('[radius/unifi/wlan]', err.message);
+    res.status(502).json({ error: `UniFi controller: ${err.message}` });
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -535,41 +711,96 @@ router.get('/policies', ...auth, async (req, res) => {
   res.json(rows);
 });
 
+// Same data as /api/v1/policies/ou-list, but reachable with the `radius`
+// permission — a RADIUS admin isn't guaranteed the `policies` permission.
+router.get('/ou-list', ...auth, async (req, res) => {
+  const [fromSettings, fromUsers] = await Promise.all([
+    pool.query(`SELECT value FROM settings WHERE key = 'google_ous'`),
+    pool.query(`SELECT DISTINCT google_ou AS path FROM users
+                WHERE google_ou IS NOT NULL AND google_ou <> ''`),
+  ]);
+  let fromTree = [];
+  try {
+    fromTree = (JSON.parse(fromSettings.rows[0]?.value || '[]')).map(ou => ou.path).filter(Boolean);
+  } catch { /* google_ous not set or not valid JSON yet — fall back to synced users */ }
+  res.json([...new Set([...fromTree, ...fromUsers.rows.map(r => r.path)])].sort());
+});
+
 router.post('/policies', ...auth, async (req, res) => {
-  const { user_id, group_id, email_domain, ssid, vlan, can_access, priority, notes } = req.body;
-  // A policy with none of user_id/group_id/email_domain is a default/catch-all
-  // that applies to anyone authenticating — require an SSID so it can't
-  // accidentally apply org-wide across every network by omission. A
-  // domain rule needs an SSID for the same reason: it can otherwise match
-  // every account in that domain across every network on the cluster.
-  if (!user_id && !group_id && !email_domain && !ssid) {
-    return res.status(400).json({ error: 'user_id, group_id, email_domain, or (for a default policy) ssid is required' });
+  const { user_id, group_id, google_ou, email_domain, ssid, vlan, can_access, priority, notes } = req.body;
+  // A policy with none of user_id/group_id/google_ou/email_domain is a
+  // default/catch-all that applies to anyone authenticating — require an
+  // SSID so it can't accidentally apply org-wide across every network by
+  // omission. OU and domain rules need an SSID for the same reason: they
+  // can otherwise match a whole population across every network on the
+  // cluster.
+  if (!user_id && !group_id && !google_ou && !email_domain && !ssid) {
+    return res.status(400).json({ error: 'user_id, group_id, google_ou, email_domain, or (for a default policy) ssid is required' });
   }
   if (email_domain && !ssid) {
     return res.status(400).json({ error: 'ssid is required for a domain-based policy' });
   }
+  if (google_ou && !ssid) {
+    return res.status(400).json({ error: 'ssid is required for an OU-based policy' });
+  }
+  if (google_ou && !google_ou.startsWith('/')) {
+    return res.status(400).json({ error: 'google_ou must be a full OU path starting with / (e.g. /Students/High School)' });
+  }
   const { rows } = await pool.query(
-    `INSERT INTO radius_user_policies (user_id, group_id, email_domain, ssid, vlan, can_access, priority, notes)
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-    [user_id || null, group_id || null, email_domain ? email_domain.toLowerCase() : null, ssid || null,
+    `INSERT INTO radius_user_policies (user_id, group_id, google_ou, email_domain, ssid, vlan, can_access, priority, notes)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+    [user_id || null, group_id || null, google_ou ? google_ou.replace(/\/+$/, '') || '/' : null,
+     email_domain ? email_domain.toLowerCase() : null, ssid || null,
      vlan || null, can_access ?? true, priority || 0, notes || null]
   );
   res.status(201).json(rows[0]);
 });
 
+// Fields present in the body are set (including to null/blank to clear them);
+// absent fields are left untouched. The merged result must satisfy the same
+// invariants as POST — otherwise an edit could turn an SSID-scoped rule into
+// an accidental org-wide catch-all.
 router.put('/policies/:id', ...auth, async (req, res) => {
-  const { ssid, vlan, can_access, priority, notes } = req.body;
+  const { rows: existing } = await pool.query(
+    'SELECT * FROM radius_user_policies WHERE id = $1', [req.params.id]
+  );
+  if (!existing.length) return res.status(404).json({ error: 'not found' });
+  const cur = existing[0];
+  const has = k => Object.prototype.hasOwnProperty.call(req.body, k);
+
+  const next = {
+    user_id:      has('user_id')      ? req.body.user_id  || null : cur.user_id,
+    group_id:     has('group_id')     ? req.body.group_id || null : cur.group_id,
+    google_ou:    has('google_ou')    ? (req.body.google_ou ? req.body.google_ou.replace(/\/+$/, '') || '/' : null) : cur.google_ou,
+    email_domain: has('email_domain') ? (req.body.email_domain ? req.body.email_domain.toLowerCase() : null) : cur.email_domain,
+    ssid:         has('ssid')         ? req.body.ssid || null : cur.ssid,
+    vlan:         has('vlan')         ? req.body.vlan || null : cur.vlan,
+    can_access:   has('can_access')   ? (req.body.can_access ?? cur.can_access) : cur.can_access,
+    priority:     has('priority')     ? (req.body.priority ?? 0) : cur.priority,
+    notes:        has('notes')        ? req.body.notes || null : cur.notes,
+  };
+
+  if (!next.user_id && !next.group_id && !next.google_ou && !next.email_domain && !next.ssid) {
+    return res.status(400).json({ error: 'user_id, group_id, google_ou, email_domain, or (for a default policy) ssid is required' });
+  }
+  if (next.email_domain && !next.ssid) {
+    return res.status(400).json({ error: 'ssid is required for a domain-based policy' });
+  }
+  if (next.google_ou && !next.ssid) {
+    return res.status(400).json({ error: 'ssid is required for an OU-based policy' });
+  }
+  if (next.google_ou && !next.google_ou.startsWith('/')) {
+    return res.status(400).json({ error: 'google_ou must be a full OU path starting with / (e.g. /Students/High School)' });
+  }
+
   const { rows } = await pool.query(
     `UPDATE radius_user_policies SET
-       ssid       = COALESCE($1, ssid),
-       vlan       = COALESCE($2, vlan),
-       can_access = COALESCE($3, can_access),
-       priority   = COALESCE($4, priority),
-       notes      = COALESCE($5, notes)
-     WHERE id = $6 RETURNING *`,
-    [ssid, vlan || null, can_access ?? null, priority ?? null, notes, req.params.id]
+       user_id = $1, group_id = $2, google_ou = $3, email_domain = $4,
+       ssid = $5, vlan = $6, can_access = $7, priority = $8, notes = $9
+     WHERE id = $10 RETURNING *`,
+    [next.user_id, next.group_id, next.google_ou, next.email_domain,
+     next.ssid, next.vlan, next.can_access, next.priority, next.notes, req.params.id]
   );
-  if (!rows.length) return res.status(404).json({ error: 'not found' });
   res.json(rows[0]);
 });
 
@@ -605,12 +836,50 @@ router.delete('/sessions/:id', ...auth, async (req, res) => {
 // ---------------------------------------------------------------------------
 
 router.get('/log', ...auth, async (req, res) => {
-  const { result, limit = 200, offset = 0 } = req.query;
-  const where  = result ? 'WHERE result = $3' : '';
-  const params = result ? [limit, offset, result] : [limit, offset];
+  const { result, search, limit = 200, offset = 0 } = req.query;
+  const conds  = [];
+  const params = [limit, offset];
+  if (result) { params.push(result); conds.push(`result = $${params.length}`); }
+  if (search) {
+    // One box searches both identities of a client: who (username) and
+    // what (MAC). mac_address is macaddr-typed, so match its text form.
+    params.push(`%${search}%`);
+    conds.push(`(username ILIKE $${params.length} OR mac_address::text ILIKE $${params.length})`);
+  }
+  const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
   const { rows } = await pool.query(
     `SELECT * FROM radius_auth_log ${where}
      ORDER BY logged_at DESC LIMIT $1 OFFSET $2`,
+    params
+  );
+  res.json(rows);
+});
+
+// GET /radius/user-devices — every (user, device) pair seen by RADIUS user
+// auth, with first/last seen and outcome counts: "what devices has this
+// person authenticated with?" for tracking and filtering. MAB device auth is
+// excluded — those are tracked as devices (radius_devices), not users.
+router.get('/user-devices', ...auth, async (req, res) => {
+  const { search, limit = 500 } = req.query;
+  const params = [limit];
+  let where = `WHERE auth_type <> 'mab' AND username IS NOT NULL AND mac_address IS NOT NULL`;
+  if (search) {
+    params.push(`%${search}%`);
+    where += ` AND (username ILIKE $${params.length} OR mac_address::text ILIKE $${params.length})`;
+  }
+  const { rows } = await pool.query(
+    `SELECT username, mac_address,
+            MIN(logged_at) AS first_seen,
+            MAX(logged_at) AS last_seen,
+            COUNT(*) FILTER (WHERE result = 'accepted') AS accepts,
+            COUNT(*) FILTER (WHERE result = 'rejected') AS rejects,
+            ARRAY_AGG(DISTINCT ssid) FILTER (WHERE ssid IS NOT NULL) AS ssids,
+            (ARRAY_AGG(vlan_assigned ORDER BY logged_at DESC)
+               FILTER (WHERE vlan_assigned IS NOT NULL))[1] AS last_vlan
+     FROM radius_auth_log ${where}
+     GROUP BY username, mac_address
+     ORDER BY MAX(logged_at) DESC
+     LIMIT $1`,
     params
   );
   res.json(rows);
@@ -698,12 +967,27 @@ router.get('/freeradius-sync', async (req, res) => {
     );
     const internalSecret = process.env.INTERNAL_SECRET || '';
 
+    // The ACME (Let's Encrypt) cert issued for the web UI doubles as the
+    // EAP server cert: BYOD Android/Windows can then validate RADIUS
+    // against system CAs instead of blind-trusting a self-signed cert, and
+    // renewals propagate to every node on the next sync poll — tls_config
+    // lives in the shared/replicated DB, so the HA peer serves the same
+    // cert without any file sync. Absent/disabled → sync script keeps its
+    // generate-once self-signed fallback.
+    const { rows: [tls] } = await pool.query(
+      `SELECT cert_pem, privkey_pem FROM tls_config
+       WHERE enabled = true AND cert_pem IS NOT NULL AND privkey_pem IS NOT NULL
+       LIMIT 1`
+    );
+
     res.json({
       enabled:      true,
       clients_conf: keepalived.generateFreeRadiusClients(nasRows),
-      rest_conf:    keepalived.generateFreeRadiusRestMod('http://localhost:3001', internalSecret),
-      classguard_conf: keepalived.generateFreeRadiusVirtualServer(),
+      rest_conf:    keepalived.generateFreeRadiusRestMod('http://localhost:3001'),
+      classguard_conf: keepalived.generateFreeRadiusVirtualServer(internalSecret),
       eap_conf:     keepalived.generateEapMod(),
+      eap_tls_cert: tls?.cert_pem    || null,
+      eap_tls_key:  tls?.privkey_pem || null,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

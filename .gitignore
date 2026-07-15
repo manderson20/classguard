@@ -104,3 +104,20 @@ docker-compose.override.yml.local
 # ============================================================
 coverage/
 .nyc_output/
+
+# Local/private config
+.env
+.env.*
+*.local
+.claude/
+.codex/
+.devtools/
+
+# Node/build artifacts
+node_modules/
+dist/
+build/
+coverage/
+
+# Logs
+*.log

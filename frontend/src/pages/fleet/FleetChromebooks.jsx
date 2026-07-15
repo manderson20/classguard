@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import MdiIcon from '@mdi/react';
+import { Icon as MdiIcon } from '@mdi/react';
 import {
   mdiAlertCircleOutline,
   mdiCheckCircleOutline,

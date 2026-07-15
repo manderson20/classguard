@@ -9,7 +9,7 @@ import { TraceContent } from '../components/WhyBlockedTrace';
 import LiveViewModal from '../components/LiveViewModal';
 import LiveThumbnailsGrid from '../components/LiveThumbnailsGrid';
 import StartLessonModal from '../components/StartLessonModal';
-import MdiIcon from '@mdi/react';
+import { Icon as MdiIcon } from '@mdi/react';
 import {
   mdiEyeOutline, mdiTarget, mdiPresentationPlay, mdiChatOutline,
   mdiShieldLockOutline, mdiAccountQuestionOutline, mdiViewGridOutline,
