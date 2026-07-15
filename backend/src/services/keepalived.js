@@ -289,9 +289,16 @@ server classguard {
     }
 
     authenticate {
+        # Same verdict→rcode mapping as the inner-tunnel (see there for why).
         Auth-Type rest {
             ${setSecret}
             rest
+            if (&control:Auth-Type == Accept) {
+                ok
+            }
+            elsif (&control:Auth-Type == Reject) {
+                reject
+            }
         }
         Auth-Type eap {
             eap
@@ -349,15 +356,34 @@ server inner-tunnel {
         # Runs for both flows — GTC (via gtc.auth_type) and plain TTLS/PAP
         # (via /authorize's control:Auth-Type = rest). Sends the tunneled
         # cleartext password to ClassGuard → Google Secure LDAP bind.
+        #
+        # rlm_rest returns *updated* whenever it parsed reply attributes —
+        # for accepts AND rejects (the API answers HTTP 200 either way and
+        # encodes the verdict in control:Auth-Type). eap_gtc treats any
+        # rcode other than ok as authentication failure, so map the API's
+        # verdict to the section rcode explicitly. A blanket updated→ok
+        # would turn wrong-password rejects into accepts; never do that.
         Auth-Type rest {
             ${setSecret}
             rest
+            if (&control:Auth-Type == Accept) {
+                ok
+            }
+            elsif (&control:Auth-Type == Reject) {
+                reject
+            }
         }
         # Kept for completeness: runs only if authorize didn't set Auth-Type
         # (e.g. REST unreachable and a Cleartext-Password were ever present).
         Auth-Type PAP {
             ${setSecret}
             rest
+            if (&control:Auth-Type == Accept) {
+                ok
+            }
+            elsif (&control:Auth-Type == Reject) {
+                reject
+            }
         }
     }
 }
