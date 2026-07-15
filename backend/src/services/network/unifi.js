@@ -191,12 +191,24 @@ async function fetchDevices(config) {
 
 async function restCall(config, method, restPath, body) {
   const { base_url, site_id = 'default' } = config;
-  return withSession(config, async ({ cookies, isOs, csrf }, agent) => {
-    const apiBase = isOs ? '/proxy/network' : '';
-    const headers = (method !== 'GET' && csrf) ? { 'X-Csrf-Token': csrf } : undefined;
-    const res = await request(base_url, `${apiBase}/api/s/${site_id}${restPath}`, method, body, cookies, agent, headers);
-    return res.data?.data ?? [];
-  });
+  try {
+    return await withSession(config, async ({ cookies, isOs, csrf }, agent) => {
+      const apiBase = isOs ? '/proxy/network' : '';
+      const headers = (method !== 'GET' && csrf) ? { 'X-Csrf-Token': csrf } : undefined;
+      const res = await request(base_url, `${apiBase}/api/s/${site_id}${restPath}`, method, body, cookies, agent, headers);
+      return res.data?.data ?? [];
+    });
+  } catch (err) {
+    // Surface the controller's own error instead of axios's generic
+    // "Request failed with status code 403" — the two 403s here mean very
+    // different things (missing CSRF vs. an account without write rights).
+    const msg = err.response?.data?.meta?.msg || err.response?.data?.error?.message;
+    if (msg === 'api.err.NoPermission') {
+      throw new Error(`account '${config.username}' can read but not modify the Network app (api.err.NoPermission) — in UniFi OS → Admins & Users, change its Network role from View Only to Full Management, then retry`);
+    }
+    if (msg) throw new Error(`${msg} (HTTP ${err.response.status})`);
+    throw err;
+  }
 }
 
 async function fetchRadiusProfiles(config) {
