@@ -26,8 +26,8 @@ import {
   mdiCogOutline,
   mdiHomeOutline,
   mdiFlagOutline,
-  mdiLogoutVariant,
   mdiFilterOutline,
+  mdiLogoutVariant,
   mdiEmailOutline,
   mdiPhoneOutline,
   mdiChatOutline,
@@ -335,6 +335,7 @@ const NAV_VIEWS = [
 
 const TEACHER_NAV = [
   { to: '/classes',          icon: mdiHomeOutline,      label: 'My Classes'      },
+  { to: '/filters',          icon: mdiFilterOutline,    label: 'My Filters'      },
   { to: '/penalty-box',      icon: mdiFlagOutline,      label: 'Penalty Box'     },
   { to: '/phone-directory',  icon: mdiPhoneOutline,     label: 'Phone Directory' },
   { to: '/lockdown',         icon: mdiLock,             label: 'Lockdown Tests'  },

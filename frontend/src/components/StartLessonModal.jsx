@@ -125,7 +125,7 @@ export default function StartLessonModal({ onStart, onClose, loading, initial = 
               />
               <div>
                 <p className="text-sm font-semibold text-slate-800">Monitor only</p>
-                <p className="text-xs text-slate-500">Students keep their normal school filtering. You can switch to Focus at any time during class.</p>
+                <p className="text-xs text-slate-500">Students keep their normal school filtering. You can switch to Focus (and apply one of your saved filters) at any time during class.</p>
               </div>
             </label>
             <label className={`flex items-start gap-3 p-3 rounded-xl border-2 cursor-pointer transition-colors
@@ -146,7 +146,12 @@ export default function StartLessonModal({ onStart, onClose, loading, initial = 
 
           {mode === 'focus' && (
             <>
-              {/* Scenes — saved site lists */}
+              {/* Scenes — saved site lists (managed on the My Filters page) */}
+              {scenes.length === 0 && (
+                <p className="text-xs text-slate-400">
+                  Tip: build reusable site lists on the <a href="/filters" className="text-indigo-600 underline">My Filters</a> page and they'll appear here.
+                </p>
+              )}
               {scenes.length > 0 && (
                 <div>
                   <p className="label mb-2">My scenes</p>

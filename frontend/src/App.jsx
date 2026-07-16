@@ -14,6 +14,7 @@ import SetupWizard  from './pages/SetupWizard';
 import Classes      from './pages/Classes';
 import ClassDetail  from './pages/ClassDetail';
 import ActiveLesson from './pages/ActiveLesson';
+import FiltersPage from './pages/FiltersPage';
 import PenaltyBox      from './pages/PenaltyBox';
 import LockdownTests   from './pages/LockdownTests';
 import PhoneDirectory  from './pages/PhoneDirectory';
@@ -149,6 +150,7 @@ export default function App() {
           <Route path="/classes"                 element={<Classes />} />
           <Route path="/classes/:classId"        element={<ClassDetail />} />
           <Route path="/classes/:classId/lesson" element={<ActiveLesson />} />
+          <Route path="/filters"                 element={<FiltersPage />} />
           <Route path="/penalty-box"             element={<PenaltyBox />} />
           <Route path="/phone-directory"         element={<PhoneDirectory />} />
           <Route path="/lockdown"                element={<LockdownTests />} />
