@@ -31,6 +31,7 @@ const { rateLimit } = require('express-rate-limit');
 const { getHaConfig, getNodes } = require('../services/keepalived');
 const kea = require('../services/kea');
 const { getResourceUsage } = require('../services/systemResources');
+const config = require('../config');
 
 // Escape characters that are special in XML contexts
 function xmlEscape(s) {
@@ -157,6 +158,33 @@ async function collectMetrics() {
     `SELECT COUNT(*) AS total FROM dhcp_subnets`
   ).catch(() => ({ rows: [{}] }));
 
+  // RADIUS — auth throughput from the (replicated, cluster-wide) auth log,
+  // plus live session/device/NAS counts. Same values from every node.
+  const { rows: radiusRows } = await pool.query(`
+    SELECT
+      (SELECT COUNT(*) FROM radius_auth_log
+        WHERE logged_at > NOW() - INTERVAL '5 minutes' AND result = 'accepted') AS accepts_5m,
+      (SELECT COUNT(*) FROM radius_auth_log
+        WHERE logged_at > NOW() - INTERVAL '5 minutes' AND result = 'rejected') AS rejects_5m,
+      (SELECT COUNT(*) FROM radius_sessions WHERE is_active)                    AS sessions_active,
+      (SELECT COUNT(*) FROM radius_devices WHERE status = 'pending')            AS devices_pending,
+      (SELECT COUNT(*) FROM radius_devices WHERE status = 'approved')           AS devices_approved,
+      (SELECT COUNT(*) FROM radius_devices WHERE status = 'blocked')            AS devices_blocked,
+      (SELECT COUNT(*) FROM radius_nas WHERE is_active)                         AS nas_active
+  `).catch(() => ({ rows: [{}] }));
+  const radius = radiusRows[0] || {};
+
+  // Web/EAP certificate expiry (ACME cert from tls_config — the EAP cert is
+  // this same cert when ACME is enabled, else a host-local self-signed one
+  // that only the Zabbix agent's classguard.eap.cert.days item can see).
+  const { rows: tlsRows } = await pool.query(
+    `SELECT enabled, cert_expires_at FROM tls_config LIMIT 1`
+  ).catch(() => ({ rows: [] }));
+  const tls = tlsRows[0] || {};
+  const certDays = tls.cert_expires_at
+    ? parseFloat(((new Date(tls.cert_expires_at) - Date.now()) / 86_400_000).toFixed(1))
+    : null;
+
   // Node count (HA)
   const { rows: nodeRows } = await pool.query(`
     SELECT COUNT(*) AS total,
@@ -171,7 +199,7 @@ async function collectMetrics() {
   // (split-brain), instead of only seeing "service is up" via the VIP.
   const nodeId = process.env.NODE_ID || os.hostname();
   const { rows: selfRows } = await pool.query(
-    `SELECT ha_role, vrrp_state, failover_priority FROM nodes WHERE node_id = $1`,
+    `SELECT ha_role, vrrp_state, failover_priority, db_lag_bytes FROM nodes WHERE node_id = $1`,
     [nodeId]
   ).catch(() => ({ rows: [] }));
   const self = selfRows[0] || null;
@@ -184,6 +212,7 @@ async function collectMetrics() {
     node_id:   nodeId,
     timestamp: new Date().toISOString(),
     uptime_seconds: Math.round(uptimeSec),
+    app_version: config.version,
 
     // DNS throughput
     dns_queries_per_second:  parseFloat((q60 / 60).toFixed(2)),
@@ -227,6 +256,20 @@ async function collectMetrics() {
     dhcp_pool_free_addresses:  Math.max(0, dhcpTotal - dhcpUsed),
     dhcp_pool_utilization_pct: dhcpTotal > 0 ? parseFloat(((dhcpUsed / dhcpTotal) * 100).toFixed(2)) : 0,
 
+    // RADIUS / NAC — auth log is replicated, so every node reports the
+    // same cluster-wide numbers; alert on these from one host (VIP) only.
+    radius_auth_accepts_5m:  parseInt(radius.accepts_5m, 10)      || 0,
+    radius_auth_rejects_5m:  parseInt(radius.rejects_5m, 10)      || 0,
+    radius_sessions_active:  parseInt(radius.sessions_active, 10) || 0,
+    radius_devices_pending:  parseInt(radius.devices_pending, 10) || 0,
+    radius_devices_approved: parseInt(radius.devices_approved, 10)|| 0,
+    radius_devices_blocked:  parseInt(radius.devices_blocked, 10) || 0,
+    radius_nas_active:       parseInt(radius.nas_active, 10)      || 0,
+
+    // TLS certificate (ACME web cert; also the EAP cert when ACME is on)
+    tls_cert_enabled:        tls.enabled ? 1 : 0,
+    tls_cert_days_remaining: certDays,
+
     // NTP
     ntp_min_stratum:         ntp.min_stratum ? parseInt(ntp.min_stratum, 10) : null,
     ntp_reachable_servers:   parseInt(ntp.reachable_count, 10) || 0,
@@ -246,6 +289,9 @@ async function collectMetrics() {
     failover_priority:       self?.failover_priority ?? null,
     vrrp_state:              vrrpState,
     is_vrrp_master:          self ? (vrrpState === 'MASTER' ? 1 : 0) : 1,
+    // Streaming replication lag as reported by this node's last heartbeat —
+    // null on the primary (nothing to lag behind) and on standalone installs.
+    db_replication_lag_bytes: self?.db_lag_bytes ?? null,
   };
 }
 
@@ -279,6 +325,10 @@ const KNOWN_VALUE_TYPES = {
   ntp_min_stratum:   '3',
   ntp_synced:        '3',
   dhcp_kea_reachable: '3',
+  app_version:       '4',
+  tls_cert_enabled:  '3',
+  tls_cert_days_remaining:  '0', // float; null until a cert is issued
+  db_replication_lag_bytes: '3', // null on the primary, a number on standbys
 };
 
 function zabbixValueType(key, value) {
@@ -410,7 +460,34 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
       <name>ClassGuard: split-brain — more than one node reports MASTER</name>
       <priority>4</priority><!-- high -->
     </trigger>`);
+    // Peer-offline check goes on every node: when one node dies, its own
+    // trigger can't fire (no data) but each surviving node reports
+    // ha_nodes_online < ha_nodes_total from the shared nodes table.
+    nodeTargets.forEach(t => triggers.push(`
+    <trigger>
+      <expression>max(/${t.techName}/classguard.ha_nodes_online,5m)&lt;last(/${t.techName}/classguard.ha_nodes_total)</expression>
+      <name>ClassGuard: ${t.shortName} reports a cluster peer offline</name>
+      <priority>4</priority><!-- high -->
+    </trigger>`));
   }
+  // Cluster-wide values (replicated tables — every node reports the same
+  // number): alert from a single host to avoid N duplicate alerts. Prefer
+  // the VIP host since it always answers as long as the service is up.
+  const clusterTarget = targets.find(t => !t.isNode) || targets[0];
+  if (metrics.tls_cert_enabled) {
+    triggers.push(`
+    <trigger>
+      <expression>last(/${clusterTarget.techName}/classguard.tls_cert_days_remaining)&lt;14</expression>
+      <name>ClassGuard: TLS/EAP certificate expires in under 14 days</name>
+      <priority>4</priority><!-- high -->
+    </trigger>`);
+  }
+  triggers.push(`
+    <trigger>
+      <expression>min(/${clusterTarget.techName}/classguard.radius_auth_rejects_5m,15m)&gt;20</expression>
+      <name>ClassGuard: sustained RADIUS rejects (&gt;20 per 5m for 15m)</name>
+      <priority>3</priority><!-- average -->
+    </trigger>`);
   const triggersXml = triggers.length ? `\n  <triggers>${triggers.join('\n')}\n  </triggers>` : '';
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
