@@ -392,6 +392,9 @@ bash "$REPO_DIR/infrastructure/chrony/sync-chrony.sh" || warn "chrony sync faile
 section "Step 8d — FreeRADIUS"
 bash "$REPO_DIR/infrastructure/freeradius/sync-freeradius.sh" || warn "FreeRADIUS sync failed — check manually with: systemctl status freeradius"
 
+section "Step 8e — Zabbix agent"
+bash "$REPO_DIR/infrastructure/zabbix/sync-zabbix-agent.sh" || warn "Zabbix agent sync failed — check manually with: systemctl status zabbix-agent2"
+
 # ---------------------------------------------------------------------------
 # 9. Scheduled-update watcher — installed once, idempotent on re-run.
 # Polls this node's own API every minute for an admin-scheduled update

@@ -413,11 +413,13 @@ export default function SettingsPage() {
 
   const [dns, setDns]     = useState({});
   const [zabbixToken,  setZabbixToken]  = useState('');
+  const [zabbixServer, setZabbixServer] = useState('');
   const [saved, setSaved] = useState('');
 
   useEffect(() => {
     if (appSettings && Object.keys(appSettings).length) {
       setZabbixToken(appSettings.zabbix_metrics_token || '');
+      setZabbixServer(appSettings.zabbix_server_address || '');
     }
   }, [appSettings]);
 
@@ -616,6 +618,17 @@ export default function SettingsPage() {
             placeholder="Set a secret token for Zabbix to use"
           />
         </Field>
+        <Field
+          label="Zabbix Server Address (agent auto-install)"
+          hint="When set, every cluster node installs and configures Zabbix agent 2 pointed at this address within a minute — including future nodes and fresh installs. Each node registers under its own node ID; link the agent template from infrastructure/zabbix/ to those hosts. Clear the field to stop managing the agent (it is left installed but untouched)."
+        >
+          <input
+            className="input"
+            value={zabbixServer}
+            onChange={e => setZabbixServer(e.target.value)}
+            placeholder="IP or hostname of your Zabbix server"
+          />
+        </Field>
         <div className="mt-3 bg-slate-50 rounded-lg p-3 text-xs font-mono text-slate-600 space-y-1">
           {haNodes.length > 0 ? (
             <>
@@ -640,7 +653,7 @@ export default function SettingsPage() {
         <div className="flex items-center gap-3 mt-4">
           <button
             className="btn-primary"
-            onClick={() => api.put('/settings', { zabbix_metrics_token: zabbixToken }).then(() => { setSaved('zabbix'); setTimeout(()=>setSaved(''),2000); })}
+            onClick={() => api.put('/settings', { zabbix_metrics_token: zabbixToken, zabbix_server_address: zabbixServer.trim() }).then(() => { setSaved('zabbix'); setTimeout(()=>setSaved(''),2000); })}
           >
             Save
           </button>

@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.2] - 2026-07-16
+
+### Added
+
+- **Zabbix agent auto-install** — new **Zabbix Server Address** field in Settings ▸ Monitoring: when set, every cluster node's minutely `sync-zabbix-agent.sh` (same reconciling pattern as the FreeRADIUS/keepalived syncs, also run as `install.sh` Step 8e) installs `zabbix-agent2`, deploys the ClassGuard UserParameters, grants the required groups, and points the agent at that server — each node registers under its own node ID, and fresh installs or new HA peers converge automatically. Clearing the field stops managing the agent.
+
+---
+
 ## [0.11.1] - 2026-07-16
 
 ### Fixed

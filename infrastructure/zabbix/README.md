@@ -17,7 +17,18 @@ Two complementary layers:
 Use both: the agent template on each node host, the generated template for
 the VIP host and the cross-node triggers.
 
-## Install (each node)
+## Install
+
+**Automatic (recommended):** set **Zabbix Server Address** in
+Settings ▸ Monitoring. Every cluster node's minutely
+[`sync-zabbix-agent.sh`](sync-zabbix-agent.sh) then installs Ubuntu's
+`zabbix-agent2`, deploys the UserParameters, grants the groups below, and
+points the agent at your server — each node registers under its own node ID.
+The setting replicates cluster-wide, so future nodes and fresh installs
+(`install.sh` Step 8e) converge with zero manual steps. Clearing the setting
+stops managing the agent (it's left installed but untouched).
+
+**Manual (standalone / official repo):**
 
 ```bash
 sudo ./install-zabbix-agent2.sh --server <zabbix-server-ip> --hostname <node-name>
