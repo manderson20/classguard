@@ -1,5 +1,5 @@
 # Pinned to the exact Node version currently deployed - see backend/Dockerfile.
-FROM node:26.4.0-alpine
+FROM node:26.5.0-alpine
 RUN apk add --no-cache zip
 WORKDIR /app
 COPY package*.json ./
