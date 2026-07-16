@@ -501,7 +501,7 @@ router.get('/firewall-rules', async (req, res) => {
     }
 
     // Zabbix passive checks — 10050 open only to the configured monitoring
-    // server (Settings ▸ Monitoring), reconciled by sync-ufw.sh the same way
+    // server (Integrations ▸ Zabbix), reconciled by sync-ufw.sh the same way
     // as the Postgres peers so changing/clearing the address removes the old
     // rule. May be a DNS name; the sync script resolves it per tick.
     const { rows: [zbxRow] } = await pool.query(

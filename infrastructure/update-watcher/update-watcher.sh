@@ -64,7 +64,7 @@ bash "$REPO_DIR/infrastructure/freeradius/sync-freeradius.sh" || true
 
 # --- Zabbix agent sync -----------------------------------------------------
 # Same idea again, for monitoring -- no-ops entirely unless an admin has set
-# a Zabbix server address (Settings → Monitoring). See
+# a Zabbix server address (Integrations → Zabbix). See
 # infrastructure/zabbix/sync-zabbix-agent.sh.
 bash "$REPO_DIR/infrastructure/zabbix/sync-zabbix-agent.sh" || true
 

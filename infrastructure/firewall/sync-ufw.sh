@@ -63,7 +63,7 @@ fi
 
 # Zabbix agent rules -- same reconcile-exactly approach as the Postgres
 # peers: 10050/tcp is open only to the configured monitoring server
-# (Settings ▸ Monitoring), and changing or clearing the address removes the
+# (Integrations ▸ Zabbix), and changing or clearing the address removes the
 # old rule on the next tick. The setting may be a DNS name; resolve it here
 # each tick (getent) so a monitoring-server IP change heals itself, and so
 # ufw -- which only takes IPs/subnets -- never sees a hostname.

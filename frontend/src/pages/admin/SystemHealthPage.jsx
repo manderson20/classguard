@@ -159,7 +159,7 @@ export default function SystemHealthPage() {
       {/* Server resource usage — CPU/memory/disk for this node and every
           other known cluster node, so you can tell if you're close to or
           exceeding capacity rather than just whether services are up.
-          Same data Zabbix can poll via /metrics (Settings > Monitoring). */}
+          Same data Zabbix can poll via /metrics (Integrations > Zabbix). */}
       <div className="mt-8">
         <h2 className="text-sm font-semibold text-slate-700 mb-3">Server Resources</h2>
         {!resources ? (
