@@ -7,10 +7,12 @@
 #   --server         IP/DNS of your Zabbix server (Server= and ServerActive=)
 #   --hostname       Hostname= the agent reports; must match the host name you
 #                    create in Zabbix. Defaults to this machine's hostname.
-#   --official-repo  Add repo.zabbix.com and install agent 7.0 LTS from there
-#                    instead of Ubuntu's packaged 6.0 agent. Use this if your
-#                    Zabbix server is 7.x and you want a matching agent; a 6.0
-#                    agent works fine against any 6.0+ server either way.
+#   --official-repo  Install agent 7.0 LTS from repo.zabbix.com instead of the
+#                    default 6.0 LTS channel. Only do this if your Zabbix
+#                    server is 7.x — a 6.0 agent works against any 6.0+
+#                    server, but an agent newer than the server is
+#                    unsupported. (Ubuntu 24.04 ships no zabbix packages, so
+#                    repo.zabbix.com is used either way.)
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,13 +39,13 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 echo "==> Installing zabbix-agent2"
-if [ "$OFFICIAL_REPO" -eq 1 ]; then
-  . /etc/os-release
-  DEB="zabbix-release_latest_7.0+ubuntu${VERSION_ID}_all.deb"
-  curl -fsSL -o "/tmp/$DEB" "https://repo.zabbix.com/zabbix/7.0/ubuntu/pool/main/z/zabbix-release/$DEB"
-  dpkg -i "/tmp/$DEB"
-  rm -f "/tmp/$DEB"
-fi
+. /etc/os-release
+CHANNEL="6.0"
+if [ "$OFFICIAL_REPO" -eq 1 ]; then CHANNEL="7.0"; fi
+DEB="zabbix-release_latest_${CHANNEL}+ubuntu${VERSION_ID}_all.deb"
+curl -fsSL -o "/tmp/$DEB" "https://repo.zabbix.com/zabbix/${CHANNEL}/ubuntu/pool/main/z/zabbix-release/$DEB"
+dpkg -i "/tmp/$DEB"
+rm -f "/tmp/$DEB"
 apt-get update -qq
 DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-agent2
 

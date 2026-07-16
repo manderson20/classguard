@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.3] - 2026-07-16
+
+### Fixed
+
+- **Zabbix agent install actually installs** — Ubuntu 24.04 ships no zabbix packages at all, so the agent sync's plain `apt-get install zabbix-agent2` failed on every tick. Both the sync and the manual installer now add repo.zabbix.com's 6.0 LTS apt source first (a 6.0 agent is supported by every 6.0+ server; the manual installer's `--official-repo` flag now selects the 7.0 channel instead).
+
+---
+
 ## [0.11.2] - 2026-07-16
 
 ### Added
