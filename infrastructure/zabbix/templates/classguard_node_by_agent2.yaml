@@ -546,18 +546,19 @@ zabbix_export:
           key: classguard.update.failed.count
           delay: 5m
           value_type: UNSIGNED
-          description: 'The watcher never deletes old failure logs, so alert on the count increasing, not on it being non-zero.'
-          triggers:
-            - expression: 'change(/ClassGuard node by Zabbix agent 2/classguard.update.failed.count)>0'
-              name: 'ClassGuard: a scheduled update FAILED on {HOST.NAME}'
-              priority: HIGH
-              manual_close: 'YES'
+          description: 'Informational only — the watcher caps retention at the 20 newest failure logs, so once saturated this count stops moving. The alert lives on the newest-failure timestamp below.'
         - name: 'ClassGuard: last failed-update timestamp'
           type: ZABBIX_PASSIVE
           key: classguard.update.failed.latest
           delay: 5m
           value_type: UNSIGNED
           units: unixtime
+          description: 'mtime of the newest failure log (0 = none). Every new failure moves it forward, even after the count saturates at the 20-log retention cap.'
+          triggers:
+            - expression: 'change(/ClassGuard node by Zabbix agent 2/classguard.update.failed.latest)>0'
+              name: 'ClassGuard: a scheduled update FAILED on {HOST.NAME}'
+              priority: HIGH
+              manual_close: 'YES'
         - name: 'ClassGuard: holds the VIP'
           type: ZABBIX_PASSIVE
           key: 'classguard.vip.held[{$CLASSGUARD.VIP}]'

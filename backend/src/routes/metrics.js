@@ -474,7 +474,10 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
   // number): alert from a single host to avoid N duplicate alerts. Prefer
   // the VIP host since it always answers as long as the service is up.
   const clusterTarget = targets.find(t => !t.isNode) || targets[0];
-  if (metrics.tls_cert_enabled) {
+  // Gate on an expiry existing, not on `enabled`: disabling ACME stops
+  // renewal but nginx keeps serving the issued cert from disk (see
+  // acmeTls.renewIfNeeded), which is exactly when expiry needs watching.
+  if (metrics.tls_cert_days_remaining != null) {
     triggers.push(`
     <trigger>
       <expression>last(/${clusterTarget.techName}/classguard.tls_cert_days_remaining)&lt;14</expression>
