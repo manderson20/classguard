@@ -94,8 +94,19 @@ else
 fi
 
 LOG_JSON=$(jq -Rs --arg status "$FINAL_STATUS" '{status: $status, log: .}' < <(tail -c 4000 "$LOG_FILE"))
-curl -sf -X POST http://localhost:3001/api/v1/ha/update-complete \
-  -H "Content-Type: application/json" -d "$LOG_JSON" || true
+# Retry the completion report for up to ~2 minutes: install.sh has just
+# swapped the containers, so the API is often still starting when the first
+# POST fires — a single silently-swallowed failure here left the schedule
+# row wedged at in_progress (blocking every future update for this node)
+# even though the update itself succeeded. Observed twice in production
+# before this retry existed.
+for _ in $(seq 1 24); do
+  if curl -sf -X POST http://localhost:3001/api/v1/ha/update-complete \
+    -H "Content-Type: application/json" -d "$LOG_JSON" >/dev/null 2>&1; then
+    break
+  fi
+  sleep 5
+done
 
 if [ "$FINAL_STATUS" = "failed" ]; then
   # Keep the FULL log on disk for a failed run. In practice these have all
