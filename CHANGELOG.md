@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Update watcher: completion report retries** — the final `update-complete` POST fired right after install.sh swapped the containers, when the API is often still starting; a single swallowed failure left the schedule row wedged at `in_progress` (blocking all future updates for that node) even though the update succeeded. The watcher now retries the report for up to two minutes.
+
+---
+
 ## [0.11.4] - 2026-07-16
 
 ### Fixed
