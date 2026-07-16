@@ -373,6 +373,33 @@ function hostXml(techName, displayName, itemsXml) {
     </host>`;
 }
 
+// GET /metrics/zabbix-sync — localhost-only, no auth (same trust boundary as
+// /radius/freeradius-sync: the API port is published on host loopback only,
+// so anything that can reach it is already on the host). Polled every minute
+// by infrastructure/zabbix/sync-zabbix-agent.sh, which installs and points
+// zabbix-agent2 at the configured server. Enabled solely by the
+// zabbix_server_address setting (replicated cluster-wide), so every node —
+// including a fresh install or a new HA peer — converges without anyone
+// running an installer by hand. Hostname is this node's node_id, matching
+// what /metrics reports and what the agent2 template README says to name
+// the Zabbix host.
+router.get('/zabbix-sync', metricsLimiter, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT value FROM settings WHERE key = 'zabbix_server_address'`
+    );
+    const server = (rows[0]?.value || '').trim();
+    if (!server) return res.json({ enabled: false });
+    res.json({
+      enabled: true,
+      server,
+      hostname: process.env.NODE_ID || os.hostname(),
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /metrics/zabbix-template  — download a Zabbix import XML covering
 // every cluster member's own IP (so a failover/role-flip is visible per
 // node, not just "the VIP answers") plus the VIP itself (the "is the

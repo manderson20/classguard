@@ -23,6 +23,9 @@ const ALLOWED_KEYS = new Set([
   'extension_oauth_client_id', 'extension_public_url',
   'default_policy_id', 'blocklist_sync_cron', 'dns_log_retention_days',
   'last_google_sync', 'google_ous', 'google_ou_role_rules',
+  // Zabbix agent auto-install — when set, every node's minutely
+  // sync-zabbix-agent.sh installs/points zabbix-agent2 at this address.
+  'zabbix_server_address',
   // Integrations
   'zammad_url', 'zammad_token',
   // mosyle_email/password: Mosyle Manager's token-only auth is deprecated;

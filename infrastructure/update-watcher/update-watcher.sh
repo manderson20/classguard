@@ -62,6 +62,12 @@ bash "$REPO_DIR/infrastructure/chrony/sync-chrony.sh" || true
 # infrastructure/freeradius/sync-freeradius.sh.
 bash "$REPO_DIR/infrastructure/freeradius/sync-freeradius.sh" || true
 
+# --- Zabbix agent sync -----------------------------------------------------
+# Same idea again, for monitoring -- no-ops entirely unless an admin has set
+# a Zabbix server address (Settings → Monitoring). See
+# infrastructure/zabbix/sync-zabbix-agent.sh.
+bash "$REPO_DIR/infrastructure/zabbix/sync-zabbix-agent.sh" || true
+
 RESPONSE=$(curl -sf http://localhost:3001/api/v1/ha/update-status) || exit 0
 PENDING=$(echo "$RESPONSE" | jq -r '.pending')
 [ "$PENDING" = "null" ] && exit 0
