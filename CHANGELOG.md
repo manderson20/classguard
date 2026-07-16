@@ -12,7 +12,7 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
-## [Unreleased]
+## [0.11.0] - 2026-07-16
 
 ### Added
 
