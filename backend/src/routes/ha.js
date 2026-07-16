@@ -500,6 +500,15 @@ router.get('/firewall-rules', async (req, res) => {
       staticRules.push({ port: '1813', proto: 'udp', comment: 'RADIUS accounting' });
     }
 
+    // Zabbix passive checks — 10050 open only to the configured monitoring
+    // server (Settings ▸ Monitoring), reconciled by sync-ufw.sh the same way
+    // as the Postgres peers so changing/clearing the address removes the old
+    // rule. May be a DNS name; the sync script resolves it per tick.
+    const { rows: [zbxRow] } = await pool.query(
+      `SELECT value FROM settings WHERE key = 'zabbix_server_address'`
+    ).catch(() => ({ rows: [] }));
+    const zabbixServers = (zbxRow?.value || '').trim() ? [zbxRow.value.trim()] : [];
+
     let postgresPeerIps = [];
 
     if (isPrimary) {
@@ -536,7 +545,7 @@ router.get('/firewall-rules', async (req, res) => {
         .filter(Boolean);
     }
 
-    res.json({ role: config.node.role, static_rules: staticRules, postgres_peer_ips: postgresPeerIps });
+    res.json({ role: config.node.role, static_rules: staticRules, postgres_peer_ips: postgresPeerIps, zabbix_servers: zabbixServers });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

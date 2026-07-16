@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.4] - 2026-07-16
+
+### Fixed
+
+- **Zabbix passive checks can actually reach the agent** — the managed ufw never allowed inbound 10050, so the Zabbix server's passive item polls were dropped even with the agent running. `/ha/firewall-rules` now includes the configured monitoring server and `sync-ufw.sh` reconciles a source-restricted `10050/tcp` allow for it exactly like the Postgres peer rules (DNS names resolved per tick; changing or clearing the address removes the old rule).
+
+---
+
 ## [0.11.3] - 2026-07-16
 
 ### Fixed

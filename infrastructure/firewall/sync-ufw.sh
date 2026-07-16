@@ -61,6 +61,41 @@ if [ -n "$DESIRED_PEERS" ]; then
   done <<< "$DESIRED_PEERS"
 fi
 
+# Zabbix agent rules -- same reconcile-exactly approach as the Postgres
+# peers: 10050/tcp is open only to the configured monitoring server
+# (Settings ▸ Monitoring), and changing or clearing the address removes the
+# old rule on the next tick. The setting may be a DNS name; resolve it here
+# each tick (getent) so a monitoring-server IP change heals itself, and so
+# ufw -- which only takes IPs/subnets -- never sees a hostname.
+DESIRED_ZBX=""
+while IFS= read -r addr; do
+  [ -z "$addr" ] && continue
+  ip=$(getent ahostsv4 "$addr" 2>/dev/null | awk '{print $1; exit}')
+  [ -n "$ip" ] && DESIRED_ZBX="${DESIRED_ZBX}${ip}"$'\n'
+done <<< "$(echo "$RESPONSE" | jq -r '.zabbix_servers[]?' 2>/dev/null)"
+DESIRED_ZBX=$(printf '%s' "$DESIRED_ZBX")
+CURRENT_ZBX=$(ufw status | awk '/10050\/tcp/ && !/\(v6\)/ {print $3}' | grep -v '^Anywhere$' || true)
+
+if [ -n "$CURRENT_ZBX" ]; then
+  while IFS= read -r ip; do
+    [ -z "$ip" ] && continue
+    if ! printf '%s\n' "$DESIRED_ZBX" | grep -qx "$ip"; then
+      ufw delete allow from "$ip" to any port 10050 proto tcp >/dev/null 2>&1 || true
+      logger "ClassGuard firewall-sync: removed stale Zabbix server $ip"
+    fi
+  done <<< "$CURRENT_ZBX"
+fi
+
+if [ -n "$DESIRED_ZBX" ]; then
+  while IFS= read -r ip; do
+    [ -z "$ip" ] && continue
+    if ! printf '%s\n' "$CURRENT_ZBX" | grep -qx "$ip"; then
+      ufw allow from "$ip" to any port 10050 proto tcp comment 'Zabbix agent' >/dev/null 2>&1 || true
+      logger "ClassGuard firewall-sync: allowed Zabbix server $ip on 10050"
+    fi
+  done <<< "$DESIRED_ZBX"
+fi
+
 # Enable last, same lockout-safety order as doing this by hand -- only on
 # first run; once active this is a no-op so the watcher's repeated calls
 # don't matter. --force skips the interactive y/n prompt, which would

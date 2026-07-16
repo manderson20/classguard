@@ -25,8 +25,10 @@ Settings ▸ Monitoring. Every cluster node's minutely
 `zabbix-agent2`, deploys the UserParameters, grants the groups below, and
 points the agent at your server — each node registers under its own node ID.
 The setting replicates cluster-wide, so future nodes and fresh installs
-(`install.sh` Step 8e) converge with zero manual steps. Clearing the setting
-stops managing the agent (it's left installed but untouched).
+(`install.sh` Step 8e) converge with zero manual steps. The managed firewall
+opens 10050/tcp **to the configured server only** (reconciled every tick, so
+changing the address moves the rule). Clearing the setting stops managing
+the agent (it's left installed but untouched) and removes the firewall rule.
 
 **Manual (standalone / official repo):**
 
