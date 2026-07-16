@@ -74,7 +74,7 @@ function generateKeepalived(cfg, nodeRow) {
     scripts.push({
       name: 'check_classguard_api',
       block: `vrrp_script check_classguard_api {
-    script "curl -sf http://localhost:3001/health -o /dev/null"
+    script "/usr/bin/curl -sf http://localhost:3001/health -o /dev/null"
     interval 2
     weight   -60    # drop priority by 60 if the ClassGuard API is unreachable → triggers failover
     rise     2
@@ -86,7 +86,13 @@ function generateKeepalived(cfg, nodeRow) {
     scripts.push({
       name: 'check_freeradius',
       block: `vrrp_script check_freeradius {
-    script "pidof freeradius"
+    # NOT pidof: on Ubuntu pidof is a symlink to killall5, and under
+    # enable_script_security keepalived execs it in a way that reaches
+    # killall5 without pidof's argv[0] — it prints usage and exits non-zero
+    # on every run, permanently docking this script's weight on a healthy
+    # node (observed as three weeks of killall5 spam in the journal and
+    # both nodes running 60 below their configured priority).
+    script "/usr/bin/systemctl is-active --quiet freeradius"
     interval 2
     weight   -60    # drop priority by 60 if FreeRADIUS is down → triggers failover
     rise     2

@@ -12,6 +12,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.1] - 2026-07-16
+
+### Fixed
+
+- **HA: the FreeRADIUS health check never passed** — the generated keepalived config used `script "pidof freeradius"`, but Ubuntu's `pidof` is a symlink to `killall5`, which under keepalived's `enable_script_security` exec path runs without pidof's argv[0], prints usage, and exits non-zero on every invocation. Both nodes ran 60 below their configured VRRP priority for weeks (and a node whose check never succeeds since keepalived start can sit in FAULT — no failover protection). The check is now `/usr/bin/systemctl is-active --quiet freeradius`; `curl` in the API check is fully qualified for the same reason.
+- **HA: config changes no longer bounce the VIP** — `sync-keepalived.sh` now applies config changes with `systemctl reload` (SIGHUP) instead of `restart`; a restart on the current MASTER surrendered the VIP during the daemon gap, and `nopreempt` meant it never came back without an admin promote. Falls back to restart only if reload fails.
+
+---
+
 ## [0.11.0] - 2026-07-16
 
 ### Added
