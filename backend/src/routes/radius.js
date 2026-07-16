@@ -71,6 +71,29 @@ function attr(body, key) {
 // FreeRADIUS rlm_rest hooks
 // ---------------------------------------------------------------------------
 
+// A district's previous RADIUS server may have matched users by bare
+// username — classic FreeRADIUS+Google-LDAP setups search (uid=<name>) — so
+// devices that joined under it have credentials saved WITHOUT the @domain
+// part, and those saved credentials arrive here verbatim after the SSID is
+// repointed. Resolve a bare name against the synced users table to the
+// account's canonical email so policies, the LDAP (mail=) search, and the
+// auth log all see one identity. Exactly one active match resolves; two
+// accounts sharing a local part across domains (staff vs students) is
+// ambiguous and must be rejected rather than guessed. No match passes the
+// original name through so evaluateUserPolicy produces its normal
+// "user not found" reject.
+async function resolveBareUsername(username) {
+  if (!username || username.includes('@')) return { username };
+  const { rows } = await pool.query(
+    `SELECT email FROM users
+     WHERE lower(split_part(email, '@', 1)) = lower($1) AND is_active = true`,
+    [username]
+  );
+  if (rows.length === 1) return { username: rows[0].email };
+  if (rows.length > 1)  return { username, ambiguous: true };
+  return { username };
+}
+
 // Evaluate Wi-Fi policies for a user on an SSID → { allowed, reason?, vlan? }.
 // Runs in BOTH /authorize and /authenticate: the EAP-TTLS/GTC flow (what a
 // profile-less iPhone does) reaches /authenticate via the eap module without
@@ -198,14 +221,21 @@ router.post('/authorize', radiusSecret, async (req, res) => {
 
     // -- EAP user auth: look up user, set Auth-Type so FreeRADIUS calls /authenticate --
     if (username && !isMab) {
+      const resolved = await resolveBareUsername(username);
+      const authUser = resolved.username;
       const logReject = (reason) => pool.query(
         `INSERT INTO radius_auth_log
            (username, mac_address, nas_ip, ssid, result, reject_reason, auth_type)
          VALUES ($1,$2,$3,$4,'rejected',$5,'eap-ttls')`,
-        [username, parseMac(callingId), nasIp, ssid, reason]
+        [authUser, parseMac(callingId), nasIp, ssid, reason]
       ).catch(() => {}); // logging failure shouldn't block the reject response
 
-      const policy = await evaluateUserPolicy(username, ssid);
+      if (resolved.ambiguous) {
+        await logReject('ambiguous username — use the full email address');
+        return res.json(radiusReject('ambiguous username — use the full email address'));
+      }
+
+      const policy = await evaluateUserPolicy(authUser, ssid);
       if (!policy.allowed) {
         await logReject(policy.reason);
         return res.json(radiusReject(policy.reason));
@@ -241,9 +271,13 @@ router.post('/authenticate', radiusSecret, async (req, res) => {
     // flow (profile-less iPhones) arrives via the inner-tunnel eap module,
     // which never runs the REST /authorize policy pass. For the TTLS/PAP
     // flow this repeats /authorize's verdict — same answer, no harm.
-    const policy = await evaluateUserPolicy(username || '', ssid);
+    const resolved = await resolveBareUsername(username || '');
+    const authUser = resolved.username;
+    const policy = resolved.ambiguous
+      ? { allowed: false, reason: 'ambiguous username — use the full email address' }
+      : await evaluateUserPolicy(authUser, ssid);
     const result = policy.allowed
-      ? await radiusLdap.authenticateUser(username, password)
+      ? await radiusLdap.authenticateUser(authUser, password)
       : { ok: false, reason: policy.reason };
     const vlan = result.ok ? (policy.vlan ?? vlanHint ?? null) : null;
 
@@ -251,7 +285,7 @@ router.post('/authenticate', radiusSecret, async (req, res) => {
       `INSERT INTO radius_auth_log
          (username, mac_address, nas_ip, ssid, result, reject_reason, auth_type, vlan_assigned)
        VALUES ($1,$2,$3,$4,$5,$6,'eap-ttls',$7)`,
-      [username, mac, nasIp, ssid,
+      [authUser, mac, nasIp, ssid,
        result.ok ? 'accepted' : 'rejected',
        result.ok ? null : result.reason,
        vlan]
