@@ -66,8 +66,21 @@ fi
 systemctl is-enabled --quiet keepalived 2>/dev/null || systemctl enable keepalived >/dev/null 2>&1 || true
 
 if [ "$NEEDS_RESTART" = "true" ]; then
-  systemctl restart keepalived
-  logger "ClassGuard keepalived-sync: applied config change, restarted keepalived"
+  if systemctl is-active --quiet keepalived 2>/dev/null; then
+    # Reload (SIGHUP), not restart: a restart on the current MASTER
+    # surrenders the VIP during the daemon gap, and with nopreempt it
+    # never comes back on its own. Reload re-reads the config and
+    # re-initializes tracked scripts while keeping VRRP state.
+    if systemctl reload keepalived 2>/dev/null; then
+      logger "ClassGuard keepalived-sync: applied config change, reloaded keepalived"
+    else
+      systemctl restart keepalived
+      logger "ClassGuard keepalived-sync: reload failed, restarted keepalived"
+    fi
+  else
+    systemctl start keepalived
+    logger "ClassGuard keepalived-sync: applied config change, started keepalived"
+  fi
 elif ! systemctl is-active --quiet keepalived 2>/dev/null; then
   systemctl start keepalived
   logger "ClassGuard keepalived-sync: started keepalived (was not running)"
