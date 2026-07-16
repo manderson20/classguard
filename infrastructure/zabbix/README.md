@@ -34,8 +34,9 @@ stops managing the agent (it's left installed but untouched).
 sudo ./install-zabbix-agent2.sh --server <zabbix-server-ip> --hostname <node-name>
 ```
 
-Installs Ubuntu's `zabbix-agent2` (6.0 — works against any 6.0+ server; pass
-`--official-repo` for 7.0 LTS from repo.zabbix.com), drops
+Installs `zabbix-agent2` from repo.zabbix.com's 6.0 LTS channel (Ubuntu 24.04
+ships no zabbix packages; a 6.0 agent works against any 6.0+ server — pass
+`--official-repo` for the 7.0 channel only if your server is 7.x), drops
 `zabbix_agent2_classguard.conf` into `/etc/zabbix/zabbix_agent2.d/`, and adds
 the `zabbix` user to the groups the checks need:
 

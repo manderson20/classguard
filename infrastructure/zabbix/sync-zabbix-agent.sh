@@ -21,6 +21,24 @@ ZBX_HOSTNAME=$(echo "$RESPONSE" | jq -r '.hostname')
 if [ -z "$ZBX_SERVER" ] || [ "$ZBX_SERVER" = "null" ]; then exit 0; fi
 
 if ! command -v zabbix_agent2 >/dev/null 2>&1; then
+  # Ubuntu 24.04 ships no zabbix packages at all — the agent comes from the
+  # official repo.zabbix.com 6.0 LTS channel. A 6.0 agent is supported by
+  # every Zabbix server >= 6.0, so this can never outrun the site's server
+  # version the way a 7.x agent could.
+  if ! apt-cache show zabbix-agent2 >/dev/null 2>&1; then
+    . /etc/os-release
+    RELEASE_DEB="zabbix-release_latest_6.0+ubuntu${VERSION_ID}_all.deb"
+    TMP_DEB=$(mktemp --suffix=.deb)
+    if curl -fsSL -o "$TMP_DEB" "https://repo.zabbix.com/zabbix/6.0/ubuntu/pool/main/z/zabbix-release/$RELEASE_DEB"; then
+      dpkg -i "$TMP_DEB" >/dev/null 2>&1 || true
+      logger "ClassGuard zabbix-sync: added repo.zabbix.com 6.0 apt source"
+    else
+      logger "ClassGuard zabbix-sync: failed to fetch $RELEASE_DEB, will retry next tick"
+      rm -f "$TMP_DEB"
+      exit 0
+    fi
+    rm -f "$TMP_DEB"
+  fi
   apt-get update -qq || true
   if ! DEBIAN_FRONTEND=noninteractive apt-get install -y zabbix-agent2 >/dev/null 2>&1; then
     logger "ClassGuard zabbix-sync: zabbix-agent2 install failed, will retry next tick"
