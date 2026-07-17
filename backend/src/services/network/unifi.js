@@ -247,6 +247,45 @@ async function updateWlan(config, id, patch) {
 }
 
 /**
+ * Fetch the site's configured networks (VLANs) — name, VLAN id, subnet,
+ * DHCP settings. Informational: backs the VLAN-details popover in the UI.
+ */
+async function fetchNetworks(config) {
+  const { base_url, site_id = 'default' } = config;
+
+  return withSession(config, async ({ cookies, isOs }, agent) => {
+    const apiBase = isOs ? '/proxy/network' : '';
+    const res     = await request(
+      base_url,
+      `${apiBase}/api/s/${site_id}/rest/networkconf`,
+      'GET',
+      null,
+      cookies,
+      agent
+    );
+
+    const raw = res.data?.data || [];
+    return raw
+      .filter(n => (n.purpose || '') !== 'wan')
+      .map(n => ({
+        id:           n._id,
+        name:         n.name || null,
+        // The untagged default LAN carries no vlan field; vlan-only (L2)
+        // networks carry vlan but often no subnet.
+        vlan:         n.vlan != null ? Number(n.vlan) : null,
+        purpose:      n.purpose || null,
+        subnet:       n.ip_subnet || null,
+        domain_name:  n.domain_name || null,
+        dhcp_enabled: !!n.dhcpd_enabled,
+        dhcp_start:   n.dhcpd_start || null,
+        dhcp_stop:    n.dhcpd_stop || null,
+        dhcp_dns:     [n.dhcpd_dns_1, n.dhcpd_dns_2, n.dhcpd_dns_3, n.dhcpd_dns_4].filter(Boolean),
+        enabled:      n.enabled !== false,
+      }));
+  });
+}
+
+/**
  * Test connectivity and auth — returns site list on success.
  */
 async function testConnection(config) {
@@ -260,7 +299,7 @@ async function testConnection(config) {
 }
 
 module.exports = {
-  fetchClients, fetchDevices, testConnection,
+  fetchClients, fetchDevices, fetchNetworks, testConnection,
   fetchRadiusProfiles, createRadiusProfile, updateRadiusProfile,
   fetchWlans, updateWlan,
   vendor: 'unifi',
