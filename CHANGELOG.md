@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.8] - 2026-07-17
+
+### Fixed
+
+- **Switch names resolve for uplinks the device list can't** — some wired clients report a per-port interface MAC as their switch (`sw_mac`) that appears nowhere on the controller's device list, so the 0.11.7 name lookup fell back to the MAC. The controller resolves those uplinks itself in `last_uplink_name`; the sync now uses it (only when `last_uplink_mac` confirms it refers to the same uplink), closing the remaining gap.
+
+---
+
 ## [0.11.7] - 2026-07-17
 
 ### Fixed
