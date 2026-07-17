@@ -141,9 +141,15 @@ async function fetchClients(config) {
       radio_type:      c.radio_proto || null,
       // Same story for wired clients' switch: stat/sta carries sw_mac and
       // only rarely sw_name. Surface the MAC separately so the caller can
-      // resolve the real switch name from fetchDevices().
+      // resolve the real switch name from fetchDevices(). Some sw_macs are
+      // per-port interface MACs that appear nowhere on the device list (not
+      // even in ethernet_table) — but the controller resolves those itself
+      // in last_uplink_name, trusted here only when last_uplink_mac matches.
       switch_mac:      c.sw_mac ? c.sw_mac.toLowerCase() : null,
-      switch_name:     c['sw_name'] || null,
+      switch_name:     c['sw_name']
+        || (c.sw_mac && c.last_uplink_name
+            && (c.last_uplink_mac || '').toLowerCase() === c.sw_mac.toLowerCase()
+              ? c.last_uplink_name : null),
       switch_port:     c.sw_port != null ? String(c.sw_port) : null,
       vlan:            c.vlan_id || c.vlan || null,
       connection_type: c.is_wired ? 'wired' : 'wireless',
