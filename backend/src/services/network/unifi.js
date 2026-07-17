@@ -139,7 +139,11 @@ async function fetchClients(config) {
       rssi:            c.rssi   != null ? c.rssi   : null,
       channel:         c.channel != null ? c.channel : null,
       radio_type:      c.radio_proto || null,
-      switch_name:     c.sw_mac ? (c['sw_name'] || c.sw_mac) : null,
+      // Same story for wired clients' switch: stat/sta carries sw_mac and
+      // only rarely sw_name. Surface the MAC separately so the caller can
+      // resolve the real switch name from fetchDevices().
+      switch_mac:      c.sw_mac ? c.sw_mac.toLowerCase() : null,
+      switch_name:     c['sw_name'] || null,
       switch_port:     c.sw_port != null ? String(c.sw_port) : null,
       vlan:            c.vlan_id || c.vlan || null,
       connection_type: c.is_wired ? 'wired' : 'wireless',
