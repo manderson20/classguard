@@ -17,7 +17,8 @@
  *   Item type:  HTTP agent
  *   URL:        https://<node-ip-or-vip>/metrics
  *   Headers:    X-Metrics-Token: <token from Integrations ▸ Zabbix>
- *   Output format: JSON
+ *   Preprocessing: JSONPath $.<metric key> (leave "Convert to JSON" off —
+ *   it wraps the body in {header,body} and breaks the JSONPath)
  *
  * Each metric key matches a Zabbix item key you create on the host.
  */
@@ -315,47 +316,50 @@ router.get('/', metricsLimiter, metricsAuth, async (req, res) => {
 // null on a healthy install (e.g. standalone, or a fresh node before
 // keepalived's first notify), and sniffing off a momentary null would emit
 // the wrong value_type for what is normally a number or always a string.
-// 0=float, 1=character, 3=unsigned, 4=text.
+// Zabbix 6.0 import requires the named constants, not the numeric codes.
 const KNOWN_VALUE_TYPES = {
-  vrrp_state:        '4',
-  ha_role:           '4',
-  failover_priority: '3',
-  is_vrrp_master:    '3',
-  ha_configured:     '3',
-  ntp_min_stratum:   '3',
-  ntp_synced:        '3',
-  dhcp_kea_reachable: '3',
-  app_version:       '4',
-  tls_cert_enabled:  '3',
-  tls_cert_days_remaining:  '0', // float; null until a cert is issued
-  db_replication_lag_bytes: '3', // null on the primary, a number on standbys
+  vrrp_state:        'TEXT',
+  ha_role:           'TEXT',
+  failover_priority: 'UNSIGNED',
+  is_vrrp_master:    'UNSIGNED',
+  ha_configured:     'UNSIGNED',
+  ntp_min_stratum:   'UNSIGNED',
+  ntp_synced:        'UNSIGNED',
+  dhcp_kea_reachable: 'UNSIGNED',
+  app_version:       'TEXT',
+  tls_cert_enabled:  'UNSIGNED',
+  tls_cert_days_remaining:  'FLOAT', // null until a cert is issued
+  db_replication_lag_bytes: 'UNSIGNED', // null on the primary, a number on standbys
 };
 
 function zabbixValueType(key, value) {
   if (KNOWN_VALUE_TYPES[key]) return KNOWN_VALUE_TYPES[key];
-  if (typeof value === 'string' || value === null) return '4';
-  if (typeof value === 'number' && !Number.isInteger(value)) return '0';
-  return '3';
+  if (typeof value === 'string' || value === null) return 'TEXT';
+  if (typeof value === 'number' && !Number.isInteger(value)) return 'FLOAT';
+  return 'UNSIGNED';
 }
 
+// Zabbix import (5.4+ schema) accepts only the named constants and rejects
+// unknown tags outright, so every tag here must exist in the 6.0 host
+// schema. Response stays RAW (the endpoint already returns JSON) so the
+// JSONPath preprocessing runs against the body directly.
 function buildItemsXml(keys, metrics, url, token) {
   return keys.map(k => `
     <item>
       <name>ClassGuard: ${xmlEscape(k.replace(/_/g, ' '))}</name>
-      <type>19</type><!-- HTTP agent -->
+      <type>HTTP_AGENT</type>
       <key>classguard.${xmlEscape(k)}</key>
       <url>${xmlEscape(url)}</url>
       <headers>
         <header><name>X-Metrics-Token</name><value>${xmlEscape(token)}</value></header>
       </headers>
-      <posts/>
       <status_codes>200</status_codes>
-      <json_output>1</json_output>
-      <output_format>3</output_format>
       <preprocessing>
         <step>
-          <type>12</type><!-- JSONPath -->
-          <params>$.${xmlEscape(k)}</params>
+          <type>JSONPATH</type>
+          <parameters>
+            <parameter>$.${xmlEscape(k)}</parameter>
+          </parameters>
         </step>
       </preprocessing>
       <value_type>${zabbixValueType(k, metrics[k])}</value_type>
@@ -363,11 +367,28 @@ function buildItemsXml(keys, metrics, url, token) {
     </item>`).join('\n');
 }
 
+// Every imported host must belong to at least one host group; the group
+// itself must be declared at the export root with a UUID. Derive a stable
+// UUIDv4-shaped id from the group name so re-imports match the same group
+// instead of colliding on a random one.
+const HOST_GROUP = 'ClassGuard';
+function hostGroupUuid() {
+  const hex = require('crypto').createHash('md5').update(`classguard-zabbix-group:${HOST_GROUP}`).digest('hex').split('');
+  hex[12] = '4';                                        // UUID version nibble
+  hex[16] = (8 + (parseInt(hex[16], 16) & 3)).toString(16); // variant nibble
+  return hex.join('');
+}
+
 function hostXml(techName, displayName, itemsXml) {
   return `
     <host>
       <host>${xmlEscape(techName)}</host>
       <name>${xmlEscape(displayName)}</name>
+      <groups>
+        <group>
+          <name>${xmlEscape(HOST_GROUP)}</name>
+        </group>
+      </groups>
       <items>${itemsXml}
       </items>
     </host>`;
@@ -460,7 +481,7 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
     <trigger>
       <expression>change(/${t.techName}/classguard.is_vrrp_master)&lt;&gt;0</expression>
       <name>ClassGuard: ${t.shortName} VRRP role changed (failover event)</name>
-      <priority>3</priority><!-- average -->
+      <priority>AVERAGE</priority>
     </trigger>`);
   // Disk/CPU thresholds -- skipped if the metric came back null (df failed,
   // e.g. on a filesystem type df couldn't read) rather than emitting a
@@ -470,14 +491,14 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
     <trigger>
       <expression>last(/${t.techName}/classguard.os_disk_used_pct)&gt;90</expression>
       <name>ClassGuard: ${t.shortName} disk usage above 90%</name>
-      <priority>4</priority><!-- high -->
+      <priority>HIGH</priority>
     </trigger>`));
   }
   nodeTargets.forEach(t => triggers.push(`
     <trigger>
       <expression>min(/${t.techName}/classguard.os_cpu_load_pct,5m)&gt;90</expression>
       <name>ClassGuard: ${t.shortName} CPU load above 90% for 5+ minutes</name>
-      <priority>3</priority><!-- average -->
+      <priority>AVERAGE</priority>
     </trigger>`));
   if (nodeTargets.length >= 2) {
     const sumExpr = nodeTargets.map(t => `last(/${t.techName}/classguard.is_vrrp_master)`).join('+');
@@ -485,7 +506,7 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
     <trigger>
       <expression>(${sumExpr})&gt;1</expression>
       <name>ClassGuard: split-brain — more than one node reports MASTER</name>
-      <priority>4</priority><!-- high -->
+      <priority>HIGH</priority>
     </trigger>`);
     // Peer-offline check goes on every node: when one node dies, its own
     // trigger can't fire (no data) but each surviving node reports
@@ -494,7 +515,7 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
     <trigger>
       <expression>max(/${t.techName}/classguard.ha_nodes_online,5m)&lt;last(/${t.techName}/classguard.ha_nodes_total)</expression>
       <name>ClassGuard: ${t.shortName} reports a cluster peer offline</name>
-      <priority>4</priority><!-- high -->
+      <priority>HIGH</priority>
     </trigger>`));
   }
   // Cluster-wide values (replicated tables — every node reports the same
@@ -509,20 +530,26 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
     <trigger>
       <expression>last(/${clusterTarget.techName}/classguard.tls_cert_days_remaining)&lt;14</expression>
       <name>ClassGuard: TLS/EAP certificate expires in under 14 days</name>
-      <priority>4</priority><!-- high -->
+      <priority>HIGH</priority>
     </trigger>`);
   }
   triggers.push(`
     <trigger>
       <expression>min(/${clusterTarget.techName}/classguard.radius_auth_rejects_5m,15m)&gt;20</expression>
       <name>ClassGuard: sustained RADIUS rejects (&gt;20 per 5m for 15m)</name>
-      <priority>3</priority><!-- average -->
+      <priority>AVERAGE</priority>
     </trigger>`);
   const triggersXml = triggers.length ? `\n  <triggers>${triggers.join('\n')}\n  </triggers>` : '';
 
   const xml = `<?xml version="1.0" encoding="UTF-8"?>
 <zabbix_export>
   <version>6.0</version>
+  <groups>
+    <group>
+      <uuid>${hostGroupUuid()}</uuid>
+      <name>${xmlEscape(HOST_GROUP)}</name>
+    </group>
+  </groups>
   <hosts>${hostsXml}
   </hosts>${triggersXml}
 </zabbix_export>`;
