@@ -96,7 +96,9 @@ export default function Login() {
 
         {oauthError && (
           <div className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 text-center">
-            {oauthError === 'insufficient_role' ? 'Your account does not have access.' : oauthError}
+            {oauthError === 'insufficient_role' ? 'Your account does not have access.'
+              : oauthError === 'session_expired' ? 'Your session has expired — please sign in again. Anything you were in the middle of saving was not saved.'
+              : oauthError}
           </div>
         )}
 

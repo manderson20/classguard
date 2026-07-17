@@ -15,13 +15,18 @@ async function apiFetch(path, options = {}) {
     body: isFormData ? options.body : options.body !== undefined ? JSON.stringify(options.body) : undefined,
   });
 
-  if (res.status === 401) {
+  // A 401 from a credential submission means "wrong credentials" and belongs
+  // to the caller's own error handling; a 401 from anything else means the
+  // session died. Handled with a redirect rather than alert() — a blocking
+  // dialog in this wrapper freezes the page mid-redirect (and a queued pile
+  // of them from parallel requests can wedge navigation outright). The login
+  // page shows the expired-session message via the query param instead.
+  const isCredentialSubmit = path.startsWith('/auth/login') || path.startsWith('/auth/google');
+  if (res.status === 401 && !isCredentialSubmit) {
     localStorage.removeItem('cg_token');
-    // Surface this before navigating away — otherwise a session expiring
-    // mid-action (e.g. saving integration settings) looks like nothing
-    // happened at all, since the page unloads before any catch block runs.
-    alert('Your session has expired. Please log in again — anything you just tried to save was not saved.');
-    window.location.href = '/login';
+    if (window.location.pathname !== '/login') {
+      window.location.replace('/login?error=session_expired');
+    }
     throw new Error('Session expired');
   }
 
@@ -37,7 +42,7 @@ async function apiFetch(path, options = {}) {
 }
 
 export const api = {
-  get:    (path)        => apiFetch(path),
+  get:    (path, opts)  => apiFetch(path, opts),
   post:   (path, body)  => apiFetch(path, { method: 'POST',   body }),
   patch:  (path, body)  => apiFetch(path, { method: 'PATCH',  body }),
   put:    (path, body)  => apiFetch(path, { method: 'PUT',    body }),
