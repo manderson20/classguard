@@ -23,8 +23,10 @@ export function AuthProvider({ children }) {
     if (token) {
       const payload = decodeJWT(token);
       if (payload) {
-        // Fetch full user profile from backend
-        api.get('/auth/me')
+        // Fetch full user profile from backend. Bounded — a stalled request
+        // here (waking laptop, dead Wi-Fi) otherwise pins the route guard on
+        // "Loading…" forever with no way back to the login screen.
+        api.get('/auth/me', { signal: AbortSignal.timeout(15000) })
           .then(setUser)
           .catch(() => { localStorage.removeItem('cg_token'); })
           .finally(() => setLoading(false));

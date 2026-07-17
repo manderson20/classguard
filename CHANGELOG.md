@@ -12,6 +12,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.6] - 2026-07-17
+
+### Fixed
+
+- **Session expiry no longer freezes the page** — an expired session used to fire a blocking `alert()` from the API wrapper before redirecting; until dismissed the page just sat there, and a pile of dialogs from parallel requests could wedge navigation entirely. Expired sessions now redirect straight to the login page, which shows the "session expired — unsaved changes were not saved" notice as a banner instead.
+- **Wrong password shows the right error** — a failed username/password login (HTTP 401) was misclassified as an expired session, popping the session-expired alert and reloading the page instead of showing "Invalid email or password" inline.
+- **Auth check can no longer hang the app on "Loading…"** — the profile fetch that runs on every page load is now bounded (15 s); if it stalls (waking laptop, dropped Wi-Fi), the app falls back to the login screen instead of spinning forever.
+
+---
+
 ## [0.11.5] - 2026-07-16
 
 ### Changed
