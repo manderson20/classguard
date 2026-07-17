@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.7] - 2026-07-17
+
+### Fixed
+
+- **Wired clients show their switch name** — hardwired devices displayed a raw MAC address where wireless devices showed the access-point name. The UniFi client API only reports the switch's MAC (`sw_mac`); the sync now cross-references it against the controller's device list — the same resolution APs already got — so the Clients table and device detail page show the switch's real name (with port) for wired connections.
+
+---
+
 ## [0.11.6] - 2026-07-17
 
 ### Fixed
