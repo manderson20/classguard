@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.10] - 2026-07-17
+
+### Fixed
+
+- **Zabbix template import** — the generated monitoring template (Integrations ▸ Zabbix) now conforms to the Zabbix 6.0 import schema: named constants instead of numeric codes for item type, preprocessing step type, value types, and trigger priorities; JSONPath parameters in the `<parameters>` list form; and a required host group (`ClassGuard`, stable UUID) declared at the export root and attached to every host. Previous exports were rejected by the Zabbix import validator.
+
+---
+
 ## [0.11.9] - 2026-07-17
 
 ### Added
