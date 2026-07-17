@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
+import VlanInfoModal from '../../components/VlanInfoModal';
 
 const INPUT  = 'border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500 w-full';
 const VENDORS = ['unifi','meraki','aruba','ruckus'];
@@ -217,6 +218,7 @@ function ClientsTab() {
   const [ctrlFilter, setCtrl] = useState('');
   const [typeFilter, setType] = useState('');
   const [apFilter]             = useState('');
+  const [vlanInfo, setVlanInfo] = useState(null); // { vlan, controller_id }
 
   const { data: resp } = useQuery({
     queryKey: ['network-clients', search, ctrlFilter, typeFilter, apFilter],
@@ -281,7 +283,12 @@ function ClientsTab() {
                 <td className="px-3 py-2 text-xs text-slate-700">{c.hostname||'—'}</td>
                 <td className="px-3 py-2 text-xs text-slate-600">{c.ap_name||c.switch_name||'—'}</td>
                 <td className="px-3 py-2 text-xs text-slate-500">{c.ssid||c.switch_port||'—'}</td>
-                <td className="px-3 py-2 text-xs text-slate-500">{c.vlan||'—'}</td>
+                <td className="px-3 py-2 text-xs">
+                  {c.vlan
+                    ? <button onClick={()=>setVlanInfo({ vlan: c.vlan, controller_id: c.controller_id })}
+                        className="text-primary-600 hover:underline">{c.vlan}</button>
+                    : <span className="text-slate-500">—</span>}
+                </td>
                 <td className="px-3 py-2">{rssiBar(c.rssi)}</td>
                 <td className="px-3 py-2">
                   <span className={`px-2 py-0.5 rounded text-xs ${c.connection_type==='wireless'?'bg-blue-100 text-blue-700':'bg-slate-100 text-slate-600'}`}>
@@ -299,6 +306,9 @@ function ClientsTab() {
           </tbody>
         </table>
       </div>
+      {vlanInfo && (
+        <VlanInfoModal vlan={vlanInfo.vlan} controllerId={vlanInfo.controller_id} onClose={()=>setVlanInfo(null)} />
+      )}
     </div>
   );
 }

@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.11.9] - 2026-07-17
+
+### Added
+
+- **Clickable VLAN details** — the VLAN number on the Network ▸ Clients table and the device detail page now opens a popover showing that VLAN's configuration as defined on the controller: network name, purpose, subnet, domain, and DHCP range/DNS. Fetched live from the controller (new `GET /network/controllers/:id/networks`), so it always reflects current config. UniFi controllers only for now; other vendors get a clear "not supported" message.
+
+---
+
 ## [0.11.8] - 2026-07-17
 
 ### Fixed

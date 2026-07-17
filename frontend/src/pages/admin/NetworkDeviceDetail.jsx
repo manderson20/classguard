@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import api from '../../lib/api';
+import VlanInfoModal from '../../components/VlanInfoModal';
 
 const ACTION_COLORS = {
   allowed: 'text-green-600',
@@ -18,6 +20,7 @@ function Row({ label, value }) {
 
 export default function NetworkDeviceDetail() {
   const { mac } = useParams();
+  const [showVlanInfo, setShowVlanInfo] = useState(false);
 
   const { data, isLoading } = useQuery({
     queryKey: ['network-device', mac],
@@ -73,7 +76,12 @@ export default function NetworkDeviceDetail() {
                     <Row label="Port"        value={network.switch_port} />
                   </>
                 )}
-                <Row label="VLAN"            value={network.vlan} />
+                <Row label="VLAN" value={network.vlan
+                  ? <button onClick={()=>setShowVlanInfo(true)} className="text-primary-600 hover:underline">{network.vlan}</button>
+                  : null} />
+                {showVlanInfo && (
+                  <VlanInfoModal vlan={network.vlan} controllerId={network.controller_id} onClose={()=>setShowVlanInfo(false)} />
+                )}
                 <Row label="OS"              value={network.os_type} />
                 <Row label="Vendor (OUI)"    value={network.vendor_oui} />
                 <Row label="Controller"      value={network.controller_name} />

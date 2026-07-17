@@ -84,6 +84,22 @@ router.post('/controllers/:id/test', ...auth, async (req, res) => {
   } catch (err) { res.status(502).json({ error: err.message }); }
 });
 
+// GET /api/v1/network/controllers/:id/networks — live list of the
+// controller's configured networks/VLANs (name, subnet, DHCP). Fetched on
+// demand rather than synced: it backs an informational popover and should
+// always show the controller's current config.
+router.get('/controllers/:id/networks', ...auth, async (req, res) => {
+  try {
+    const { rows } = await pool.query('SELECT * FROM network_controllers WHERE id = $1', [req.params.id]);
+    if (!rows.length) return res.status(404).json({ error: 'Controller not found' });
+    const adapter = getAdapter(rows[0].vendor);
+    if (!adapter.fetchNetworks) {
+      return res.status(400).json({ error: `Network listing is not supported for ${rows[0].vendor} controllers` });
+    }
+    res.json(await adapter.fetchNetworks(rows[0]));
+  } catch (err) { res.status(502).json({ error: err.message }); }
+});
+
 // POST /api/v1/network/controllers/:id/sync  — sync clients from one controller
 router.post('/controllers/:id/sync', ...auth, async (req, res) => {
   res.json({ status: 'started' });
