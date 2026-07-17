@@ -2,7 +2,7 @@
 # Reconciles the Zabbix agent 2 install on this node — same pattern as
 # sync-freeradius.sh / sync-keepalived.sh: run every minute by the
 # update-watcher (and once during install.sh), no-ops entirely unless an
-# admin has set a Zabbix server address (Settings ▸ Monitoring). Because the
+# admin has set a Zabbix server address (Integrations ▸ Zabbix). Because the
 # setting replicates cluster-wide, every node — including a fresh install or
 # a newly joined HA peer — converges to a configured, running agent without
 # anyone logging in and running an installer by hand.

@@ -12,7 +12,11 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
-## [Unreleased]
+## [0.11.5] - 2026-07-16
+
+### Changed
+
+- **Zabbix moved to Integrations** — the Zabbix monitoring setup (metrics token, server address for agent auto-install, per-node endpoint URLs, template download) now lives in **Integrations ▸ Zabbix** alongside the other external systems, with a summary card on the Integrations overview. The Settings ▸ Monitoring tab is gone.
 
 ### Fixed
 

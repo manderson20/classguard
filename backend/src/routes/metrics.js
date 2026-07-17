@@ -16,7 +16,7 @@
  * Manual Zabbix configuration (if not using the generated template):
  *   Item type:  HTTP agent
  *   URL:        https://<node-ip-or-vip>/metrics
- *   Headers:    X-Metrics-Token: <token from Settings ▸ Monitoring>
+ *   Headers:    X-Metrics-Token: <token from Integrations ▸ Zabbix>
  *   Output format: JSON
  *
  * Each metric key matches a Zabbix item key you create on the host.

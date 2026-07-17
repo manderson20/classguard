@@ -2418,7 +2418,114 @@ function ApiTokensSection() {
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Overview','All Devices','Google Workspace','Mosyle','Snipe-IT','Zammad','Infosec IQ','API Tokens','IPAM Import'];
+// ---------------------------------------------------------------------------
+// Zabbix monitoring
+// ---------------------------------------------------------------------------
+function ZabbixSection() {
+  const { data: settings = {} } = useQuery({
+    queryKey: ['app-settings'],
+    queryFn:  () => api.get('/settings').catch(() => ({})),
+  });
+
+  // Each node + the VIP get their own metrics URL, since polling only the
+  // VIP can never reveal a failover (it always resolves to whichever node
+  // currently holds MASTER).
+  const { data: haNodes = [] } = useQuery({
+    queryKey: ['settings-ha-nodes'],
+    queryFn:  () => api.get('/ha/nodes').catch(() => []),
+  });
+  const { data: haVrrp = {} } = useQuery({
+    queryKey: ['settings-ha-vrrp'],
+    queryFn:  () => api.get('/ha/vrrp').catch(() => ({})),
+  });
+
+  const [token,  setToken]  = useState('');
+  const [server, setServer] = useState('');
+  const [saved,  setSaved]  = useState(false);
+
+  useEffect(() => {
+    if (settings && Object.keys(settings).length) {
+      setToken(settings.zabbix_metrics_token || '');
+      setServer(settings.zabbix_server_address || '');
+    }
+  }, [settings]);
+
+  async function save() {
+    await api.put('/settings', { zabbix_metrics_token: token, zabbix_server_address: server.trim() });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  }
+
+  return (
+    <div className="flex flex-col gap-4 max-w-3xl">
+      <Card title="Zabbix Monitoring" icon="📈" subtitle="Cluster health, RADIUS, and certificate metrics via Zabbix">
+        <p className="text-sm text-slate-600 mb-4">
+          ClassGuard exposes a <code className="bg-slate-100 px-1 rounded font-mono text-xs">/metrics</code> endpoint
+          that Zabbix polls via HTTP agent items. Add a metrics token to secure the endpoint,
+          then download the host template — it creates one Zabbix host per cluster node
+          <em> plus</em> one for the VIP, since polling only the VIP can never show you a
+          failover (it always answers as whichever node currently holds it).
+        </p>
+        <div className="flex flex-col gap-3">
+          <Field label="Metrics Token (X-Metrics-Token header)" hint="Leave blank to allow unauthenticated requests from localhost only">
+            <input
+              type="password"
+              className={INPUT}
+              value={token}
+              onChange={e => setToken(e.target.value)}
+              placeholder="Set a secret token for Zabbix to use"
+            />
+          </Field>
+          <Field
+            label="Zabbix Server Address (agent auto-install)"
+            hint="When set, every cluster node installs and configures Zabbix agent 2 pointed at this address within a minute — including future nodes and fresh installs. Each node registers under its own node ID; link the agent template from infrastructure/zabbix/ to those hosts. Clear the field to stop managing the agent (it is left installed but untouched)."
+          >
+            <input
+              className={INPUT}
+              value={server}
+              onChange={e => setServer(e.target.value)}
+              placeholder="IP or hostname of your Zabbix server"
+            />
+          </Field>
+        </div>
+        <div className="mt-3 bg-slate-50 rounded-lg p-3 text-xs font-mono text-slate-600 space-y-1">
+          {haNodes.length > 0 ? (
+            <>
+              {haNodes.map(n => (
+                <div key={n.id || n.node_id}>
+                  <span className="text-slate-400">{n.hostname || n.node_id} ({n.ha_role || 'node'}):</span>{' '}
+                  https://{(n.api_url || '').replace(/^https?:\/\//, '')}/metrics
+                  {n.vrrp_state && <span className="ml-2 text-slate-400">[{n.vrrp_state}]</span>}
+                </div>
+              ))}
+              {haVrrp.vip_address && (
+                <div><span className="text-slate-400">VIP (active service):</span> https://{haVrrp.vip_address}/metrics</div>
+              )}
+            </>
+          ) : (
+            <div><span className="text-slate-400">Endpoint URL:</span> {window.location.origin.replace(':5173','').replace(':5174','') || window.location.origin}:3001/metrics</div>
+          )}
+          <div className="pt-1"><span className="text-slate-400">Zabbix item type:</span> HTTP agent</div>
+          <div><span className="text-slate-400">Header:</span> X-Metrics-Token: &lt;your token&gt;</div>
+          <div><span className="text-slate-400">Output format:</span> JSON</div>
+        </div>
+        <div className="flex items-center gap-3 mt-4">
+          <button className="btn-primary text-sm" onClick={save}>Save</button>
+          <a
+            href={`/metrics/zabbix-template?token=${encodeURIComponent(token ?? '')}`}
+            className="btn-secondary text-sm"
+            target="_blank" rel="noreferrer"
+          >
+            Download Zabbix Template XML
+          </a>
+          {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+        </div>
+      </Card>
+    </div>
+  );
+}
+
+const TABS = ['Overview','All Devices','Google Workspace','Mosyle','Snipe-IT','Zammad','Zabbix','Infosec IQ','API Tokens','IPAM Import'];
 
 export default function IntegrationsPage() {
   const [tab, setTab] = useState('Overview');
@@ -2503,6 +2610,9 @@ export default function IntegrationsPage() {
               <ErrorBanner message={status?.infoseciq?.lastError} />
             </div>
           </Card>
+          <Card title="Zabbix Monitoring" icon="📈" subtitle="Cluster health, RADIUS, and certificate metrics">
+            <p className="text-sm text-slate-600">Point your Zabbix server at ClassGuard's metrics endpoint and auto-install the agent on every cluster node.</p>
+          </Card>
           <Card title="IPAM Import" icon="📥" subtitle="One-time import from PHPiPAM">
             <p className="text-sm text-slate-600">Seed ClassGuard IPAM from a PHPiPAM mysqldump export — sections, VLANs, subnets, and IP addresses.</p>
           </Card>
@@ -2514,6 +2624,7 @@ export default function IntegrationsPage() {
       {tab==='Mosyle'             && <MosyleSection status={status}/>}
       {tab==='Snipe-IT'           && <SnipeitSection status={status}/>}
       {tab==='Zammad'             && <ZammadSection status={status}/>}
+      {tab==='Zabbix'             && <ZabbixSection/>}
       {tab==='Infosec IQ'         && <InfosecIqSection/>}
       {tab==='API Tokens'         && <ApiTokensSection/>}
       {tab==='IPAM Import'        && <IpamImportSection/>}

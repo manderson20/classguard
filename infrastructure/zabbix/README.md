@@ -9,7 +9,7 @@ Two complementary layers:
    [`templates/classguard_node_by_agent2.yaml`](templates/classguard_node_by_agent2.yaml).
 2. **Service layer (built into the app)** — the token-gated `/metrics` HTTP
    endpoint and the auto-generated HTTP-agent template from
-   **Settings ▸ Monitoring** (`GET /metrics/zabbix-template`). That template
+   **Integrations ▸ Zabbix** (`GET /metrics/zabbix-template`). That template
    creates one Zabbix host per cluster node **plus one for the VIP**, with
    cluster-level triggers (split-brain, failover, cert expiry) that span both
    nodes — something a per-host template can't express.
@@ -20,7 +20,7 @@ the VIP host and the cross-node triggers.
 ## Install
 
 **Automatic (recommended):** set **Zabbix Server Address** in
-Settings ▸ Monitoring. Every cluster node's minutely
+Integrations ▸ Zabbix. Every cluster node's minutely
 [`sync-zabbix-agent.sh`](sync-zabbix-agent.sh) then installs Ubuntu's
 `zabbix-agent2`, deploys the UserParameters, grants the groups below, and
 points the agent at your server — each node registers under its own node ID.
@@ -60,7 +60,7 @@ the `zabbix` user to the groups the checks need:
 3. Link the template, set `{$CLASSGUARD.VIP}` to your keepalived VIP, then
    enable the *"VRRP role disagrees with actual VIP ownership"* trigger (it
    ships disabled so it can't misfire before the macro is set).
-4. Optionally download the generated template from **Settings ▸ Monitoring**
+4. Optionally download the generated template from **Integrations ▸ Zabbix**
    in the ClassGuard UI and import it too — it adds the VIP host ("is the
    service reachable at all") and the multi-host split-brain trigger.
 5. Recommended: also link Zabbix's stock **Linux by Zabbix agent** template
@@ -98,7 +98,7 @@ Each node is monitored separately and reports its **own** role:
   rewrites the source address of host connections). If you'd rather poll
   over HTTP directly, use an HTTP agent item against
   `https://<node>/metrics` with the `X-Metrics-Token` header from
-  Settings ▸ Monitoring — that's exactly what the generated template does.
+  Integrations ▸ Zabbix — that's exactly what the generated template does.
 - **Agent-down is your dead-node signal.** If a whole node dies, everything
   here goes `nodata` — make sure the stock *Zabbix agent is not available*
   trigger (from the host's agent interface availability) is acted on, plus

@@ -377,7 +377,7 @@ function CommunicationsSection({ appSettings, appLoading, saved, setSaved }) {
   );
 }
 
-const TABS = ['Branding', 'DNS & Retention', 'Monitoring', 'Communications', 'About'];
+const TABS = ['Branding', 'DNS & Retention', 'Communications', 'About'];
 
 export default function SettingsPage() {
   const qc = useQueryClient();
@@ -399,29 +399,8 @@ export default function SettingsPage() {
     queryFn:  () => api.get('/dns/zones'),
   });
 
-  // For the Zabbix Monitoring tab — each node + the VIP get their own
-  // metrics URL, since polling only the VIP can never reveal a failover
-  // (it always resolves to whichever node currently holds MASTER).
-  const { data: haNodes = [] } = useQuery({
-    queryKey: ['settings-ha-nodes'],
-    queryFn:  () => api.get('/ha/nodes').catch(() => []),
-  });
-  const { data: haVrrp = {} } = useQuery({
-    queryKey: ['settings-ha-vrrp'],
-    queryFn:  () => api.get('/ha/vrrp').catch(() => ({})),
-  });
-
   const [dns, setDns]     = useState({});
-  const [zabbixToken,  setZabbixToken]  = useState('');
-  const [zabbixServer, setZabbixServer] = useState('');
   const [saved, setSaved] = useState('');
-
-  useEffect(() => {
-    if (appSettings && Object.keys(appSettings).length) {
-      setZabbixToken(appSettings.zabbix_metrics_token || '');
-      setZabbixServer(appSettings.zabbix_server_address || '');
-    }
-  }, [appSettings]);
 
   useEffect(() => {
     if (dnsSettings && Object.keys(dnsSettings).length) {
@@ -594,78 +573,6 @@ export default function SettingsPage() {
             SELECT alter_data_retention_policy('dns_logs', INTERVAL '90 days');
           </code>
         </p>
-      </Section>
-      </>
-      )}
-
-      {tab === 'Monitoring' && (
-      <>
-      {/* Zabbix monitoring */}
-      <Section title="Zabbix Monitoring">
-        <p className="text-sm text-slate-600 mb-4">
-          ClassGuard exposes a <code className="bg-slate-100 px-1 rounded font-mono text-xs">/metrics</code> endpoint
-          that Zabbix polls via HTTP agent items. Add a metrics token to secure the endpoint,
-          then download the host template — it creates one Zabbix host per cluster node
-          <em> plus</em> one for the VIP, since polling only the VIP can never show you a
-          failover (it always answers as whichever node currently holds it).
-        </p>
-        <Field label="Metrics Token (X-Metrics-Token header)" hint="Leave blank to allow unauthenticated requests from localhost only">
-          <input
-            type="password"
-            className="input"
-            value={zabbixToken}
-            onChange={e => setZabbixToken(e.target.value)}
-            placeholder="Set a secret token for Zabbix to use"
-          />
-        </Field>
-        <Field
-          label="Zabbix Server Address (agent auto-install)"
-          hint="When set, every cluster node installs and configures Zabbix agent 2 pointed at this address within a minute — including future nodes and fresh installs. Each node registers under its own node ID; link the agent template from infrastructure/zabbix/ to those hosts. Clear the field to stop managing the agent (it is left installed but untouched)."
-        >
-          <input
-            className="input"
-            value={zabbixServer}
-            onChange={e => setZabbixServer(e.target.value)}
-            placeholder="IP or hostname of your Zabbix server"
-          />
-        </Field>
-        <div className="mt-3 bg-slate-50 rounded-lg p-3 text-xs font-mono text-slate-600 space-y-1">
-          {haNodes.length > 0 ? (
-            <>
-              {haNodes.map(n => (
-                <div key={n.id || n.node_id}>
-                  <span className="text-slate-400">{n.hostname || n.node_id} ({n.ha_role || 'node'}):</span>{' '}
-                  https://{(n.api_url || '').replace(/^https?:\/\//, '')}/metrics
-                  {n.vrrp_state && <span className="ml-2 text-slate-400">[{n.vrrp_state}]</span>}
-                </div>
-              ))}
-              {haVrrp.vip_address && (
-                <div><span className="text-slate-400">VIP (active service):</span> https://{haVrrp.vip_address}/metrics</div>
-              )}
-            </>
-          ) : (
-            <div><span className="text-slate-400">Endpoint URL:</span> {window.location.origin.replace(':5173','').replace(':5174','') || window.location.origin}:3001/metrics</div>
-          )}
-          <div className="pt-1"><span className="text-slate-400">Zabbix item type:</span> HTTP agent</div>
-          <div><span className="text-slate-400">Header:</span> X-Metrics-Token: &lt;your token&gt;</div>
-          <div><span className="text-slate-400">Output format:</span> JSON</div>
-        </div>
-        <div className="flex items-center gap-3 mt-4">
-          <button
-            className="btn-primary"
-            onClick={() => api.put('/settings', { zabbix_metrics_token: zabbixToken, zabbix_server_address: zabbixServer.trim() }).then(() => { setSaved('zabbix'); setTimeout(()=>setSaved(''),2000); })}
-          >
-            Save
-          </button>
-          <a
-            href={`/metrics/zabbix-template?token=${encodeURIComponent(zabbixToken ?? '')}`}
-            className="btn-secondary text-sm"
-            target="_blank" rel="noreferrer"
-          >
-            Download Zabbix Template XML
-          </a>
-          {saved === 'zabbix' && <span className="text-green-600 text-sm font-medium">Saved!</span>}
-        </div>
       </Section>
       </>
       )}
