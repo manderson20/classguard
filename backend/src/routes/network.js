@@ -285,7 +285,9 @@ async function syncController(controllerId) {
     for (const c of clients) {
       if (!c.mac) continue;
       const apName = c.ap_name || deviceNameByMac.get(c.ap_mac) || c.ap_mac || null;
-      const switchName = c.switch_name || deviceNameByMac.get(c.switch_mac) || c.switch_mac || null;
+      // uplink_name is the controller's cached resolution — the live device
+      // list wins when the same MAC resolves both ways (e.g. after a rename).
+      const switchName = c.switch_name || deviceNameByMac.get(c.switch_mac) || c.uplink_name || c.switch_mac || null;
       await pool.query(
         `INSERT INTO network_clients
            (controller_id, mac, ip_address, hostname, ap_name, ssid, rssi, channel, radio_type,
