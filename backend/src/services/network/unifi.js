@@ -270,9 +270,13 @@ async function fetchNetworks(config) {
       .map(n => ({
         id:           n._id,
         name:         n.name || null,
-        // The untagged default LAN carries no vlan field; vlan-only (L2)
-        // networks carry vlan but often no subnet.
-        vlan:         n.vlan != null ? Number(n.vlan) : null,
+        // The untagged default LAN (attr_hidden_id 'LAN') carries no vlan
+        // field but is native VLAN 1 on UniFi switching — surface it as 1 so
+        // VLAN lookups can find it. vlan-only (L2) networks carry vlan but
+        // often no subnet; site-vpn entries have neither and stay null.
+        vlan:         n.vlan != null ? Number(n.vlan)
+          : (n.attr_hidden_id === 'LAN' ? 1 : null),
+        native:       n.attr_hidden_id === 'LAN' && n.vlan == null,
         purpose:      n.purpose || null,
         subnet:       n.ip_subnet || null,
         domain_name:  n.domain_name || null,

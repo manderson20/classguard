@@ -47,6 +47,7 @@ export default function VlanInfoModal({ vlan, controllerId, onClose }) {
           {matches.map(n => (
             <div key={n.id} className="border border-slate-200 rounded-lg p-3 space-y-1.5">
               <Field label="Name"    value={n.name} />
+              {n.native && <div className="text-xs text-slate-400">Untagged default LAN — native VLAN 1</div>}
               <Field label="Purpose" value={n.purpose} />
               <Field label="Subnet"  value={n.subnet} />
               {n.domain_name && <Field label="Domain" value={n.domain_name} />}
