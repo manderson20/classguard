@@ -60,8 +60,15 @@ const DNS_STREAM = 'classguard:dns-log';
 // token, or, when no token was presented, a localhost origin.
 async function hasValidMetricsCredential(req) {
   const internal = req.headers['x-internal-secret'];
-  if (internal && process.env.INTERNAL_SECRET && internal === process.env.INTERNAL_SECRET) {
-    return true;
+  if (internal) {
+    // Same-host services present this node's own INTERNAL_SECRET; cluster
+    // peers present the replicated settings.internal_secret (the two match
+    // only on the node the setting originated from).
+    if (process.env.INTERNAL_SECRET && internal === process.env.INTERNAL_SECRET) return true;
+    const { rows } = await pool.query(
+      `SELECT value FROM settings WHERE key = 'internal_secret'`
+    );
+    if (rows[0]?.value && internal === rows[0].value) return true;
   }
 
   const token = req.headers['x-metrics-token'] || req.query.token;

@@ -23,9 +23,17 @@ const HISTORY_KEYS = [
   'radius_auth_accepts_5m', 'radius_auth_rejects_5m', 'radius_sessions_active',
 ];
 
-async function fetchPeerMetrics(node) {
+// Node-to-node calls authenticate with the replicated cluster secret
+// (settings.internal_secret), like the /ha relays — each node's local
+// INTERNAL_SECRET env var can differ and only same-host services use it.
+async function clusterInternalSecret() {
+  const { rows } = await query(`SELECT value FROM settings WHERE key = 'internal_secret'`);
+  return rows[0]?.value || process.env.INTERNAL_SECRET || '';
+}
+
+async function fetchPeerMetrics(node, secret) {
   const res = await fetch(`${node.api_url}/metrics`, {
-    headers: { 'X-Internal-Secret': process.env.INTERNAL_SECRET || '' },
+    headers: { 'X-Internal-Secret': secret },
     signal: AbortSignal.timeout(5000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -44,10 +52,11 @@ async function clusterSnapshot() {
   if (local) results.push({ node_id: config.node.id, reachable: true, metrics: local });
 
   const nodes = await getNodes().catch(() => []);
+  const secret = await clusterInternalSecret().catch(() => process.env.INTERNAL_SECRET || '');
   for (const n of nodes) {
     if (n.node_id === config.node.id || !n.api_url || n.is_active === false) continue;
     try {
-      results.push({ node_id: n.node_id, reachable: true, metrics: await fetchPeerMetrics(n) });
+      results.push({ node_id: n.node_id, reachable: true, metrics: await fetchPeerMetrics(n, secret) });
     } catch (err) {
       results.push({ node_id: n.node_id, reachable: false, error: err.message });
     }
