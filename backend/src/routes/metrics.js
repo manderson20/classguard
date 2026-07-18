@@ -54,31 +54,34 @@ const DNS_STREAM = 'classguard:dns-log';
 // Token auth middleware — metrics endpoint uses a simple shared secret
 // so Zabbix doesn't need a JWT/session
 // ---------------------------------------------------------------------------
-async function metricsAuth(req, res, next) {
-  const token = req.headers['x-metrics-token'] || req.query.token;
-
-  // Cluster peers authenticate with the shared internal secret (same
-  // node-to-node trust as the /ha relays) — the primary's wallboard sampler
-  // polls every peer's /metrics this way.
+// True when the request carries a valid metrics-style credential: the
+// cluster-internal secret (same node-to-node trust as the /ha relays — the
+// primary's wallboard sampler polls peers this way), the configured metrics
+// token, or, when no token was presented, a localhost origin.
+async function hasValidMetricsCredential(req) {
   const internal = req.headers['x-internal-secret'];
   if (internal && process.env.INTERNAL_SECRET && internal === process.env.INTERNAL_SECRET) {
-    return next();
+    return true;
   }
 
-  // If no token configured, allow local requests only
+  const token = req.headers['x-metrics-token'] || req.query.token;
   if (!token) {
     const ip = req.ip || req.connection.remoteAddress;
-    if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
-    return res.status(401).json({ error: 'X-Metrics-Token header required' });
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
   }
 
+  const { rows } = await pool.query(
+    `SELECT value FROM settings WHERE key = 'zabbix_metrics_token'`
+  );
+  const stored = rows[0]?.value;
+  return Boolean(stored) && token === stored;
+}
+
+async function metricsAuth(req, res, next) {
   try {
-    const { rows } = await pool.query(
-      `SELECT value FROM settings WHERE key = 'zabbix_metrics_token'`
-    );
-    const stored = rows[0]?.value;
-    if (!stored || token !== stored) return res.status(401).json({ error: 'Invalid token' });
-    next();
+    if (await hasValidMetricsCredential(req)) return next();
+    const token = req.headers['x-metrics-token'] || req.query.token;
+    res.status(401).json({ error: token ? 'Invalid token' : 'X-Metrics-Token header required' });
   } catch {
     res.status(500).json({ error: 'Auth check failed' });
   }
@@ -407,14 +410,18 @@ function hostXml(techName, displayName, itemsXml) {
 // ---------------------------------------------------------------------------
 // Wallboard endpoints — serve two callers: the logged-in UI (JWT) and the
 // kiosk TV (metrics token in the query string, so a wall display needs no
-// login session). A metrics-style credential routes through metricsAuth;
-// a JWT routes through the normal authenticate middleware.
+// login session). The metrics credential is always validated first; only
+// when it does not check out does the request fall through to the normal
+// JWT middleware, which enforces its own 401 — so which path runs is
+// decided by a validation result, never by the mere presence of a header.
 // ---------------------------------------------------------------------------
-function metricsOrUserAuth(req, res, next) {
-  const hasMetricsCred = req.headers['x-metrics-token'] || req.query.token
-    || req.headers['x-internal-secret'];
-  if (!hasMetricsCred && req.headers.authorization) return authenticate(req, res, next);
-  return metricsAuth(req, res, next);
+async function metricsOrUserAuth(req, res, next) {
+  try {
+    if (await hasValidMetricsCredential(req)) return next();
+  } catch {
+    return res.status(500).json({ error: 'Auth check failed' });
+  }
+  return authenticate(req, res, next);
 }
 
 // GET /metrics/cluster — live snapshot of every cluster member (local node
