@@ -14,6 +14,10 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ## [0.16.0] - 2026-07-18
 
+### Added
+
+- **Help Center links out to the wiki** — each in-app help article now shows a "View on wiki ↗" link to its public wiki page. The server computes the wiki URL per article (mirroring the `scripts/wiki` generator's page-name rules) and returns it from `/kb`; the base is overridable via a new `wiki_base_url` setting for forks/self-hosts. Completes the two-way link with the wiki, which already records each page's in-app location. (Merged as #177 and folded into this release.)
+
 ### Fixed
 
 - **Hardened the update flow so a crashed deploy self-heals instead of wedging.** If an update run died mid–container-recreate (leaving PostgreSQL half-recreated — a container stuck `Created` plus a renamed orphan), the update row stayed at `in_progress` forever, which blocked every future update for that node and required a manual `docker compose up -d` to recover. Two complementary fixes make the flow self-healing and self-verifying:
