@@ -12,6 +12,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.14.0] - 2026-07-18
+
+### Added
+
+- **Documentation version tracking** — help articles now record the software version that last changed them (`content_version`, bumped automatically whenever an article is edited in the Help Center). The in-app Help Center shows a "reviewed · version" stamp on each article.
+- **Repo-native wiki generator** — `scripts/wiki/` holds the wiki generator (`generate.mjs`), the KB export helper (`export-kb.js`), the source for the operations pages (`pages/*.md`), and a maintenance runbook (`README.md`). The generated wiki stamps every page with its last-reviewed date and version, and produces a **Doc Status** index that flags any page drifted 2+ minor releases behind the current version — so "update the wiki after a release" is a documented, repeatable operation.
+
+---
+
 ## [0.13.1] - 2026-07-18
 
 ### Fixed
