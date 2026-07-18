@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.13.0] - 2026-07-18
+
+### Added
+
+- **Zabbix 8.0 dashboard export** — Integrations ▸ Zabbix gains a "Download Dashboard (Zabbix 8.0+)" button producing a ready three-page dashboard import file (Overview / Network & DNS / Servers, auto-rotating): stat tiles, RADIUS/DNS graphs, per-node CPU/memory graphs, TLS-cert and disk gauges, and an open-problems panel. Zabbix 8.0 introduced global-dashboard import with objects matched by name, so the file references the generated `ClassGuard - *` hosts and items directly — import the host template first. Servers on 7.0 keep using `infrastructure/zabbix/create-dashboard.py`.
+
+---
+
 ## [0.12.1] - 2026-07-18
 
 ### Fixed

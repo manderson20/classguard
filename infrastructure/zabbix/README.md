@@ -130,3 +130,13 @@ Re-running updates the same dashboard in place (safe after adding nodes or
 re-importing the template). The script prints a `&kiosk=1` URL for the TV;
 pair it with the dashboard's 30-second refresh that it sets by default.
 Add `--insecure` for self-signed HTTPS, `--dry-run` to preview the payload.
+
+### Zabbix 8.0+: import the dashboard directly
+
+Zabbix 8.0 added global-dashboard import/export (Dashboards ▸ Import;
+objects are matched by name). On 8.0+ skip the API script: download the
+ready three-page dashboard (Overview / Network & DNS / Servers,
+auto-rotating every 30s) from **Integrations ▸ Zabbix ▸ Download Dashboard
+(Zabbix 8.0+)** and import the file. Import the host template first — the
+dashboard references the `ClassGuard - *` hosts and their items by name.
+`create-dashboard.py` remains the path for 7.0 servers.

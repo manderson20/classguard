@@ -2519,6 +2519,14 @@ function ZabbixSection() {
           >
             Download Zabbix Template XML
           </a>
+          <a
+            href={`/metrics/zabbix-dashboard?token=${encodeURIComponent(token ?? '')}`}
+            className="btn-secondary text-sm"
+            target="_blank" rel="noreferrer"
+            title="Zabbix 8.0 added dashboard import (Dashboards ▸ Import). Import the template first so the hosts exist — the dashboard references them by name."
+          >
+            Download Dashboard (Zabbix 8.0+)
+          </a>
           {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
         </div>
       </Card>
