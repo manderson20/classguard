@@ -32,9 +32,12 @@ async function clusterInternalSecret() {
 }
 
 async function fetchPeerMetrics(node, secret) {
+  // 15s: a peer's collection is normally sub-second, but degraded probes
+  // inside it can stack (an unreachable Kea alone measured 10.1s before its
+  // cap) — better a slow sample than flapping the node to "unreachable".
   const res = await fetch(`${node.api_url}/metrics`, {
     headers: { 'X-Internal-Secret': secret },
-    signal: AbortSignal.timeout(5000),
+    signal: AbortSignal.timeout(15000),
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();

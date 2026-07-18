@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.13.1] - 2026-07-18
+
+### Fixed
+
+- **Standby node metrics took 10+ seconds** — on a node where Kea's control endpoint drops packets instead of refusing (standby nodes never run Kea), every `/metrics` call burned kea.js's full 10s client timeout in the DHCP reachability probe, slowing every Zabbix poll of that node and pushing the node past the wallboard sampler's per-peer timeout (it showed as unreachable). The probe is now capped at 2.5s — a healthy local Kea answers in milliseconds — and the sampler's per-peer timeout is widened to 15s so a degraded-but-alive peer records a slow sample instead of flapping.
+
+---
+
 ## [0.13.0] - 2026-07-18
 
 ### Added
