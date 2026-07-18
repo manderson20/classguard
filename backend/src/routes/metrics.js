@@ -150,6 +150,17 @@ async function collectMetrics() {
   `).catch(() => ({ rows: [{}] }));
   const pg = pgRows[0] || {};
 
+  // Storage growth — total DB size, the browsing-log hypertable size
+  // (hypertable_size includes compressed chunks), and the age of the oldest
+  // DNS log so retention can be verified as *working*, not just inferred
+  // from disk headroom. All cheap catalog lookups.
+  const { rows: storageRows } = await pool.query(`
+    SELECT pg_database_size(current_database())                      AS db_bytes,
+           hypertable_size('dns_logs')                               AS dns_logs_bytes,
+           EXTRACT(DAY FROM NOW() - (SELECT MIN(queried_at) FROM dns_logs))::int AS dns_logs_oldest_days
+  `).catch(() => ({ rows: [{}] }));
+  const storage = storageRows[0] || {};
+
   // NTP sync status
   const { rows: ntpRows } = await pool.query(`
     SELECT MIN(stratum) AS min_stratum,
@@ -279,6 +290,13 @@ async function collectMetrics() {
     pg_connections_total:    parseInt(pg.total_connections, 10)  || 0,
     pg_connections_active:   parseInt(pg.active_connections, 10) || 0,
     pg_connections_idle:     parseInt(pg.idle_connections, 10)   || 0,
+
+    // Storage growth — watch data volume, not just disk %. dns_logs_oldest_age_days
+    // should stay at or below dns_log_retention_days once retention runs; a value
+    // climbing past it means the retention job isn't pruning.
+    db_size_bytes:            parseInt(storage.db_bytes, 10)        || 0,
+    dns_logs_bytes:           parseInt(storage.dns_logs_bytes, 10)  || 0,
+    dns_logs_oldest_age_days: storage.dns_logs_oldest_days != null ? parseInt(storage.dns_logs_oldest_days, 10) : null,
 
     // DHCP pool utilization (aggregate across every configured subnet)
     dhcp_kea_reachable:      dhcpReachable,

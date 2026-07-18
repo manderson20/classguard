@@ -693,6 +693,29 @@ function startScheduler() {
     internetHealth.pruneOldChecks().catch(err => console.error('[scheduler] internet-health prune error:', err.message));
   });
 
+  // Browsing-log retention — daily 4:10am. drop_chunks efficiently removes
+  // whole TimescaleDB chunks older than dns_log_retention_days from the two
+  // browsing-log hypertables (DNS queries + extension page history — the same
+  // class of student browsing data, so one setting governs both). Unset or 0
+  // means keep forever (no-op). Runs only where the DB is writable, like every
+  // other job in this RUN_CRON_JOBS-gated section.
+  cron.schedule('10 4 * * *', async () => {
+    try {
+      const { rows } = await query(`SELECT value FROM settings WHERE key = 'dns_log_retention_days'`);
+      const days = parseInt(rows[0]?.value, 10);
+      if (!days || days <= 0) return;
+      for (const table of ['dns_logs', 'browser_history']) {
+        await query(
+          `SELECT drop_chunks($1, older_than => ($2 || ' days')::interval)`,
+          [table, days]
+        ).catch(err => console.error(`[scheduler] retention drop_chunks(${table}) failed:`, err.message));
+      }
+      console.log(`[scheduler] applied ${days}-day retention to browsing logs`);
+    } catch (err) {
+      console.error('[scheduler] browsing-log-retention error:', err.message);
+    }
+  });
+
   // Wallboard metrics sampler — every minute. Records each cluster member's
   // /metrics snapshot (local in-process, peers over HTTP) into
   // node_metrics_history for the wallboard graphs, and prunes past 48h.
