@@ -32,6 +32,7 @@ const { rateLimit } = require('express-rate-limit');
 const { getHaConfig, getNodes } = require('../services/keepalived');
 const { authenticate } = require('../middleware/auth');
 const metricsHistory = require('../services/metricsHistory');
+const zabbixDashboard = require('../services/zabbixDashboard');
 const kea = require('../services/kea');
 const { getResourceUsage } = require('../services/systemResources');
 const config = require('../config');
@@ -615,6 +616,32 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
   res.set('Content-Type', 'application/xml');
   res.set('Content-Disposition', 'attachment; filename="classguard-zabbix-template.xml"');
   res.send(xml);
+});
+
+// GET /metrics/zabbix-dashboard — Zabbix 8.0+ dashboard import file. 8.0
+// added global-dashboard import (Dashboards ▸ Import) with every object
+// referenced by name, so this ships a ready three-page dashboard (Overview /
+// Network & DNS / Servers, auto-rotating) for the hosts the template export
+// creates. JSON is an accepted import format alongside YAML/XML. Earlier
+// servers can't import dashboards at all — they use
+// infrastructure/zabbix/create-dashboard.py over the API instead.
+router.get('/zabbix-dashboard', metricsLimiter, metricsAuth, async (req, res) => {
+  const [nodes, haCfg] = await Promise.all([
+    getNodes().catch(() => []),
+    getHaConfig().catch(() => ({})),
+  ]);
+  const nodeHosts = [];
+  for (const n of nodes) {
+    if (!n.api_url) continue;
+    const shortName = n.hostname || n.node_id;
+    nodeHosts.push({ techName: `ClassGuard - ${shortName}`, shortName });
+  }
+  // Standalone installs have no VIP host — cluster-wide tiles then read from
+  // the single node, mirroring the template generator's fallback.
+  const vipHost = haCfg.vip_address ? 'ClassGuard - VIP'
+    : (nodeHosts[0]?.techName || 'ClassGuard');
+  res.set('Content-Disposition', 'attachment; filename="classguard-zabbix-dashboard.json"');
+  res.json(zabbixDashboard.buildDashboardExport(vipHost, nodeHosts));
 });
 
 module.exports = router;
