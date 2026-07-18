@@ -2442,6 +2442,7 @@ function ZabbixSection() {
   const [token,  setToken]  = useState('');
   const [server, setServer] = useState('');
   const [saved,  setSaved]  = useState(false);
+  const [kioskCopied, setKioskCopied] = useState(false);
 
   useEffect(() => {
     if (settings && Object.keys(settings).length) {
@@ -2519,6 +2520,33 @@ function ZabbixSection() {
             Download Zabbix Template XML
           </a>
           {saved && <span className="text-green-600 text-sm font-medium">Saved!</span>}
+        </div>
+      </Card>
+
+      <Card title="Wallboard" icon="🖥️" subtitle="Full-screen cluster dashboard for a wall monitor">
+        <p className="text-sm text-slate-600 mb-4">
+          Live RADIUS, DNS, and per-server hardware dashboard rendered by ClassGuard itself — no
+          Zabbix required. Open it as a logged-in user, or point a TV browser at the kiosk link:
+          it carries the metrics token above, so the screen never needs a login session. Add
+          <code className="bg-slate-100 px-1 rounded font-mono text-xs mx-1">rotate=1</code>
+          to cycle the Network / DNS / Servers panels every 20 seconds.
+        </p>
+        <div className="flex items-center gap-3">
+          <a href="/wallboard" target="_blank" rel="noreferrer" className="btn-primary text-sm">Open Wallboard</a>
+          {token ? (
+            <button
+              className="btn-secondary text-sm"
+              onClick={() => {
+                navigator.clipboard.writeText(`${window.location.origin}/wallboard?token=${encodeURIComponent(token)}&rotate=1`);
+                setKioskCopied(true);
+                setTimeout(() => setKioskCopied(false), 2000);
+              }}
+            >
+              {kioskCopied ? 'Copied!' : 'Copy kiosk URL'}
+            </button>
+          ) : (
+            <span className="text-xs text-slate-500">Set a metrics token above to get a login-free kiosk URL.</span>
+          )}
         </div>
       </Card>
     </div>

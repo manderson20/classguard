@@ -30,6 +30,8 @@ const redis     = require('../redis');
 const os        = require('os');
 const { rateLimit } = require('express-rate-limit');
 const { getHaConfig, getNodes } = require('../services/keepalived');
+const { authenticate } = require('../middleware/auth');
+const metricsHistory = require('../services/metricsHistory');
 const kea = require('../services/kea');
 const { getResourceUsage } = require('../services/systemResources');
 const config = require('../config');
@@ -52,23 +54,34 @@ const DNS_STREAM = 'classguard:dns-log';
 // Token auth middleware — metrics endpoint uses a simple shared secret
 // so Zabbix doesn't need a JWT/session
 // ---------------------------------------------------------------------------
-async function metricsAuth(req, res, next) {
-  const token = req.headers['x-metrics-token'] || req.query.token;
-
-  // If no token configured, allow local requests only
-  if (!token) {
-    const ip = req.ip || req.connection.remoteAddress;
-    if (ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1') return next();
-    return res.status(401).json({ error: 'X-Metrics-Token header required' });
+// True when the request carries a valid metrics-style credential: the
+// cluster-internal secret (same node-to-node trust as the /ha relays — the
+// primary's wallboard sampler polls peers this way), the configured metrics
+// token, or, when no token was presented, a localhost origin.
+async function hasValidMetricsCredential(req) {
+  const internal = req.headers['x-internal-secret'];
+  if (internal && process.env.INTERNAL_SECRET && internal === process.env.INTERNAL_SECRET) {
+    return true;
   }
 
+  const token = req.headers['x-metrics-token'] || req.query.token;
+  if (!token) {
+    const ip = req.ip || req.connection.remoteAddress;
+    return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
+  }
+
+  const { rows } = await pool.query(
+    `SELECT value FROM settings WHERE key = 'zabbix_metrics_token'`
+  );
+  const stored = rows[0]?.value;
+  return Boolean(stored) && token === stored;
+}
+
+async function metricsAuth(req, res, next) {
   try {
-    const { rows } = await pool.query(
-      `SELECT value FROM settings WHERE key = 'zabbix_metrics_token'`
-    );
-    const stored = rows[0]?.value;
-    if (!stored || token !== stored) return res.status(401).json({ error: 'Invalid token' });
-    next();
+    if (await hasValidMetricsCredential(req)) return next();
+    const token = req.headers['x-metrics-token'] || req.query.token;
+    res.status(401).json({ error: token ? 'Invalid token' : 'X-Metrics-Token header required' });
   } catch {
     res.status(500).json({ error: 'Auth check failed' });
   }
@@ -394,6 +407,44 @@ function hostXml(techName, displayName, itemsXml) {
     </host>`;
 }
 
+// ---------------------------------------------------------------------------
+// Wallboard endpoints — serve two callers: the logged-in UI (JWT) and the
+// kiosk TV (metrics token in the query string, so a wall display needs no
+// login session). The metrics credential is always validated first; only
+// when it does not check out does the request fall through to the normal
+// JWT middleware, which enforces its own 401 — so which path runs is
+// decided by a validation result, never by the mere presence of a header.
+// ---------------------------------------------------------------------------
+async function metricsOrUserAuth(req, res, next) {
+  try {
+    if (await hasValidMetricsCredential(req)) return next();
+  } catch {
+    return res.status(500).json({ error: 'Auth check failed' });
+  }
+  return authenticate(req, res, next);
+}
+
+// GET /metrics/cluster — live snapshot of every cluster member (local node
+// in-process, peers over HTTP; unreachable peers appear with reachable:false).
+router.get('/cluster', metricsLimiter, metricsOrUserAuth, async (req, res) => {
+  try {
+    res.json({ nodes: await metricsHistory.clusterSnapshot() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /metrics/history?minutes=180 — per-node time series of the sampled
+// wallboard keys (see services/metricsHistory.js HISTORY_KEYS), 48h max.
+router.get('/history', metricsLimiter, metricsOrUserAuth, async (req, res) => {
+  const minutes = Math.min(Math.max(parseInt(req.query.minutes, 10) || 180, 5), 2880);
+  try {
+    res.json({ minutes, nodes: await metricsHistory.getHistory(minutes) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /metrics/zabbix-sync — localhost-only, no auth (same trust boundary as
 // /radius/freeradius-sync: the API port is published on host loopback only,
 // so anything that can reach it is already on the host). Polled every minute
@@ -560,3 +611,6 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
 });
 
 module.exports = router;
+// The wallboard sampler (services/metricsHistory.js) reuses the collector
+// rather than duplicating the queries.
+module.exports.collectMetrics = collectMetrics;

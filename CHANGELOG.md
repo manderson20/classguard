@@ -12,6 +12,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.12.0] - 2026-07-18
+
+### Added
+
+- **Operations wallboard** — new full-screen `/wallboard` page designed for a wall monitor: live RADIUS tiles (sessions, accepts/rejects, pending devices, NAS online, EAP cert countdown), DNS load, per-node server hardware (CPU/memory/disk with history graphs), and HA state. Auto-rotates Network / DNS / Servers panels every 20s with `?rotate=1`. A kiosk URL (Integrations ▸ Zabbix ▸ Wallboard) embeds the metrics token so the TV never needs a login session.
+- **Cluster metrics history** — the primary samples every node's `/metrics` once a minute into `node_metrics_history` (48h retention) and serves it via `GET /metrics/history`; `GET /metrics/cluster` returns a live snapshot of all nodes including unreachable ones. `/metrics` now also accepts the cluster-internal secret, so the sampler can poll peers.
+
+---
+
 ## [0.11.10] - 2026-07-17
 
 ### Fixed

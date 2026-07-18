@@ -13,6 +13,7 @@ const pingScan  = require('./pingScan');
 const dhcpDnsAutoRegister = require('./dhcpDnsAutoRegister');
 const dhcpKeaSync   = require('./dhcpKeaSync');
 const dhcpKeaSyncV6 = require('./dhcpKeaSyncV6');
+const metricsHistory = require('./metricsHistory');
 const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
 const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 const radiusSync = require('./radiusSync');
@@ -690,6 +691,14 @@ function startScheduler() {
   // Prune old internet-health rows — daily 5:30am.
   cron.schedule('30 5 * * *', () => {
     internetHealth.pruneOldChecks().catch(err => console.error('[scheduler] internet-health prune error:', err.message));
+  });
+
+  // Wallboard metrics sampler — every minute. Records each cluster member's
+  // /metrics snapshot (local in-process, peers over HTTP) into
+  // node_metrics_history for the wallboard graphs, and prunes past 48h.
+  // Runs only where the DB is writable, like everything else in this section.
+  cron.schedule('* * * * *', () => {
+    metricsHistory.sampleClusterMetrics().catch(err => console.error('[scheduler] metrics-sample error:', err.message));
   });
 }
 
