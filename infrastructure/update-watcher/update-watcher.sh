@@ -74,13 +74,33 @@ PENDING=$(echo "$RESPONSE" | jq -r '.pending')
 
 STATUS=$(echo "$RESPONSE" | jq -r '.pending.status')
 SCHEDULED_AT=$(echo "$RESPONSE" | jq -r '.pending.scheduled_at')
-[ "$STATUS" != "pending" ] && exit 0
 
-SCHEDULED_EPOCH=$(date -d "$SCHEDULED_AT" +%s 2>/dev/null) || exit 0
-NOW_EPOCH=$(date +%s)
-[ "$NOW_EPOCH" -lt "$SCHEDULED_EPOCH" ] && exit 0
+# 'pending'     — a fresh update; run it once its scheduled time arrives.
+# 'in_progress' — a PRIOR run set this then died before reporting (build
+#                 SIGKILLed, Postgres recreate wedged, host rebooted, ...).
+#                 This unit is Type=oneshot with OnUnitActiveSec, so systemd
+#                 can't have another run active right now — an in_progress
+#                 seen at the top of a fresh tick is a crashed run to recover,
+#                 not a live one. Re-running install.sh is safe: it reconciles
+#                 containers (docker compose up -d) and re-verifies Postgres.
+#                 Without this, a crashed run left the row stuck at
+#                 in_progress forever, blocking every future update.
+# other         — completed/failed: nothing to do.
+case "$STATUS" in
+  pending)
+    SCHEDULED_EPOCH=$(date -d "$SCHEDULED_AT" +%s 2>/dev/null) || exit 0
+    NOW_EPOCH=$(date +%s)
+    [ "$NOW_EPOCH" -lt "$SCHEDULED_EPOCH" ] && exit 0
+    logger "ClassGuard update-watcher: scheduled update time reached, starting"
+    ;;
+  in_progress)
+    logger "ClassGuard update-watcher: found a crashed in-progress update — recovering"
+    ;;
+  *)
+    exit 0
+    ;;
+esac
 
-logger "ClassGuard update-watcher: scheduled update time reached, starting"
 curl -sf -X POST http://localhost:3001/api/v1/ha/update-complete \
   -H "Content-Type: application/json" -d '{"status":"in_progress"}' || true
 

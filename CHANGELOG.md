@@ -12,6 +12,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.16.0] - 2026-07-18
+
+### Fixed
+
+- **Hardened the update flow so a crashed deploy self-heals instead of wedging.** If an update run died mid–container-recreate (leaving PostgreSQL half-recreated — a container stuck `Created` plus a renamed orphan), the update row stayed at `in_progress` forever, which blocked every future update for that node and required a manual `docker compose up -d` to recover. Two complementary fixes make the flow self-healing and self-verifying:
+  - The update-watcher now **recovers a crashed `in_progress` run** — the systemd unit is `Type=oneshot` with `OnUnitActiveSec`, so runs can't overlap; an `in_progress` seen at the start of a fresh tick is therefore a dead prior run, and the watcher re-runs `install.sh` (idempotent) instead of exiting and deadlocking.
+  - `install.sh` now brings containers up with `--remove-orphans` (clearing renamed leftovers from a killed recreate) and adds a **database-verification step** that reconciles once and then requires `pg_isready`, so a run that leaves Postgres down fails loudly instead of reporting success on a degraded node.
+  - (The watcher's systemd unit already had an effectively infinite start timeout — `Type=oneshot` doesn't inherit the 90s default — so the crash wasn't a systemd timeout; the fixes above make the flow resilient regardless of what interrupts a run.)
+
+---
+
 ## [0.15.0] - 2026-07-18
 
 ### Added
