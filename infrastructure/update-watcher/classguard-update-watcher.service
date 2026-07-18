@@ -5,4 +5,11 @@ After=docker.service
 [Service]
 Type=oneshot
 Environment=HOME=/root
+# No TimeoutStartSec on purpose: a Type=oneshot unit already defaults to an
+# infinite start timeout (the 90s DefaultTimeoutStartSec does not apply to
+# oneshot), so a multi-minute build is never killed by systemd. Setting any
+# finite value here would only *cap* that and risk killing a slow-but-healthy
+# build. install.sh bounds every docker step with its own `timeout`, so it
+# still can't hang forever, and a crash mid-run is recovered on the next tick
+# (update-watcher.sh handles a stale 'in_progress').
 ExecStart=/bin/bash /opt/classguard/infrastructure/update-watcher/update-watcher.sh

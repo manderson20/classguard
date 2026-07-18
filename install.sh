@@ -335,11 +335,16 @@ info "Starting remaining services..."
 # A standby's Postgres (and Kea's own database, replicated along with it) is
 # read-only, so Kea would just crash-loop trying to write leases there —
 # only bring up the services that are actually safe/useful on a standby.
+# --remove-orphans clears any container a previous half-finished run left
+# behind — e.g. a renamed '<hash>_classguard-postgres' leftover from a
+# recreate that was killed between rename and start. Only ever removes
+# containers with no matching service in the compose file, so every real
+# service (kea included) is untouched.
 if [[ "$NODE_ROLE_CURRENT" == "standby" ]]; then
   info "NODE_ROLE=standby — starting redis/api/dns/frontend only (skipping kea)"
-  timeout 180 docker compose up -d redis api dns frontend || error "docker compose up -d timed out after 180s — check: docker compose ps / docker compose logs"
+  timeout 180 docker compose up -d --remove-orphans redis api dns frontend || error "docker compose up -d timed out after 180s — check: docker compose ps / docker compose logs"
 else
-  timeout 180 docker compose up -d || error "docker compose up -d timed out after 180s — check: docker compose ps / docker compose logs"
+  timeout 180 docker compose up -d --remove-orphans || error "docker compose up -d timed out after 180s — check: docker compose ps / docker compose logs"
 fi
 info "Remaining services started"
 
@@ -359,6 +364,39 @@ for i in $(seq 1 40); do
   fi
   sleep 3
 done
+
+# ---------------------------------------------------------------------------
+# Step 7b — Verify the database survived the update. A container recreate that
+# half-completes (killed between 'create' and 'start') can leave Postgres down
+# while the rest of this script keeps going, so an update must not report
+# success with the database unhealthy. Reconcile once (starts a stuck 'Created'
+# container, clears orphans), then require pg_isready — a failed run that names
+# the problem beats a node silently left degraded but marked "updated".
+# pg_isready works on a standby too (a replica still accepts connections).
+# ---------------------------------------------------------------------------
+section "Step 7b — Verify database"
+if ! timeout 15 docker exec classguard-postgres pg_isready -U classguard >/dev/null 2>&1; then
+  warn "Postgres not accepting connections after the update — reconciling containers once..."
+  # Reconcile the same service set this role brought up above — never start
+  # kea on a standby (its replica DB is read-only, so it just crash-loops).
+  if [[ "$NODE_ROLE_CURRENT" == "standby" ]]; then
+    timeout 180 docker compose up -d --remove-orphans redis api dns frontend || true
+  else
+    timeout 180 docker compose up -d --remove-orphans || true
+  fi
+  DB_OK=false
+  for i in $(seq 1 20); do
+    if timeout 5 docker exec classguard-postgres pg_isready -U classguard >/dev/null 2>&1; then
+      DB_OK=true
+      break
+    fi
+    sleep 3
+  done
+  [[ "$DB_OK" == "true" ]] || error "Postgres still not accepting connections after reconcile — node left degraded, check: docker compose ps / docker compose logs postgres"
+  info "Postgres recovered after reconcile"
+else
+  info "Database verified healthy"
+fi
 
 SERVER_IP=$(grep '^APP_URL=' .env | cut -d= -f2- | sed 's|http://||;s|https://||' | cut -d/ -f1) || true
 SERVER_IP="${SERVER_IP:-this-server}"
