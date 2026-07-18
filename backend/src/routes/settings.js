@@ -55,10 +55,13 @@ const ALLOWED_KEYS = new Set([
   'ldap_google_enabled', 'ldap_client_cert_path', 'ldap_client_key_path',
   'ldap_base_dn', 'ldap_google_domain',
   'radius_default_nas_secret',
-  // HA Cluster > Software Updates — only needed because the classguard repo
-  // is private; GitHub's Contents API 404s on an unauthenticated request to
-  // a private repo (indistinguishable from "doesn't exist"), which silently
-  // broke the whole check-for-update -> schedule-update flow.
+  // HA Cluster > Software Updates — OPTIONAL. The check-for-update flow reads
+  // VERSION/CHANGELOG from GitHub's Contents API, which works unauthenticated
+  // while the repo is public (the current state). A token is only needed if
+  // the repo is made private (a private repo's Contents API 404s unauthenticated,
+  // indistinguishable from "doesn't exist"); it also raises the GitHub API rate
+  // limit from 60 to 5000 req/hr, irrelevant for a manual check. Left in place
+  // as a zero-cost fallback — ha.js uses it only when set.
   'github_update_token',
   // Mail relay connection (Settings > Communications) — reusable
   // infrastructure for any feature that sends email. Who actually receives

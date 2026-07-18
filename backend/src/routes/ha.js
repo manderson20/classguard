@@ -1207,11 +1207,11 @@ async function githubGetWithRetry(url, opts, attempts = 2) {
 router.get('/check-update', ...auth, async (req, res) => {
   try {
     const { rows: [tokenRow] } = await pool.query(`SELECT value FROM settings WHERE key = 'github_update_token'`);
-    // The classguard repo is private — GitHub's Contents API returns a plain
-    // 404 for an unauthenticated request to a private repo (same as a repo
-    // that doesn't exist at all), which silently broke this whole check
-    // with no indication of why. A token with read access to the repo fixes
-    // it; without one, surface that clearly instead of a bare 404.
+    // OPTIONAL token. While the repo is public this works unauthenticated.
+    // It matters only if the repo is made private — a private repo's Contents
+    // API returns a plain 404 unauthenticated (same as "doesn't exist"), which
+    // would silently break this check; a token with read access fixes that.
+    // Also lifts the GitHub rate limit (60 -> 5000 req/hr), irrelevant here.
     const githubHeaders = tokenRow?.value
       ? { Authorization: `Bearer ${tokenRow.value}` }
       : {};
