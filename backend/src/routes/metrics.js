@@ -167,9 +167,19 @@ async function collectMetrics() {
   // there), so a standby always reports dhcp_kea_reachable=0 — expected,
   // not an error; poll this metric from the primary/VIP, same as the DNS
   // throughput metrics above.
+  // Capped well below kea.js's own 10s client timeout: on a node where the
+  // control endpoint drops packets instead of refusing (standby, Kea not
+  // installed), the full 10s would otherwise be burned on EVERY /metrics
+  // call — slower than the wallboard sampler's per-peer budget and dominant
+  // in every Zabbix poll. A healthy local Kea answers in milliseconds.
   let dhcpTotal = 0, dhcpUsed = 0, dhcpReachable = 0;
   try {
-    const stats = await kea.getStats();
+    const stats = await Promise.race([
+      kea.getStats(),
+      new Promise((resolve, reject) => {
+        setTimeout(() => reject(new Error('kea probe timeout')), 2500).unref();
+      }),
+    ]);
     for (const row of stats) {
       dhcpTotal += row['total-addresses'] || 0;
       dhcpUsed  += (row['assigned-addresses'] || 0) + (row['declined-addresses'] || 0);
