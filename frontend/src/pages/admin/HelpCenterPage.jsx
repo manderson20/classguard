@@ -174,9 +174,22 @@ export default function HelpCenterPage() {
             <div className="card p-6">
               <div className="flex items-center justify-between mb-1">
                 <h2 className="text-xl font-bold text-slate-900">{article.title}</h2>
-                {canEdit && (
-                  <button className="text-xs text-primary-600 hover:underline" onClick={() => setEditing(true)}>Edit</button>
-                )}
+                <div className="flex items-center gap-3">
+                  {article.wiki_url && (
+                    <a
+                      href={article.wiki_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs text-primary-600 hover:underline"
+                      title="Open this guide on the public wiki"
+                    >
+                      View on wiki ↗
+                    </a>
+                  )}
+                  {canEdit && (
+                    <button className="text-xs text-primary-600 hover:underline" onClick={() => setEditing(true)}>Edit</button>
+                  )}
+                </div>
               </div>
               <div className="text-xs text-slate-400 mb-4">
                 {article.category} · reviewed {new Date(article.updated_at).toLocaleDateString()}
