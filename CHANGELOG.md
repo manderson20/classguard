@@ -12,6 +12,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.15.0] - 2026-07-18
+
+### Added
+
+- **Browsing-log retention is now enforced** — the `dns_log_retention_days` setting was previously read by nothing (logs were kept forever). A daily job now drops TimescaleDB chunks older than the configured window from both browsing-log hypertables — `dns_logs` (DNS queries) and `browser_history` (extension page history), since they're the same class of student browsing data. Unset or `0` keeps everything (unchanged default). `drop_chunks` removes whole chunks, so pruning is cheap regardless of volume.
+- **Data-growth metrics** — `/metrics` now reports `db_size_bytes`, `dns_logs_bytes` (compressed hypertable size), and `dns_logs_oldest_age_days`. The last verifies retention is actually working (it should track at or below the retention window); a value climbing past the window means the retention job isn't pruning. These flow automatically into the generated Zabbix template alongside the existing disk-usage metric and trigger.
+
+---
+
 ## [0.14.0] - 2026-07-18
 
 ### Added
