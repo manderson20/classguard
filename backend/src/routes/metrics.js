@@ -30,6 +30,8 @@ const redis     = require('../redis');
 const os        = require('os');
 const { rateLimit } = require('express-rate-limit');
 const { getHaConfig, getNodes } = require('../services/keepalived');
+const { authenticate } = require('../middleware/auth');
+const metricsHistory = require('../services/metricsHistory');
 const kea = require('../services/kea');
 const { getResourceUsage } = require('../services/systemResources');
 const config = require('../config');
@@ -54,6 +56,14 @@ const DNS_STREAM = 'classguard:dns-log';
 // ---------------------------------------------------------------------------
 async function metricsAuth(req, res, next) {
   const token = req.headers['x-metrics-token'] || req.query.token;
+
+  // Cluster peers authenticate with the shared internal secret (same
+  // node-to-node trust as the /ha relays) — the primary's wallboard sampler
+  // polls every peer's /metrics this way.
+  const internal = req.headers['x-internal-secret'];
+  if (internal && process.env.INTERNAL_SECRET && internal === process.env.INTERNAL_SECRET) {
+    return next();
+  }
 
   // If no token configured, allow local requests only
   if (!token) {
@@ -394,6 +404,40 @@ function hostXml(techName, displayName, itemsXml) {
     </host>`;
 }
 
+// ---------------------------------------------------------------------------
+// Wallboard endpoints — serve two callers: the logged-in UI (JWT) and the
+// kiosk TV (metrics token in the query string, so a wall display needs no
+// login session). A metrics-style credential routes through metricsAuth;
+// a JWT routes through the normal authenticate middleware.
+// ---------------------------------------------------------------------------
+function metricsOrUserAuth(req, res, next) {
+  const hasMetricsCred = req.headers['x-metrics-token'] || req.query.token
+    || req.headers['x-internal-secret'];
+  if (!hasMetricsCred && req.headers.authorization) return authenticate(req, res, next);
+  return metricsAuth(req, res, next);
+}
+
+// GET /metrics/cluster — live snapshot of every cluster member (local node
+// in-process, peers over HTTP; unreachable peers appear with reachable:false).
+router.get('/cluster', metricsLimiter, metricsOrUserAuth, async (req, res) => {
+  try {
+    res.json({ nodes: await metricsHistory.clusterSnapshot() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /metrics/history?minutes=180 — per-node time series of the sampled
+// wallboard keys (see services/metricsHistory.js HISTORY_KEYS), 48h max.
+router.get('/history', metricsLimiter, metricsOrUserAuth, async (req, res) => {
+  const minutes = Math.min(Math.max(parseInt(req.query.minutes, 10) || 180, 5), 2880);
+  try {
+    res.json({ minutes, nodes: await metricsHistory.getHistory(minutes) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // GET /metrics/zabbix-sync — localhost-only, no auth (same trust boundary as
 // /radius/freeradius-sync: the API port is published on host loopback only,
 // so anything that can reach it is already on the host). Polled every minute
@@ -560,3 +604,6 @@ router.get('/zabbix-template', metricsLimiter, metricsAuth, async (req, res) => 
 });
 
 module.exports = router;
+// The wallboard sampler (services/metricsHistory.js) reuses the collector
+// rather than duplicating the queries.
+module.exports.collectMetrics = collectMetrics;

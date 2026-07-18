@@ -7,6 +7,7 @@ import Layout from './components/Layout';
 // Auth pages
 import Login        from './pages/Login';
 import AuthCallback from './pages/AuthCallback';
+import Wallboard    from './pages/Wallboard';
 import Setup        from './pages/Setup';
 import SetupWizard  from './pages/SetupWizard';
 
@@ -132,6 +133,8 @@ export default function App() {
       <Route path="/setup"          element={<Setup />} />
       <Route path="/login"         element={<Login />} />
       <Route path="/auth/callback" element={<AuthCallback />} />
+      {/* Chrome-less; auths via JWT or kiosk metrics token inside the page. */}
+      <Route path="/wallboard"     element={<Wallboard />} />
 
       {/* First-time setup wizard — requires auth but bypasses Layout */}
       <Route path="/wizard" element={<RequireAuth minRole="superadmin"><SetupWizard /></RequireAuth>} />
