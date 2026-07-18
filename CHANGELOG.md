@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.12.1] - 2026-07-18
+
+### Fixed
+
+- **Wallboard peer sampling across nodes** — the metrics sampler authenticated to peers with this node's local `INTERNAL_SECRET`, but each node's env secret can differ; peers showed as unreachable. Node-to-node metrics calls now use the replicated cluster secret (`settings.internal_secret`, same as the HA relays), and `/metrics` accepts either secret.
+
+---
+
 ## [0.12.0] - 2026-07-18
 
 ### Added
