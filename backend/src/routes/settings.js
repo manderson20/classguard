@@ -46,6 +46,9 @@ const ALLOWED_KEYS = new Set([
   'unblock_requests_who', 'override_codes_enabled',
   // Zabbix
   'zabbix_metrics_token',
+  // Public wiki base URL — the Help Center links each article out to its
+  // wiki page; override for a fork/self-host (default is the ClassGuard repo).
+  'wiki_base_url',
   // Roster sync
   'last_classroom_sync',
   // RADIUS / Google Secure LDAP

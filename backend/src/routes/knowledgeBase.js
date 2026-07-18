@@ -14,12 +14,31 @@ const router = Router();
 const readAuth  = [authenticate, requireMinRole('teacher')];
 const writeAuth = [authenticate, requireMinRole('admin'), requirePermissionIfAdmin('knowledge_base')];
 
+// The public wiki mirrors these articles (see scripts/wiki/). Each article
+// links out to its wiki page; the base is overridable via the wiki_base_url
+// setting so a fork/self-host can point at its own wiki.
+const DEFAULT_WIKI_BASE = 'https://github.com/manderson20/classguard/wiki';
+
+// Mirror scripts/wiki/generate.mjs pageName() so the URL matches the actual
+// generated page, then apply GitHub's space->hyphen wiki-URL form. Kept in
+// sync with the generator by the shared, deliberately simple rules.
+function wikiUrlFor(base, title) {
+  const page = title.replace(/\//g, ' ').replace(/&/g, 'and').replace(/\s+/g, ' ').trim();
+  return `${base.replace(/\/$/, '')}/${encodeURIComponent(page).replace(/%20/g, '-')}`;
+}
+
+async function wikiBase() {
+  const { rows } = await pool.query(`SELECT value FROM settings WHERE key = 'wiki_base_url'`);
+  return (rows[0]?.value || '').trim() || DEFAULT_WIKI_BASE;
+}
+
 router.get('/', ...readAuth, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT id, slug, title, category, page_paths, updated_at, content_version
      FROM kb_articles ORDER BY category, title`
   );
-  res.json(rows);
+  const base = await wikiBase();
+  res.json(rows.map(r => ({ ...r, wiki_url: wikiUrlFor(base, r.title) })));
 });
 
 // Resolve the article(s) relevant to a given app route -- powers the
@@ -45,7 +64,8 @@ router.get('/for-page', ...readAuth, async (req, res) => {
 router.get('/:slug', ...readAuth, async (req, res) => {
   const { rows } = await pool.query(`SELECT * FROM kb_articles WHERE slug = $1`, [req.params.slug]);
   if (!rows.length) return res.status(404).json({ error: 'Article not found' });
-  res.json(rows[0]);
+  const base = await wikiBase();
+  res.json({ ...rows[0], wiki_url: wikiUrlFor(base, rows[0].title) });
 });
 
 router.post('/', ...writeAuth, async (req, res) => {
