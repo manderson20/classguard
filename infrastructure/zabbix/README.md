@@ -111,3 +111,22 @@ Each node is monitored separately and reports its **own** role:
   packaged agent). If those items show *unsupported*, check
   `zabbix_agent2 -t 'systemd.unit.info["freeradius.service",ActiveState]'`
   on the node.
+
+## Wall dashboard
+
+Zabbix has no UI import for global dashboards (only template dashboards),
+so [`create-dashboard.py`](create-dashboard.py) builds a **ClassGuard
+Overview** dashboard through the API from the hosts the generated template
+creates — stat tiles (sessions, accepts/rejects, pending devices, DNS),
+activity graphs, per-node CPU/memory, TLS-cert and disk gauges, open
+problems, and HA state. Sized for a full-screen monitor; Zabbix 7.0+.
+
+```sh
+# Token: Zabbix UI → User settings → API tokens (needs dashboard + read perms)
+ZABBIX_API_TOKEN=... ./create-dashboard.py --url http://your-zabbix/zabbix
+```
+
+Re-running updates the same dashboard in place (safe after adding nodes or
+re-importing the template). The script prints a `&kiosk=1` URL for the TV;
+pair it with the dashboard's 30-second refresh that it sets by default.
+Add `--insecure` for self-signed HTTPS, `--dry-run` to preview the payload.
