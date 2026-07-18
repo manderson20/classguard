@@ -178,7 +178,10 @@ export default function HelpCenterPage() {
                   <button className="text-xs text-primary-600 hover:underline" onClick={() => setEditing(true)}>Edit</button>
                 )}
               </div>
-              <div className="text-xs text-slate-400 mb-4">{article.category} · updated {new Date(article.updated_at).toLocaleDateString()}</div>
+              <div className="text-xs text-slate-400 mb-4">
+                {article.category} · reviewed {new Date(article.updated_at).toLocaleDateString()}
+                {article.content_version && <> · <span className="font-mono">v{article.content_version}</span></>}
+              </div>
               <ReactMarkdown components={MD_COMPONENTS}>{article.content}</ReactMarkdown>
             </div>
           )}
