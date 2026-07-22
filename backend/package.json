@@ -10,7 +10,7 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "@aws-sdk/client-route-53": "^3.1077.0",
+    "@aws-sdk/client-route-53": "^3.1092.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "acme-client": "^5.4.0",
     "axios": "^1.18.1",
