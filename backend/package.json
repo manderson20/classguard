@@ -40,16 +40,11 @@
   },
   "overrides": {
     "exceljs": {
-      "uuid": "11.1.1"
-    },
-    "gaxios": {
-      "uuid": "11.1.1"
+      "archiver": "^8.0.0",
+      "unzipper": "^0.12.5"
     },
     "googleapis-common": {
-      "uuid": "11.1.1"
-    },
-    "node-cron": {
-      "uuid": "11.1.1"
+      "gaxios": "^7.3.0"
     }
   },
   "devDependencies": {

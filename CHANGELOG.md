@@ -14,6 +14,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ## [0.16.1] - 2026-07-27
 
+### Security
+
+- **Cleared every high-severity `npm audit` finding across backend, frontend, and chrome-extension** (the CI Security gate had been failing since 2026-07-20):
+  - *backend* — `body-parser` bumped; `exceljs`'s vulnerable `archiver`/`unzipper` chains replaced via npm `overrides` (`archiver@8`, `unzipper@0.12` — phone-spreadsheet import/export round-trip verified); `googleapis-common`'s exact-pinned vulnerable `gaxios` overridden to 7.3.0 (googleapis client verified).
+  - *frontend* — migrated `react-router-dom@7` → `react-router@8.3.0` (react-router-dom is a re-export shim with no patched release; v8 keeps every API we use — all 41 importing files updated and a 20-route headless render sweep passes). Also `fast-uri`, `postcss`, and `brace-expansion` chains fixed via `npm audit fix`.
+  - *chrome-extension* — `crx`'s vulnerable `archiver@5` chain overridden to `archiver@8`, with a `patch-package` shim teaching `crx` archiver 8's class export (`ZipArchive`); extension build + `.crx` packing verified after a clean `npm ci`.
+  - Remaining findings are moderate/low only (below the CI gate); the open dependabot PRs covering `body-parser`, `fast-uri`, and `postcss` are superseded by this.
+
 ### Fixed
 
 - **Standby nodes could wedge into hours-long "database unreachable" outages while their database was healthy.** Root cause (caught live with the Node inspector): a transient slow-DNS blip made new Postgres connections fail, each 2-second connect timeout enqueued another `getaddrinfo` retry, and libuv only runs 2 concurrent lookups on the default 4-thread pool — so the lookup queue grew faster than it drained (observed at 35,000+ pending requests), leaving the process unable to open any outbound connection for hours until the queue drained on its own. The DNS engine died in sympathy because its per-query device lookup waits on the wedged API. Three-layer fix:

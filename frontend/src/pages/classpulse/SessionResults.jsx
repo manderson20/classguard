@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link } from 'react-router';
 import api from '../../lib/api';
 
 // Post-session results view — the stored answers from a ClassPulse session,

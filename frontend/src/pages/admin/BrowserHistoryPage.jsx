@@ -1,6 +1,6 @@
 import { useState, Fragment } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router';
 import api from '../../lib/api';
 import WhyBlockedTrace from '../../components/WhyBlockedTrace';
 

@@ -1,0 +1,13 @@
+diff --git a/node_modules/crx/src/index.js b/node_modules/crx/src/index.js
+index 75f9353..250e06d 100644
+--- a/node_modules/crx/src/index.js
++++ b/node_modules/crx/src/index.js
+@@ -127,7 +127,7 @@ class ChromeExtension {
+     var selfie = this;
+ 
+     return new Promise(function(resolve, reject) {
+-      var archive = archiver("zip");
++      var archive = typeof archiver === "function" ? archiver("zip") : new archiver.ZipArchive();
+       var contents = Buffer.from("");
+ 
+       if (!selfie.loaded) {
