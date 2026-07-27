@@ -12,6 +12,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.16.1] - 2026-07-27
+
+### Fixed
+
+- **Standby nodes could wedge into hours-long "database unreachable" outages while their database was healthy.** Root cause (caught live with the Node inspector): a transient slow-DNS blip made new Postgres connections fail, each 2-second connect timeout enqueued another `getaddrinfo` retry, and libuv only runs 2 concurrent lookups on the default 4-thread pool — so the lookup queue grew faster than it drained (observed at 35,000+ pending requests), leaving the process unable to open any outbound connection for hours until the queue drained on its own. The DNS engine died in sympathy because its per-query device lookup waits on the wedged API. Three-layer fix:
+  - `UV_THREADPOOL_SIZE=64` for the api and dns containers — 32 concurrent lookups drains any realistic burst instead of queueing behind 2.
+  - The pg pool now keeps connections warm (10-minute idle timeout, TCP keepalive, 10s connect timeout) instead of cycling its last connection every 30 seconds on a quiet standby — removing the constant stream of fresh lookups that fed the feedback loop.
+  - A **DB watchdog** probes the pool every 30 seconds (which also keeps one connection alive); after ~5 minutes of continuous failure the process exits so Docker's restart policy brings it back clean — turning a multi-hour wedge into a sub-minute blip even if a novel variant recurs. Disable with `DB_WATCHDOG=off`.
+
 ## [0.16.0] - 2026-07-18
 
 ### Added

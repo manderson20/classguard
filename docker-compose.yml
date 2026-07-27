@@ -144,6 +144,12 @@ services:
       NODE_ID:               ${NODE_ID:-classguard-1}
       NODE_ROLE:             ${NODE_ROLE:-primary}
       TLS_CERT_DIR:          /app/certs
+      # libuv caps concurrent getaddrinfo at half the threadpool (2 of the
+      # default 4). A burst of slow lookups can back the queue up faster than
+      # 2 threads drain it, wedging every new outbound connection — including
+      # the pg pool's. 64 threads = 32 concurrent lookups, which drains any
+      # realistic burst.
+      UV_THREADPOOL_SIZE:    "64"
     volumes:
       - app-logs:/app/logs
       - blocklists:/app/blocklists
@@ -185,8 +191,10 @@ services:
         condition: service_healthy
     env_file: .env
     environment:
-      REDIS_URL:   redis://redis:6379
-      BACKEND_URL: http://api:3001
+      REDIS_URL:          redis://redis:6379
+      BACKEND_URL:        http://api:3001
+      # Same rationale as the api service — see its UV_THREADPOOL_SIZE note.
+      UV_THREADPOOL_SIZE: "64"
     ports:
       - "${DNS_BIND_IP:-172.16.1.250}:53:53/udp"
       - "${DNS_BIND_IP:-172.16.1.250}:53:53/tcp"
