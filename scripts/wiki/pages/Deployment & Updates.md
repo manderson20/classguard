@@ -9,6 +9,7 @@ Each node runs a host-level **update watcher** on a timer. When an update is sch
 - Updates are **scheduled per version**, cluster-wide — every active node is offered the same target version.
 - A version bump is required for the update flow to offer an update; deploying without bumping the version does nothing.
 - The watcher retries the completion handshake while the API is still booting, so a slow start doesn't wedge the update.
+- The flow is **self-healing**: a deploy that crashes mid–container-recreate is detected and finished on the watcher's next tick, and a stale in-progress marker can't block future updates.
 
 ## Versioning
 
@@ -38,7 +39,7 @@ Because each node builds from a pinned version, rolling back is scheduling the p
 
 ## Backups
 
-Configuration and identity material are exported via the encrypted backup workflow before a major change — see [[Backup & Restore|Backup and Restore]]. Restore targets a fresh node; restoring over a populated database is intentionally refused.
+Configuration and identity material are exported via the encrypted backup workflow before a major change — see [[Backup & Restore|Backup and Restore]]. Scheduled backups can also run automatically (daily or weekly, with retention) on the primary node. Restore targets a fresh node; restoring over a populated database is intentionally refused.
 
 ---
 _[[Home]] · ClassGuard Help Center_

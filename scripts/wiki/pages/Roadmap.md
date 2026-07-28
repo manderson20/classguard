@@ -15,7 +15,7 @@ The network access control layer — BYOD Wi-Fi (Google-credential auth gated by
 ## 📈 Monitoring
 
 - Zabbix server upgrade and dashboard import validation
-- Scheduled backups with a retention policy and UI
+- ~~Scheduled backups with a retention policy and UI~~ — shipped in v0.17.0 ([[Backup & Restore|Backup and Restore]])
 - Restore-runbook rehearsal on a fresh node pair
 
 See [[Monitoring & Wallboard]].
