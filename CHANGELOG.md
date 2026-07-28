@@ -12,6 +12,15 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.16.2] - 2026-07-28
+
+### Changed
+
+- **Dependency batch** covering all open dependabot PRs (#182, #184–#197):
+  - *backend* — `@anthropic-ai/sdk` 0.115.0, `@aws-sdk/client-route-53` 3.1096.0, `express-rate-limit` 8.6.1
+  - *dns-engine* — `body-parser` 2.3.0, `express-rate-limit` 8.6.1
+  - *frontend* — `react`/`react-dom` 19.2.8, `@tanstack/react-query` 5.101.4, `recharts` 3.10.1, `vite` 8.1.5, `@vitejs/plugin-react` 6.0.4, `postcss` 8.5.23, `tailwindcss`/`@tailwindcss/postcss` 4.3.3, nginx base image 1.31.3-alpine
+
 ## [0.16.1] - 2026-07-27
 
 ### Security
