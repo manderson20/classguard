@@ -1,6 +1,6 @@
 {
   "name": "classguard-backend",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "description": "ClassGuard API server, WebSocket hub, and background services",
   "main": "src/index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "lint": "eslint src/"
   },
   "dependencies": {
-    "@aws-sdk/client-route-53": "^3.1077.0",
+    "@aws-sdk/client-route-53": "^3.1096.0",
     "@socket.io/redis-adapter": "^8.3.0",
     "acme-client": "^5.4.0",
     "axios": "^1.18.1",
@@ -19,7 +19,7 @@
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "express": "^5.0.0",
-    "express-rate-limit": "^8.5.2",
+    "express-rate-limit": "^8.6.1",
     "google-auth-library": "^10.9.0",
     "googleapis": "^173.0.0",
     "helmet": "^8.3.0",
@@ -36,7 +36,7 @@
     "uuid": "^14.0.1"
   },
   "optionalDependencies": {
-    "@anthropic-ai/sdk": "^0.111.0"
+    "@anthropic-ai/sdk": "^0.115.0"
   },
   "overrides": {
     "exceljs": {
