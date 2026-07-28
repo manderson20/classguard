@@ -12,6 +12,23 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.16.1] - 2026-07-27
+
+### Security
+
+- **Cleared every high-severity `npm audit` finding across backend, frontend, and chrome-extension** (the CI Security gate had been failing since 2026-07-20):
+  - *backend* — `body-parser` bumped; `exceljs`'s vulnerable `archiver`/`unzipper` chains replaced via npm `overrides` (`archiver@8`, `unzipper@0.12` — phone-spreadsheet import/export round-trip verified); `googleapis-common`'s exact-pinned vulnerable `gaxios` overridden to 7.3.0 (googleapis client verified).
+  - *frontend* — migrated `react-router-dom@7` → `react-router@8.3.0` (react-router-dom is a re-export shim with no patched release; v8 keeps every API we use — all 41 importing files updated and a 20-route headless render sweep passes). Also `fast-uri`, `postcss`, and `brace-expansion` chains fixed via `npm audit fix`.
+  - *chrome-extension* — `crx`'s vulnerable `archiver@5` chain overridden to `archiver@8`, with a `patch-package` shim teaching `crx` archiver 8's class export (`ZipArchive`); extension build + `.crx` packing verified after a clean `npm ci`.
+  - Remaining findings are moderate/low only (below the CI gate); the open dependabot PRs covering `body-parser`, `fast-uri`, and `postcss` are superseded by this.
+
+### Fixed
+
+- **Standby nodes could wedge into hours-long "database unreachable" outages while their database was healthy.** Root cause (caught live with the Node inspector): a transient slow-DNS blip made new Postgres connections fail, each 2-second connect timeout enqueued another `getaddrinfo` retry, and libuv only runs 2 concurrent lookups on the default 4-thread pool — so the lookup queue grew faster than it drained (observed at 35,000+ pending requests), leaving the process unable to open any outbound connection for hours until the queue drained on its own. The DNS engine died in sympathy because its per-query device lookup waits on the wedged API. Three-layer fix:
+  - `UV_THREADPOOL_SIZE=64` for the api and dns containers — 32 concurrent lookups drains any realistic burst instead of queueing behind 2.
+  - The pg pool now keeps connections warm (10-minute idle timeout, TCP keepalive, 10s connect timeout) instead of cycling its last connection every 30 seconds on a quiet standby — removing the constant stream of fresh lookups that fed the feedback loop.
+  - A **DB watchdog** probes the pool every 30 seconds (which also keeps one connection alive); after ~5 minutes of continuous failure the process exits so Docker's restart policy brings it back clean — turning a multi-hour wedge into a sub-minute blip even if a novel variant recurs. Disable with `DB_WATCHDOG=off`.
+
 ## [0.16.0] - 2026-07-18
 
 ### Added

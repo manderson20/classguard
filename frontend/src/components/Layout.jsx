@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Outlet, NavLink, useNavigate, useLocation } from 'react-router-dom';
+import { Outlet, NavLink, useNavigate, useLocation } from 'react-router';
 import { Icon as MdiIcon } from '@mdi/react';
 import {
   mdiViewDashboardOutline,
@@ -62,7 +62,7 @@ import { useSocket } from '../contexts/SocketContext';
 import { useQuery } from '@tanstack/react-query';
 import api from '../lib/api';
 
-const VERSION = '0.16.0';
+const VERSION = '0.16.1';
 const ROLES   = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
 
 function Icon({ path }) {

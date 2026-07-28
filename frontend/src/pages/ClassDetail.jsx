@@ -1,5 +1,5 @@
 import { useState, useEffect, Fragment } from 'react';
-import { useParams, Link, useNavigate } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../lib/api';
 import { useSocket } from '../contexts/SocketContext';

@@ -2,11 +2,12 @@
   "name": "classguard-extension",
   "version": "0.0.21",
   "private": true,
-  "description": "ClassGuard Chrome Extension — student device monitoring and policy enforcement",
+  "description": "ClassGuard Chrome Extension \u2014 student device monitoring and policy enforcement",
   "scripts": {
     "build": "webpack --mode production",
     "dev": "webpack --mode development --watch",
-    "lint": "eslint src/"
+    "lint": "eslint src/",
+    "postinstall": "patch-package"
   },
   "devDependencies": {
     "@babel/core": "^7.24.0",
@@ -19,11 +20,17 @@
     "dotenv-webpack": "^9.0.0",
     "html-webpack-plugin": "^5.6.0",
     "mini-css-extract-plugin": "^2.9.0",
+    "patch-package": "^8.0.1",
     "style-loader": "^4.0.0",
     "webpack": "^5.108.4",
     "webpack-cli": "^7.2.1"
   },
   "dependencies": {
     "socket.io-client": "^4.8.1"
+  },
+  "overrides": {
+    "crx": {
+      "archiver": "^8.0.0"
+    }
   }
 }
