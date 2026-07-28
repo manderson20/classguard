@@ -9,7 +9,8 @@ const multer  = require('multer');
 const { authenticate } = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const { requireMinRole }    = require('../middleware/roles');
-const configBackup = require('../services/configBackup');
+const configBackup    = require('../services/configBackup');
+const scheduledBackup = require('../services/scheduledBackup');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
@@ -62,6 +63,59 @@ router.post('/restore', authenticate, requireMinRole('superadmin'), upload.singl
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// --- Scheduled backups -------------------------------------------------------
+// Everything below is hardcoded superadmin-only: scheduled files always carry
+// env identity (JWT_SECRET / EXTENSION_SIGNING_KEY inside the encrypted
+// payload), so handing one to a delegated exporter would be the same quiet
+// privilege escalation the manual export path guards against per-caller.
+const scheduledAuth = [authenticate, requireMinRole('superadmin')];
+
+router.get('/scheduled', ...scheduledAuth, async (req, res) => {
+  try {
+    const settings = await scheduledBackup.getScheduleSettings();
+    res.json({
+      files: scheduledBackup.listBackupFiles(),
+      passphraseSet: Boolean(settings.passphrase),
+      schedule: {
+        schedule:  settings.schedule,
+        time:      settings.time,
+        day:       settings.day,
+        retention: settings.retention,
+      },
+    });
+  } catch (err) {
+    console.error('[backup] list error:', err.message);
+    res.status(500).json({ error: 'Failed to list backups' });
+  }
+});
+
+router.post('/scheduled/run', ...scheduledAuth, async (req, res) => {
+  try {
+    const result = await scheduledBackup.runBackup();
+    res.json(result);
+  } catch (err) {
+    console.error('[backup] run-now error:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.get('/scheduled/:name', ...scheduledAuth, (req, res) => {
+  const full = scheduledBackup.resolveBackupFile(req.params.name);
+  if (!full) return res.status(404).json({ error: 'No such backup' });
+  res.set({
+    'Content-Type': 'application/octet-stream',
+    'Content-Disposition': `attachment; filename="${req.params.name}"`,
+  });
+  res.sendFile(full);
+});
+
+router.delete('/scheduled/:name', ...scheduledAuth, (req, res) => {
+  if (!scheduledBackup.deleteBackup(req.params.name)) {
+    return res.status(404).json({ error: 'No such backup' });
+  }
+  res.json({ deleted: req.params.name });
 });
 
 module.exports = router;

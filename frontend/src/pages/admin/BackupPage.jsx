@@ -1,7 +1,241 @@
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 
 const ROLES = { student: 0, teacher: 1, admin: 2, superadmin: 3 };
+
+const DAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+function fmtSize(bytes) {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(0)} KB`;
+  return `${bytes} B`;
+}
+
+function ScheduledSection() {
+  const [data, setData]   = useState(null);
+  const [error, setError] = useState('');
+  const [busy, setBusy]   = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // Editable schedule form state
+  const [schedule, setSchedule]   = useState('off');
+  const [time, setTime]           = useState('02:30');
+  const [day, setDay]             = useState(0);
+  const [retention, setRetention] = useState(14);
+  const [passphrase, setPassphrase] = useState('');
+
+  const token = localStorage.getItem('cg_token');
+  const authed = useCallback((path, opts = {}) =>
+    fetch(`/api/v1${path}`, { ...opts, headers: { Authorization: `Bearer ${token}`, ...opts.headers } }), [token]);
+
+  const load = useCallback(async () => {
+    try {
+      const res  = await authed('/backup/scheduled');
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to load');
+      setData(json);
+      setSchedule(json.schedule.schedule);
+      setTime(json.schedule.time);
+      setDay(json.schedule.day);
+      setRetention(json.schedule.retention);
+    } catch (e) {
+      setError(e.message);
+    }
+  }, [authed]);
+
+  useEffect(() => { load(); }, [load]);
+
+  async function saveConfig() {
+    setBusy(true); setError(''); setSaved(false);
+    try {
+      const body = {
+        backup_schedule: schedule,
+        backup_schedule_time: time,
+        backup_schedule_day: String(day),
+        backup_retention_count: String(retention),
+      };
+      // Blank means "keep the stored passphrase" — never overwrite with ''.
+      if (passphrase) body.backup_passphrase = passphrase;
+      const res = await authed('/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to save');
+      setPassphrase('');
+      setSaved(true);
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runNow() {
+    setBusy(true); setError('');
+    try {
+      const res  = await authed('/backup/scheduled/run', { method: 'POST' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Backup failed');
+      await load();
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function download(name) {
+    setError('');
+    try {
+      const res = await authed(`/backup/scheduled/${name}`);
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `Download failed (${res.status})`);
+      }
+      const blob = await res.blob();
+      const url  = URL.createObjectURL(blob);
+      const a    = document.createElement('a');
+      a.href = url;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  async function remove(name) {
+    if (!window.confirm(`Delete ${name}? This cannot be undone.`)) return;
+    setError('');
+    try {
+      const res = await authed(`/backup/scheduled/${name}`, { method: 'DELETE' });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || 'Delete failed');
+      }
+      await load();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
+  return (
+    <div className="card p-5">
+      <h2 className="text-sm font-semibold text-slate-700 mb-1">Scheduled Backups</h2>
+      <p className="text-xs text-slate-500 mb-4">
+        Automatic encrypted backups, written on the primary server and kept to the retention count below. These
+        files include the server identity keys, so access is superadmin-only. They live on the server itself —
+        download copies somewhere safe regularly; a backup that only exists on the machine it's meant to rebuild
+        won't survive losing that machine.
+      </p>
+
+      {data && !data.passphraseSet && schedule !== 'off' && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-800 mb-4">
+          No backup passphrase is set — scheduled backups will be skipped until you set one below.
+        </div>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 max-w-lg mb-3">
+        <div>
+          <label className="label">Schedule</label>
+          <select className="input text-sm" value={schedule} onChange={e => setSchedule(e.target.value)}>
+            <option value="off">Off</option>
+            <option value="daily">Daily</option>
+            <option value="weekly">Weekly</option>
+          </select>
+        </div>
+        <div>
+          <label className="label">Time (server time)</label>
+          <input type="time" className="input text-sm" value={time} onChange={e => setTime(e.target.value)} />
+        </div>
+        {schedule === 'weekly' && (
+          <div>
+            <label className="label">Day</label>
+            <select className="input text-sm" value={day} onChange={e => setDay(Number(e.target.value))}>
+              {DAYS.map((d, i) => <option key={d} value={i}>{d}</option>)}
+            </select>
+          </div>
+        )}
+        <div>
+          <label className="label">Keep most recent</label>
+          <input
+            type="number" min="1" max="365" className="input text-sm"
+            value={retention}
+            onChange={e => setRetention(Math.max(1, parseInt(e.target.value, 10) || 1))}
+          />
+        </div>
+        <div className="col-span-2">
+          <label className="label">Backup passphrase</label>
+          <input
+            type="password" className="input text-sm"
+            placeholder={data?.passphraseSet ? 'Set — leave blank to keep' : 'Required for scheduled backups'}
+            value={passphrase}
+            onChange={e => setPassphrase(e.target.value)}
+          />
+          {passphrase.length > 0 && passphrase.length < 8 && (
+            <p className="text-xs text-red-600 mt-1">At least 8 characters</p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex gap-2 mb-4">
+        <button
+          className="btn-primary text-sm"
+          onClick={saveConfig}
+          disabled={busy || (passphrase.length > 0 && passphrase.length < 8)}
+        >
+          Save Schedule
+        </button>
+        <button
+          className="btn-secondary text-sm"
+          onClick={runNow}
+          disabled={busy || !data?.passphraseSet}
+          title={data?.passphraseSet ? '' : 'Set a passphrase first'}
+        >
+          {busy ? 'Working…' : 'Back Up Now'}
+        </button>
+        {saved && <span className="text-xs text-green-600 self-center">Saved.</span>}
+      </div>
+
+      {error && <p className="text-xs text-red-600 mb-3">{error}</p>}
+
+      {data?.files?.length > 0 ? (
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-left text-slate-500 border-b border-slate-200">
+              <th className="py-1.5 pr-3">File</th>
+              <th className="py-1.5 pr-3">Created</th>
+              <th className="py-1.5 pr-3">Size</th>
+              <th className="py-1.5 pr-3">Version</th>
+              <th className="py-1.5"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.files.map(f => (
+              <tr key={f.name} className="border-b border-slate-100">
+                <td className="py-1.5 pr-3 font-mono">{f.name}</td>
+                <td className="py-1.5 pr-3">{f.createdAt ? new Date(f.createdAt).toLocaleString() : '—'}</td>
+                <td className="py-1.5 pr-3">{fmtSize(f.size)}</td>
+                <td className="py-1.5 pr-3">{f.classguardVersion || '—'}</td>
+                <td className="py-1.5 text-right whitespace-nowrap">
+                  <button className="text-brand-600 hover:underline mr-3" onClick={() => download(f.name)}>Download</button>
+                  <button className="text-red-600 hover:underline" onClick={() => remove(f.name)}>Delete</button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        data && <p className="text-xs text-slate-400">No scheduled backups yet.</p>
+      )}
+    </div>
+  );
+}
 
 function ExportSection() {
   const [passphrase, setPassphrase] = useState('');
@@ -281,6 +515,7 @@ export default function BackupPage() {
       </div>
 
       <ExportSection />
+      {isSuperAdmin && <ScheduledSection />}
       {isSuperAdmin ? (
         <RestoreSection />
       ) : (
