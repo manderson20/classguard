@@ -12,6 +12,12 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.0] - 2026-07-28
+
+### Added
+
+- **Scheduled backups with retention** (#168): cron-driven encrypted config backups (daily or weekly at a configured time), written to a dedicated docker volume on the primary node and pruned to a configurable keep-N retention. New "Scheduled Backups" section on the Backup & Restore page (superadmin-only) to configure the schedule, set the encryption passphrase, run a backup on demand, and list/download/delete the stored files. Scheduled files always include the server identity keys (same encrypted format as a superadmin manual export), so list/download/delete are superadmin-only end to end.
+
 ## [0.16.2] - 2026-07-28
 
 ### Changed

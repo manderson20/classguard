@@ -26,6 +26,12 @@ const ALLOWED_KEYS = new Set([
   // Zabbix agent auto-install — when set, every node's minutely
   // sync-zabbix-agent.sh installs/points zabbix-agent2 at this address.
   'zabbix_server_address',
+  // Scheduled config backups (Backup & Restore page). The passphrase lives
+  // here so unattended runs can encrypt at all — same trust model as the
+  // other credentials in this list; the backup files themselves are
+  // superadmin-only (see routes/backup.js).
+  'backup_schedule', 'backup_schedule_time', 'backup_schedule_day',
+  'backup_retention_count', 'backup_passphrase',
   // Integrations
   'zammad_url', 'zammad_token',
   // mosyle_email/password: Mosyle Manager's token-only auth is deprecated;

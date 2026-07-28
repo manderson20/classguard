@@ -388,4 +388,4 @@ async function restoreBackup(buffer, passphrase) {
   };
 }
 
-module.exports = { TABLES, createBackup, previewBackup, restoreBackup };
+module.exports = { TABLES, createBackup, previewBackup, restoreBackup, parseHeader };

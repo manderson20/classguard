@@ -13,7 +13,8 @@ const pingScan  = require('./pingScan');
 const dhcpDnsAutoRegister = require('./dhcpDnsAutoRegister');
 const dhcpKeaSync   = require('./dhcpKeaSync');
 const dhcpKeaSyncV6 = require('./dhcpKeaSyncV6');
-const metricsHistory = require('./metricsHistory');
+const metricsHistory  = require('./metricsHistory');
+const scheduledBackup = require('./scheduledBackup');
 const dhcpLeaseIpamSync = require('./dhcpLeaseIpamSync');
 const integrationDeviceIpamSync = require('./integrationDeviceIpamSync');
 const radiusSync = require('./radiusSync');
@@ -722,6 +723,13 @@ function startScheduler() {
   // Runs only where the DB is writable, like everything else in this section.
   cron.schedule('* * * * *', () => {
     metricsHistory.sampleClusterMetrics().catch(err => console.error('[scheduler] metrics-sample error:', err.message));
+  });
+
+  // Scheduled config backups — per-minute boundary check against the
+  // configured HH:MM slot (bell-schedule idiom). Only the cron-jobs node
+  // runs this, so backup files accumulate on the primary.
+  cron.schedule('* * * * *', () => {
+    scheduledBackup.maybeRun().catch(err => console.error('[scheduler] scheduled-backup error:', err.message));
   });
 }
 
