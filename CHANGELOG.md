@@ -12,6 +12,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.1] - 2026-07-31
+
+### Changed
+
+- **Dependency batch** covering all open dependabot PRs (#203–#212): backend google-auth-library 10.9.1, @aws-sdk/client-route-53 3.1097.0, eslint 10.8.0; frontend eslint 10.8.0, postcss 8.5.25, globals 17.8.0; dns-engine dns2 3.1.1; chrome-extension webpack 5.109.2, webpack-cli 7.2.2, html-webpack-plugin 5.6.8. All workspaces lint/build/audit clean.
+
+### Fixed
+
+- **Metrics sampler**: a failed local metrics collection is now logged with its reason instead of silently skipping the sample, so gaps in wallboard history are diagnosable.
+
 ## [0.17.0] - 2026-07-28
 
 ### Added
