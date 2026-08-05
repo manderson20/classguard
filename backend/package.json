@@ -23,7 +23,7 @@
     "google-auth-library": "^10.9.0",
     "googleapis": "^173.0.0",
     "helmet": "^8.3.0",
-    "ioredis": "^5.4.2",
+    "ioredis": "^6.0.0",
     "jsonwebtoken": "^9.0.2",
     "ldapjs": "^3.0.7",
     "multer": "^2.2.0",
