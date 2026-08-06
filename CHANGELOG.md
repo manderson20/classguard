@@ -30,6 +30,13 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 - Removed the Add Blocklist "Description" field, which was silently discarded
   (blocklist sources have no description column).
 
+### Security
+
+- Lockfile bumps clearing the high-severity advisories published 2026-08-03:
+  `socket.io-parser` 4.2.7 (zero-attachment memory exhaustion,
+  GHSA-2m8v-j782-fhvr) in backend/frontend/chrome-extension and `ip-address`
+  10.4.0 (SSRF / trust-boundary bypasses) in all workspaces that carry it.
+
 ---
 
 ## [0.17.0] - 2026-07-28
