@@ -12,6 +12,26 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.1] - 2026-08-06
+
+### Added
+
+- **URL-pattern blocklist format**: new `url_list` source format for Securly-style
+  URL/wildcard lists (`*.example.com/`, `example.com/`, full URLs). The parser
+  extracts the hostname; entries scoped to a specific path are skipped, since DNS
+  filtering is host-level and blocking the whole host would over-block.
+- **Format selector in the Add Blocklist dialog**: manually added sources previously
+  always got `domain_list` with no way to choose. The dialog now offers all four
+  formats, each source row shows its format, and `PUT /blocklists/:id` accepts a
+  `format` change.
+
+### Fixed
+
+- Removed the Add Blocklist "Description" field, which was silently discarded
+  (blocklist sources have no description column).
+
+---
+
 ## [0.17.0] - 2026-07-28
 
 ### Added
