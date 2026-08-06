@@ -12,6 +12,33 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.1] - 2026-08-06
+
+### Added
+
+- **URL-pattern blocklist format**: new `url_list` source format for Securly-style
+  URL/wildcard lists (`*.example.com/`, `example.com/`, full URLs). The parser
+  extracts the hostname; entries scoped to a specific path are skipped, since DNS
+  filtering is host-level and blocking the whole host would over-block.
+- **Format selector in the Add Blocklist dialog**: manually added sources previously
+  always got `domain_list` with no way to choose. The dialog now offers all four
+  formats, each source row shows its format, and `PUT /blocklists/:id` accepts a
+  `format` change.
+
+### Fixed
+
+- Removed the Add Blocklist "Description" field, which was silently discarded
+  (blocklist sources have no description column).
+
+### Security
+
+- Lockfile bumps clearing the high-severity advisories published 2026-08-03:
+  `socket.io-parser` 4.2.7 (zero-attachment memory exhaustion,
+  GHSA-2m8v-j782-fhvr) in backend/frontend/chrome-extension and `ip-address`
+  10.4.0 (SSRF / trust-boundary bypasses) in all workspaces that carry it.
+
+---
+
 ## [0.17.0] - 2026-07-28
 
 ### Added

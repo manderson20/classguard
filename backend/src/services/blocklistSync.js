@@ -41,6 +41,18 @@ function parseLine(raw, format) {
       domain = m[1].toLowerCase();
       break;
     }
+    case 'url_list': {
+      // Securly-style URL patterns: '*.example.com/', 'example.com/', full URLs.
+      // DNS filtering is host-level only, so entries scoped to a specific path
+      // are skipped rather than over-blocking the whole host.
+      const stripped = line.split(/\s+/)[0].toLowerCase()
+        .replace(/^https?:\/\//, '')
+        .replace(/^\*\./, '');
+      const slash = stripped.indexOf('/');
+      if (slash !== -1 && slash < stripped.length - 1) return null;
+      domain = slash === -1 ? stripped : stripped.slice(0, slash);
+      break;
+    }
     case 'domain_list':
     default:
       domain = line.split('#')[0].trim().toLowerCase();
@@ -62,14 +74,16 @@ async function fetchAndParse(source) {
   });
 
   const rl      = readline.createInterface({ input: stream, crlfDelay: Infinity });
-  const domains = [];
+  const domains = new Set();
 
   for await (const line of rl) {
     const d = parseLine(line, source.format);
-    if (d) domains.push(d);
+    if (d) domains.add(d);
   }
 
-  return domains;
+  // Deduped, so domain_count matches the Redis set cardinality (url_list
+  // sources commonly list each domain twice: '*.x.com/' and 'x.com/').
+  return [...domains];
 }
 
 // ---------------------------------------------------------------------------
