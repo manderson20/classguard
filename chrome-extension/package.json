@@ -23,7 +23,7 @@
     "patch-package": "^8.0.1",
     "style-loader": "^4.0.0",
     "webpack": "^5.108.4",
-    "webpack-cli": "^7.2.1"
+    "webpack-cli": "^7.2.3"
   },
   "dependencies": {
     "socket.io-client": "^4.8.1"
