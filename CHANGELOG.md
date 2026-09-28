@@ -12,6 +12,18 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.9] - 2026-09-28
+
+### Added
+
+- **Live screen thumbnails on the class view**: a **Show Screens** toggle (remembered per browser) adds a live thumbnail of each student's screen to their card on the Active Lesson page, refreshed every 5s. Click a thumbnail to enlarge it. Thumbnail frames are downscaled by the extension (480px wide), so a whole class stays a few KB per student per frame. This replaces the separate view-only Thumbnails overlay (20s refresh).
+- **Enlarged Live View with controls**: the full-size view now refreshes about every 1.5s (was 4s) and has Lock, Unlock, Close Current Tab, Open URL and Message controls, the student's **open tabs** (each closable individually), and their browsing **history for the current class**, refreshed live. The admin device-view page keeps a view-only window.
+- **Open tabs / close a specific tab**: every Live View frame now carries the student's open tabs (title and URL), and close-tab requests accept a `tab_id` to close that tab rather than the active one. Needs extension 0.0.22, which rolls out through the normal extension auto-update; until a device updates, the tab list reads "appears once this device's extension updates".
+
+### Fixed
+
+- Closing one Live View of a student no longer cuts off another view of the same student: frame-room joins are reference-counted per browser, sessions reopen automatically if closed elsewhere, and rooms are rejoined after a socket reconnect.
+
 ## [0.17.8] - 2026-09-28
 
 ### Fixed

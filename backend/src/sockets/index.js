@@ -286,15 +286,15 @@ const setupSockets = (io) => {
   // whatever comes back to anyone currently watching that student. Nothing
   // here touches the database — see /extension/liveview-frame's comment for
   // why this is deliberately ephemeral.
-  events.on('admin:liveview_request', ({ studentId }) => {
+  events.on('admin:liveview_request', ({ studentId, size }) => {
     if (studentId) {
-      io.to(`student:${studentId}`).emit('liveview:request');
+      io.to(`student:${studentId}`).emit('liveview:request', { size });
     }
   });
 
-  events.on('student:liveview_frame', ({ studentId, dataUrl, url, title, capturedAt }) => {
+  events.on('student:liveview_frame', ({ studentId, dataUrl, url, title, capturedAt, size, tabs }) => {
     if (studentId) {
-      io.to(`liveview:${studentId}`).emit('liveview:frame', { studentId, dataUrl, url, title, capturedAt });
+      io.to(`liveview:${studentId}`).emit('liveview:frame', { studentId, dataUrl, url, title, capturedAt, size, tabs });
     }
   });
 
@@ -315,8 +315,8 @@ const setupSockets = (io) => {
     if (studentId) io.to(`student:${studentId}`).emit('tab:open', { url });
   });
 
-  events.on('teacher:close_tab_request', ({ studentId }) => {
-    if (studentId) io.to(`student:${studentId}`).emit('tab:close');
+  events.on('teacher:close_tab_request', ({ studentId, tabId }) => {
+    if (studentId) io.to(`student:${studentId}`).emit('tab:close', tabId != null ? { tabId } : undefined);
   });
 
   // Chat — every authenticated socket (student or staff) already joins its

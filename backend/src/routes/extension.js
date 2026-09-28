@@ -973,10 +973,27 @@ router.post('/request-screenshot', authenticate, requireMinRole('teacher'), asyn
 // bigger privacy footprint than the feature needs, and screenshots already
 // have no retention/cleanup job (see migration 015's comment) — this
 // deliberately doesn't add to that pile.
-// Body: { data_url, url, title }
+// Body: { data_url, url, title, size?, tabs? } — tabs (extension 0.0.22+)
+// lists the student's open tabs so the viewer can see what else is open and
+// close a specific one; older extensions simply omit it.
 // ---------------------------------------------------------------------------
+const MAX_LIVEVIEW_TABS = 100;
+
+function sanitizeTabs(tabs) {
+  if (!Array.isArray(tabs)) return null;
+  return tabs.slice(0, MAX_LIVEVIEW_TABS)
+    .filter(t => t && Number.isInteger(t.id))
+    .map(t => ({
+      id:       t.id,
+      windowId: Number.isInteger(t.windowId) ? t.windowId : null,
+      active:   t.active === true,
+      title:    typeof t.title === 'string' ? t.title.slice(0, 300) : '',
+      url:      typeof t.url === 'string' ? t.url.slice(0, 2000) : '',
+    }));
+}
+
 router.post('/liveview-frame', authenticate, async (req, res) => {
-  const { data_url, url, title } = req.body;
+  const { data_url, url, title, size, tabs } = req.body;
   if (!data_url || !/^data:image\/(png|jpeg|webp);base64,/.test(data_url)) {
     return res.status(400).json({ error: 'invalid data_url format' });
   }
@@ -987,6 +1004,8 @@ router.post('/liveview-frame', authenticate, async (req, res) => {
     url:       url || null,
     title:     title || null,
     capturedAt: new Date().toISOString(),
+    size:      size === 'thumb' ? 'thumb' : 'full',
+    tabs:      sanitizeTabs(tabs),
   });
 
   res.json({ ok: true });
@@ -1049,14 +1068,18 @@ router.post('/open-tab-request', authenticate, requireMinRole('teacher'), async 
   res.json({ ok: true });
 });
 
+// Body: { student_id, tab_id?, url? } — tab_id closes that specific tab (ids
+// come from a Live View frame's tabs list); without it the active tab closes.
+// url is only recorded in the action log.
 router.post('/close-tab-request', authenticate, requireMinRole('teacher'), async (req, res) => {
-  const { student_id } = req.body;
+  const { student_id, tab_id, url } = req.body;
   if (!student_id) return res.status(400).json({ error: 'student_id required' });
+  if (tab_id != null && !Number.isInteger(tab_id)) return res.status(400).json({ error: 'tab_id must be an integer' });
   if (req.user.role === 'teacher' && !(await teacherOwnsStudent(req.user.userId, student_id))) {
     return res.status(403).json({ error: 'This student is not on one of your rosters' });
   }
-  events.emit('teacher:close_tab_request', { studentId: student_id });
-  await logTeacherAction(req, student_id, 'close_tab');
+  events.emit('teacher:close_tab_request', { studentId: student_id, tabId: tab_id ?? null });
+  await logTeacherAction(req, student_id, 'close_tab', typeof url === 'string' ? url.slice(0, 2000) : null);
   res.json({ ok: true });
 });
 

@@ -64,11 +64,11 @@ async function init() {
       jwt,
       onPolicyUpdated:   () => syncPolicy(),
       onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
-      onLiveViewRequest: () => captureForLiveView(),
+      onLiveViewRequest: (data) => captureForLiveView(data?.size),
       onLockRequest:     (data) => lockScreen(data),
       onUnlockRequest:   () => unlockScreen(),
       onOpenTabRequest:  (data) => openTab(data?.url),
-      onCloseTabRequest: () => closeTab(),
+      onCloseTabRequest: (data) => closeTab(data?.tabId),
       onChatMessage:     (data) => broadcastChatMessage(data),
       onBroadcastFrame:  (data) => broadcastScreenFrame(data),
       onBroadcastEnd:    (data) => broadcastScreenEnd(data),
@@ -116,11 +116,11 @@ async function authenticate() {
       jwt: token,
       onPolicyUpdated:   () => syncPolicy(),
       onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
-      onLiveViewRequest: () => captureForLiveView(),
+      onLiveViewRequest: (data) => captureForLiveView(data?.size),
       onLockRequest:     (data) => lockScreen(data),
       onUnlockRequest:   () => unlockScreen(),
       onOpenTabRequest:  (data) => openTab(data?.url),
-      onCloseTabRequest: () => closeTab(),
+      onCloseTabRequest: (data) => closeTab(data?.tabId),
       onChatMessage:     (data) => broadcastChatMessage(data),
       onBroadcastFrame:  (data) => broadcastScreenFrame(data),
       onBroadcastEnd:    (data) => broadcastScreenEnd(data),
@@ -260,7 +260,13 @@ async function captureAndUpload({ trigger = 'manual', triggerDetail = null, tabI
 // storage paths (permanent + audited vs ephemeral) can never be mixed up by
 // a future edit to one of them.
 // ---------------------------------------------------------------------------
-async function captureForLiveView() {
+// size 'thumb' = the teacher's class thumbnail grid: downscaled so a whole
+// class refreshing every few seconds stays a few KB per student per frame.
+// Every frame also carries the list of open tabs (title/url only), so the
+// viewer can see what else is open and close a specific tab by id.
+const THUMB_MAX_WIDTH = 480;
+
+async function captureForLiveView(size = 'full') {
   const jwt = await getStoredJWT();
   if (!jwt) return;
 
@@ -268,16 +274,45 @@ async function captureForLiveView() {
     const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     if (!tab || !tab.url?.startsWith('http')) return;
 
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 60 });
+    let dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'jpeg', quality: 60 });
+    if (size === 'thumb') {
+      dataUrl = await downscaleJpeg(dataUrl, THUMB_MAX_WIDTH, 0.5).catch(() => dataUrl);
+    }
+
+    const allTabs = await chrome.tabs.query({}).catch(() => []);
+    const tabs = allTabs.map(t => ({
+      id:       t.id,
+      windowId: t.windowId,
+      active:   t.id === tab.id,
+      title:    t.title || '',
+      url:      t.url || '',
+    }));
 
     await apiFetch('/extension/liveview-frame', {
       method: 'POST',
       jwt,
-      body: { data_url: dataUrl, url: tab.url, title: tab.title || '' },
+      body: { data_url: dataUrl, url: tab.url, title: tab.title || '', size, tabs },
     });
   } catch (err) {
     console.error('[ClassGuard] Live View capture failed:', err.message);
   }
+}
+
+async function downscaleJpeg(dataUrl, maxWidth, quality) {
+  const bitmap = await createImageBitmap(await (await fetch(dataUrl)).blob());
+  const scale  = Math.min(1, maxWidth / bitmap.width);
+  const width  = Math.round(bitmap.width * scale);
+  const height = Math.round(bitmap.height * scale);
+  const canvas = new OffscreenCanvas(width, height);
+  canvas.getContext('2d').drawImage(bitmap, 0, 0, width, height);
+  bitmap.close();
+  const blob  = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+  const bytes = new Uint8Array(await blob.arrayBuffer());
+  let binary = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return `data:image/jpeg;base64,${btoa(binary)}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -296,11 +331,11 @@ async function onAlarm(alarm) {
           jwt,
           onPolicyUpdated:   () => syncPolicy(),
           onScreenshotRequest: (trigger) => captureAndUpload({ trigger }),
-      onLiveViewRequest: () => captureForLiveView(),
+      onLiveViewRequest: (data) => captureForLiveView(data?.size),
           onLockRequest:     (data) => lockScreen(data),
           onUnlockRequest:   () => unlockScreen(),
           onOpenTabRequest:  (data) => openTab(data?.url),
-          onCloseTabRequest: () => closeTab(),
+          onCloseTabRequest: (data) => closeTab(data?.tabId),
           onChatMessage:     (data) => broadcastChatMessage(data),
       onBroadcastFrame:  (data) => broadcastScreenFrame(data),
       onBroadcastEnd:    (data) => broadcastScreenEnd(data),
@@ -455,7 +490,13 @@ async function openTab(url) {
   await chrome.tabs.create(url ? { url } : {});
 }
 
-async function closeTab() {
+// tabId (from a Live View frame's tabs list) closes that tab; without one,
+// the active tab closes, as before.
+async function closeTab(tabId) {
+  if (Number.isInteger(tabId)) {
+    await chrome.tabs.remove(tabId).catch(() => {});
+    return;
+  }
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (tab) await chrome.tabs.remove(tab.id).catch(() => {});
 }

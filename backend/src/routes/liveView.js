@@ -128,6 +128,8 @@ router.post('/:studentId/stop', ...auth, requireLiveViewAccess, async (req, res)
 // Asks the student's extension for one more frame. Requires an active
 // session (started via /start) so a frame can never be requested without
 // a corresponding audit row already on record.
+// Body (optional): { size: 'thumb' } — a downscaled frame for the class
+// thumbnail grid instead of a full-resolution one.
 router.post('/:studentId/frame', ...auth, requireLiveViewAccess, async (req, res) => {
   const { studentId } = req.params;
   const active = await getActiveSession(req, studentId);
@@ -135,7 +137,8 @@ router.post('/:studentId/frame', ...auth, requireLiveViewAccess, async (req, res
     return res.status(403).json({ error: 'No active live-view session for this student — call /start first' });
   }
 
-  events.emit('admin:liveview_request', { studentId, viewerId: req.user.userId });
+  const size = req.body?.size === 'thumb' ? 'thumb' : 'full';
+  events.emit('admin:liveview_request', { studentId, viewerId: req.user.userId, size });
   res.json({ ok: true });
 });
 
