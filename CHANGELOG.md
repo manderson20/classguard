@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.2] - 2026-09-28
+
+### Fixed
+
+- **VPN container build failure on nodes without a warm Docker layer cache**: the pinned `strongswan=6.0.4-1ubuntu3.1` package was superseded in the Ubuntu archive by the `6.0.4-1ubuntu3.2` security release, and the old version is no longer downloadable — `apt-get install` exited 100 and the whole update failed on any node that had to rebuild that layer. Pin bumped to `6.0.4-1ubuntu3.2` (verified with a clean `--no-cache` build; charon-systemd starts).
+
+---
+
 ## [0.17.1] - 2026-09-28
 
 ### Fixed
