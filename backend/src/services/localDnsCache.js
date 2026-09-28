@@ -69,7 +69,10 @@ async function rebuildCache() {
     map.get(key).push(...buildAnswers(rec, fqdn));
   }
 
-  const pipeline = redis.pipeline();
+  // MULTI, not a plain pipeline: the delete + refill must apply atomically, or
+  // a lookup landing in between sees no zones and leaks to public upstream.
+  // (This now also runs periodically on every node — see scheduler.js.)
+  const pipeline = redis.multi();
   pipeline.del(RECORDS_KEY);
   pipeline.del(ZONES_KEY);
   for (const z of zones) pipeline.sadd(ZONES_KEY, z.name.toLowerCase());

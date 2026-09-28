@@ -7,11 +7,13 @@ const os       = require('os');
 const { execFile } = require('child_process');
 const util     = require('util');
 const axios    = require('axios');
-const { query } = require('../db');
+const { query, withTransaction } = require('../db');
 const redis    = require('../redis');
 
 const execFileAsync = util.promisify(execFile);
 const CATEGORY_KEY  = 'classguard:domain:category';
+const CATEGORY_TMP_KEY = 'classguard:domain:category:rebuilding';
+const FINGERPRINT_KEY  = 'classguard:domain:category:fingerprint';
 const STATUS_KEY    = 'classguard:category-sync:status';
 const CHUNK         = 500;
 
@@ -248,39 +250,102 @@ async function upsertDomains(pairs, source) {
 }
 
 // ---------------------------------------------------------------------------
+// Fingerprint of domain_categories — changes whenever a row is added or
+// removed (imports, keyword classifier, override add/remove) or a manual
+// override is repointed. Cheap enough (~1-2s on ~6M rows) to poll, and
+// computable on a read-only standby replica.
+// ---------------------------------------------------------------------------
+async function categoryFingerprint() {
+  const { rows: [r] } = await query(`
+    SELECT count(*) AS n, max(created_at) AS newest,
+           (SELECT md5(coalesce(string_agg(domain || ':' || category_id, ',' ORDER BY domain, category_id), ''))
+              FROM domain_categories WHERE is_override) AS overrides
+    FROM domain_categories
+  `);
+  return `${r.n}|${r.newest ? new Date(r.newest).toISOString() : ''}|${r.overrides}`;
+}
+
+// ---------------------------------------------------------------------------
 // Rebuild the Redis hash cache from Postgres
 // (one HSET per domain with highest-confidence category)
 // ---------------------------------------------------------------------------
-async function rebuildRedisCache() {
+let rebuildInFlight = null;
+
+function rebuildRedisCache() {
+  // Coalesce concurrent callers (weekly sync, manual button, reconcile loop)
+  // onto one rebuild — each is ~6M rows and ~0.5GB of transient Redis memory.
+  if (!rebuildInFlight) {
+    rebuildInFlight = doRebuildRedisCache().finally(() => { rebuildInFlight = null; });
+  }
+  return rebuildInFlight;
+}
+
+async function doRebuildRedisCache() {
   console.log('[category-import] rebuilding Redis cache from Postgres...');
 
-  // Get the primary category for each domain (highest confidence, prefer manual overrides)
-  const { rows } = await query(`
-    SELECT dc.domain, wc.slug
-    FROM domain_categories dc
-    JOIN website_categories wc ON wc.id = dc.category_id
-    WHERE NOT EXISTS (
-      SELECT 1 FROM domain_categories dc2
-      WHERE dc2.domain = dc.domain
-        AND (dc2.confidence > dc.confidence OR (dc2.confidence = dc.confidence AND dc2.is_override AND NOT dc.is_override))
-    )
-  `);
+  // Taken before the read so a change landing mid-rebuild leaves the marker
+  // stale and the next reconcile pass picks it up.
+  const fingerprint = await categoryFingerprint();
 
-  // Clear existing cache
-  await redis.del(CATEGORY_KEY);
+  // Get the primary category for each domain (highest confidence, prefer manual overrides).
+  // Parallel workers are disabled for this one query: its parallel hash join
+  // needs more dynamic shared memory than the Postgres container's default
+  // 64MB /dev/shm, and fails outright ("could not resize shared memory
+  // segment ... No space left on device"). The serial plan takes ~8s.
+  const rows = await withTransaction(async (client) => {
+    await client.query('SET LOCAL max_parallel_workers_per_gather = 0');
+    const { rows } = await client.query(`
+      SELECT dc.domain, wc.slug
+      FROM domain_categories dc
+      JOIN website_categories wc ON wc.id = dc.category_id
+      WHERE NOT EXISTS (
+        SELECT 1 FROM domain_categories dc2
+        WHERE dc2.domain = dc.domain
+          AND (dc2.confidence > dc.confidence OR (dc2.confidence = dc.confidence AND dc2.is_override AND NOT dc.is_override))
+      )
+    `);
+    return rows;
+  });
 
-  // Rebuild in chunks
+  // Build into a scratch key and swap it in atomically — deleting the live
+  // hash first left every category lookup missing (i.e. nothing filtered by
+  // category) for the whole multi-second rebuild.
+  await redis.del(CATEGORY_TMP_KEY);
   for (let i = 0; i < rows.length; i += CHUNK) {
     const chunk = rows.slice(i, i + CHUNK);
     const pipeline = redis.pipeline();
     for (const { domain, slug } of chunk) {
-      pipeline.hset(CATEGORY_KEY, domain, slug);
+      pipeline.hset(CATEGORY_TMP_KEY, domain, slug);
     }
     await pipeline.exec();
+  }
+  if (rows.length > 0) {
+    await redis.multi().rename(CATEGORY_TMP_KEY, CATEGORY_KEY).set(FINGERPRINT_KEY, fingerprint).exec();
+  } else {
+    await redis.multi().del(CATEGORY_KEY).set(FINGERPRINT_KEY, fingerprint).exec();
   }
 
   console.log(`[category-import] Redis cache rebuilt — ${rows.length} domains`);
   return rows.length;
+}
+
+// ---------------------------------------------------------------------------
+// Rebuild this node's Redis cache only if it's missing or out of date with
+// Postgres. Runs on EVERY node: each node's DNS engine reads its own local
+// Redis, but imports only run on the RUN_CRON_JOBS node — without this a
+// standby's hash stayed empty and its DNS applied no category filtering.
+// Returns the rebuilt size, or null when already current.
+// ---------------------------------------------------------------------------
+async function reconcileRedisCache() {
+  const [fingerprint, marker, size] = await Promise.all([
+    categoryFingerprint(),
+    redis.get(FINGERPRINT_KEY),
+    redis.hlen(CATEGORY_KEY),
+  ]);
+  const expectEmpty = fingerprint.startsWith('0|');
+  if (marker === fingerprint && (size > 0 || expectEmpty)) return null;
+  console.log(`[category-import] Redis cache out of date (${size} cached) — rebuilding`);
+  return rebuildRedisCache();
 }
 
 // ---------------------------------------------------------------------------
@@ -478,4 +543,4 @@ async function classifyRecentDomains(limit = 500) {
   return classified;
 }
 
-module.exports = { syncAll, importSource, rebuildRedisCache, classifyRecentDomains, getStatus };
+module.exports = { syncAll, importSource, rebuildRedisCache, reconcileRedisCache, classifyRecentDomains, getStatus };
