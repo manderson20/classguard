@@ -34,6 +34,7 @@ async function apiFetch(path, options = {}) {
     const err = await res.json().catch(() => ({}));
     const error = new Error(err.error || `Request failed: ${res.status}`);
     Object.assign(error, err); // carry overlap, conflicting, etc. through to callers
+    error.status = res.status;
     throw error;
   }
 

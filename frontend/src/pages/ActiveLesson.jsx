@@ -7,7 +7,7 @@ import { useAuth } from '../contexts/AuthContext';
 import Avatar from '../components/Avatar';
 import { TraceContent } from '../components/WhyBlockedTrace';
 import LiveViewModal from '../components/LiveViewModal';
-import LiveThumbnailsGrid from '../components/LiveThumbnailsGrid';
+import useLiveFrames, { frameAgeMs } from '../lib/useLiveFrames';
 import StartLessonModal from '../components/StartLessonModal';
 import { Icon as MdiIcon } from '@mdi/react';
 import {
@@ -46,26 +46,27 @@ function hostnameOf(url) {
 // rows (lesson_session_id filter), not all-time history, per explicit user
 // requirement: a teacher reviewing "what did this student do during class"
 // should never see activity from outside the lesson.
-function SessionHistoryPanel({ studentId, lesson }) {
+function SessionHistoryPanel({ studentId, lesson, limit = 25, live = false, className = 'mt-2 pt-2 border-t border-slate-100 max-h-40' }) {
   const [whyDomain, setWhyDomain] = useState(null);
 
   const { data, isLoading } = useQuery({
-    queryKey: ['session-history', studentId, lesson.id],
+    queryKey: ['session-history', studentId, lesson.id, limit],
     queryFn:  () => {
       const p = new URLSearchParams({
         student_id:        studentId,
         lesson_session_id: lesson.id,
         from:              lesson.started_at,
-        limit:             25,
+        limit,
       });
       return api.get(`/extension/browser-history?${p}`);
     },
+    refetchInterval: live ? 15_000 : false,
   });
 
   const rows = data?.results || [];
 
   return (
-    <div className="mt-2 pt-2 border-t border-slate-100 max-h-40 overflow-y-auto">
+    <div className={`${className} overflow-y-auto`}>
       {isLoading ? (
         <div className="text-xs text-slate-400">Loading…</div>
       ) : rows.length === 0 ? (
@@ -100,6 +101,12 @@ function SessionHistoryPanel({ studentId, lesson }) {
     </div>
   );
 }
+
+// Class screen thumbnails ("Show Screens"): one downscaled frame per student
+// every 5s — a whole class at this cadence is a few hundred KB/s at most.
+const SCREEN_INTERVAL_MS    = 5000;
+const SCREEN_STALE_AFTER_MS = 20_000;
+const SHOW_SCREENS_KEY      = 'cg_show_screens';
 
 // Per-student quick filter-test — runs the same simulator the admin Policy
 // Simulator page uses, now teacher-accessible (scoped to students on their
@@ -384,7 +391,7 @@ function RandomPickerBanner({ picked, onPickAgain, onClose, exhausted }) {
   );
 }
 
-function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, onFullScreen, lockdownSession, lockdownEventCount, onEndLockdown }) {
+function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, onFullScreen, lockdownSession, lockdownEventCount, onEndLockdown, showScreen, screenFrame, now }) {
   const [highlight, setHighlight]   = useState(false);
   const [locked, setLocked]         = useState(false);
   const [urlInputOpen, setUrlInputOpen] = useState(false);
@@ -441,6 +448,23 @@ function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRe
           </button>
         )}
       </div>
+
+      {showScreen && (
+        <button onClick={() => onFullScreen(student)} title="Click to enlarge"
+          className="relative flex items-center justify-center w-full aspect-video bg-slate-100 rounded-md overflow-hidden mb-2 hover:ring-2 hover:ring-blue-400">
+          {screenFrame ? (
+            <img src={screenFrame.dataUrl} alt="" className="w-full h-full object-cover object-top" />
+          ) : (
+            <span className="text-slate-400 text-xs">Waiting…</span>
+          )}
+          {screenFrame && frameAgeMs(screenFrame, now) > SCREEN_STALE_AFTER_MS && (
+            <span className="absolute inset-x-0 bottom-0 bg-black/60 text-amber-300 text-[10px] py-0.5">No recent frame — offline?</span>
+          )}
+          {screenFrame?.tabs?.length > 1 && (
+            <span className="absolute top-1 right-1 bg-black/60 text-white text-[10px] rounded px-1">{screenFrame.tabs.length} tabs</span>
+          )}
+        </button>
+      )}
 
       {lockdownSession && (
         <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-md px-2 py-1 mb-2">
@@ -622,7 +646,14 @@ export default function ActiveLesson() {
   const [pickExhausted, setPickExhausted] = useState(false);
   const [fullScreenStudent, setFullScreenStudent] = useState(null);
   const [raisedHands, setRaisedHands] = useState(new Map());
-  const [thumbnailsOpen, setThumbnailsOpen] = useState(false);
+  const [showScreens, setShowScreens] = useState(() => {
+    try { return localStorage.getItem(SHOW_SCREENS_KEY) === '1'; } catch { return false; }
+  });
+  const toggleShowScreens = () => {
+    const next = !showScreens;
+    setShowScreens(next);
+    try { localStorage.setItem(SHOW_SCREENS_KEY, next ? '1' : '0'); } catch { /* per-viewer convenience only */ }
+  };
   const [focusEditorOpen, setFocusEditorOpen] = useState(false);
   const [pulsePickerOpen, setPulsePickerOpen] = useState(false);
   const [broadcasting, setBroadcasting] = useState(false);
@@ -775,7 +806,10 @@ export default function ActiveLesson() {
   const unlock       = useMutation({ mutationFn: (studentId) => api.post('/extension/unlock-request', { student_id: studentId }) });
   const openTab      = useMutation({ mutationFn: (studentId) => api.post('/extension/open-tab-request', { student_id: studentId }) });
   const openTabUrl   = useMutation({ mutationFn: ({ studentId, url }) => api.post('/extension/open-tab-request', { student_id: studentId, url }) });
-  const closeTab     = useMutation({ mutationFn: (studentId) => api.post('/extension/close-tab-request', { student_id: studentId }) });
+  const closeTab     = useMutation({ mutationFn: ({ studentId, tabId, url }) => api.post('/extension/close-tab-request', { student_id: studentId, tab_id: tabId, url }) });
+
+  const screenIds = showScreens ? (cls?.members || []).map(m => m.id) : [];
+  const { frames: screenFrames, now: screenNow } = useLiveFrames(screenIds, { intervalMs: SCREEN_INTERVAL_MS, size: 'thumb' });
 
   if (!cls) return null;
 
@@ -906,9 +940,11 @@ export default function ActiveLesson() {
           />
           <ToolbarButton
             icon={mdiViewGridOutline}
-            label="Thumbnails"
-            onClick={() => setThumbnailsOpen(true)}
+            label={showScreens ? 'Hide Screens' : 'Show Screens'}
+            title="Show a live thumbnail of each student's screen — click one to enlarge"
+            onClick={toggleShowScreens}
             disabled={members.length === 0}
+            accent={showScreens ? 'emerald' : null}
           />
           <ToolbarButton
             icon={broadcasting ? mdiMonitorOff : mdiMonitorShare}
@@ -1012,8 +1048,11 @@ export default function ActiveLesson() {
                 onUnlock={(id) => unlock.mutate(id)}
                 onOpenTab={(id) => openTab.mutate(id)}
                 onOpenTabUrl={(id, url) => openTabUrl.mutate({ studentId: id, url })}
-                onCloseTab={(id) => closeTab.mutate(id)}
+                onCloseTab={(id) => closeTab.mutate({ studentId: id })}
                 onFullScreen={(s) => setFullScreenStudent(s)}
+                showScreen={showScreens}
+                screenFrame={screenFrames[student.id]}
+                now={screenNow}
                 lockdownSession={lockdownByStudent.get(student.id)}
                 lockdownEventCount={lockdownEventCounts[student.id] || 0}
                 onEndLockdown={(sessionId) => endLockdown.mutate(sessionId)}
@@ -1024,11 +1063,18 @@ export default function ActiveLesson() {
       </div>
 
       {fullScreenStudent && (
-        <LiveViewModal student={fullScreenStudent} onClose={() => setFullScreenStudent(null)} />
-      )}
-
-      {thumbnailsOpen && (
-        <LiveThumbnailsGrid members={members} onClose={() => setThumbnailsOpen(false)} />
+        <LiveViewModal
+          student={fullScreenStudent}
+          onClose={() => setFullScreenStudent(null)}
+          onLock={() => lock.mutate(fullScreenStudent.id)}
+          onUnlock={() => unlock.mutate(fullScreenStudent.id)}
+          onOpenUrl={(url) => openTabUrl.mutate({ studentId: fullScreenStudent.id, url })}
+          onCloseTab={(tab) => closeTab.mutate({ studentId: fullScreenStudent.id, tabId: tab?.id, url: tab?.url })}
+          onMessage={() => startChat.mutate(fullScreenStudent.id)}
+          history={lesson?.id ? (
+            <SessionHistoryPanel studentId={fullScreenStudent.id} lesson={lesson} limit={100} live className="max-h-72" />
+          ) : null}
+        />
       )}
 
       {focusEditorOpen && lesson && (

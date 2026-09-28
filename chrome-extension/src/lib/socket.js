@@ -38,8 +38,8 @@ export async function connectSocket({
 
   // Admin Live View — same capture mechanism as a screenshot request, but
   // never persisted server-side (see /extension/liveview-frame)
-  _socket.on('liveview:request', () => {
-    if (typeof onLiveViewRequest === 'function') onLiveViewRequest();
+  _socket.on('liveview:request', (data) => {
+    if (typeof onLiveViewRequest === 'function') onLiveViewRequest(data);
   });
 
   // Teacher-initiated remote device commands
@@ -52,8 +52,8 @@ export async function connectSocket({
   _socket.on('tab:open', (data) => {
     if (typeof onOpenTabRequest === 'function') onOpenTabRequest(data);
   });
-  _socket.on('tab:close', () => {
-    if (typeof onCloseTabRequest === 'function') onCloseTabRequest();
+  _socket.on('tab:close', (data) => {
+    if (typeof onCloseTabRequest === 'function') onCloseTabRequest(data);
   });
 
   // New chat message addressed to this user (teacher or student)
