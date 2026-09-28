@@ -1,0 +1,57 @@
+<!doctype html>
+<!-- Phase 0 SEB spike page (docs/lockdown-seb-spike.md, tests 0 and 1).
+     Shows what SEB exposes to a ClassGuard-hosted page: the user agent and
+     the SafeExamBrowser JavaScript API (Config Key / Browser Exam Key hashes
+     for this URL). Static, no data leaves the page. Remove after the spike. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEB Probe</title>
+<style>
+  body { font: 15px/1.5 -apple-system, system-ui, sans-serif; margin: 2rem; color: #1e293b; background: #fff; }
+  code { background: #f1f5f9; padding: 0 .3em; border-radius: 4px; word-break: break-all; }
+  td { padding: .25rem .75rem .25rem 0; vertical-align: top; }
+  a.btn { display: inline-block; margin-top: 1rem; padding: .5rem 1rem; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; }
+</style>
+</head>
+<body>
+<h1>SEB Probe</h1>
+<table>
+  <tr><td>SafeExamBrowser API</td><td id="api">checking…</td></tr>
+  <tr><td>SEB version</td><td><code id="ver">—</code></td></tr>
+  <tr><td>Config Key hash (this URL)</td><td><code id="ck">—</code></td></tr>
+  <tr><td>Browser Exam Key hash (this URL)</td><td><code id="bek">—</code></td></tr>
+  <tr><td>User agent</td><td><code id="ua"></code></td></tr>
+  <tr><td>Page URL</td><td><code id="url"></code></td></tr>
+</table>
+<p id="next"></p>
+<script>
+  document.getElementById('ua').textContent  = navigator.userAgent;
+  document.getElementById('url').textContent = location.href;
+  // updateKeys needs a NAMED, globally reachable callback: SEB evaluates
+  // "<name>();" (seb-mac SEBAbstractModernWebView.swift L80-84, L136-160).
+  function sebKeysUpdated() {
+    var s = window.SafeExamBrowser && window.SafeExamBrowser.security;
+    document.getElementById('ver').textContent = (window.SafeExamBrowser && window.SafeExamBrowser.version) || '—';
+    document.getElementById('ck').textContent  = (s && s.configKey) || '(empty)';
+    document.getElementById('bek').textContent = (s && s.browserExamKey) || '(empty)';
+  }
+  if (window.SafeExamBrowser && window.SafeExamBrowser.security) {
+    document.getElementById('api').textContent = 'present';
+    sebKeysUpdated();
+    if (typeof window.SafeExamBrowser.security.updateKeys === 'function') {
+      window.SafeExamBrowser.security.updateKeys(sebKeysUpdated);
+    }
+  } else {
+    document.getElementById('api').textContent = 'not present (not running in SEB, or an old SEB)';
+  }
+  var form = new URLSearchParams(location.search).get('form');
+  if (form && /^https:\/\/docs\.google\.com\/forms\//.test(form)) {
+    var a = document.createElement('a');
+    a.className = 'btn'; a.href = form; a.textContent = 'Continue to the Form';
+    document.getElementById('next').appendChild(a);
+  }
+</script>
+</body>
+</html>

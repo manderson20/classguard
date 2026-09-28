@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- Phase 0 SEB spike page (docs/lockdown-seb-spike.md, test 5): the
+     "wrapper" layout — a ClassGuard page embedding the Google Form in an
+     iframe, with a visible heartbeat counter and a Finish link. Static; the
+     heartbeat is only counted on-page (nothing is sent). Remove after the spike. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEB Wrapper Test</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px -apple-system, system-ui, sans-serif; background: #fff; color: #1e293b; }
+  header { display: flex; align-items: center; gap: 1rem; padding: .5rem 1rem; border-bottom: 1px solid #e2e8f0; }
+  header .spacer { flex: 1; }
+  iframe { border: 0; width: 100%; height: calc(100% - 45px); }
+  a.btn { padding: .35rem .8rem; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <strong>ClassGuard wrapper test</strong>
+  <span id="hb">heartbeats: 0</span>
+  <span class="spacer"></span>
+  <a class="btn" id="finish" href="#">Finish</a>
+</header>
+<iframe id="f" title="Form"></iframe>
+<script>
+  var p = new URLSearchParams(location.search);
+  var form = p.get('form') || '';
+  var quit = p.get('quit') || '';
+  if (/^https:\/\/docs\.google\.com\/forms\//.test(form)) {
+    var u = new URL(form);
+    u.searchParams.set('embedded', 'true');
+    document.getElementById('f').src = u.toString();
+  } else {
+    document.body.insertAdjacentHTML('beforeend', '<p style="padding:1rem">Missing or invalid ?form= (must be a docs.google.com/forms URL).</p>');
+  }
+  // The Finish link navigates the top-level page to SEB's quit URL.
+  if (quit) document.getElementById('finish').href = quit;
+  var n = 0;
+  setInterval(function () { document.getElementById('hb').textContent = 'heartbeats: ' + (++n); }, 5000);
+</script>
+</body>
+</html>
