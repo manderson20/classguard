@@ -2,10 +2,18 @@ import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 
+const FORMATS = [
+  { value: 'domain_list', name: 'Plain domain list', hint: 'one domain per line' },
+  { value: 'hosts',       name: 'Hosts file',        hint: '0.0.0.0 example.com' },
+  { value: 'dnsmasq',     name: 'Dnsmasq',           hint: 'address=/example.com/' },
+  { value: 'url_list',    name: 'URL patterns',      hint: '*.example.com/ — path-specific entries are skipped' },
+];
+const FORMAT_NAMES = Object.fromEntries(FORMATS.map(f => [f.value, f.name]));
+
 export default function BlocklistsPage() {
   const qc = useQueryClient();
   const [creating, setCreating] = useState(false);
-  const [form, setForm] = useState({ name: '', description: '', url: '' });
+  const [form, setForm] = useState({ name: '', url: '', format: 'domain_list' });
   const [syncing, setSyncing] = useState(null);
   const [policySearch, setPolicySearch] = useState('');
   const [attachTarget, setAttachTarget] = useState(null);
@@ -23,8 +31,8 @@ export default function BlocklistsPage() {
   });
 
   const create = useMutation({
-    mutationFn: () => api.post('/blocklists', { name: form.name, url: form.url, category: 'custom' }),
-    onSuccess:  () => { qc.invalidateQueries({ queryKey: ['blocklists'] }); setCreating(false); setForm({ name: '', description: '', url: '' }); },
+    mutationFn: () => api.post('/blocklists', { name: form.name, url: form.url, format: form.format, category: 'custom' }),
+    onSuccess:  () => { qc.invalidateQueries({ queryKey: ['blocklists'] }); setCreating(false); setForm({ name: '', url: '', format: 'domain_list' }); },
   });
 
   const toggle = useMutation({
@@ -77,6 +85,9 @@ export default function BlocklistsPage() {
                       : <span className="badge-slate text-xs">Disabled</span>}
                     {bl.domain_count != null && (
                       <span className="text-xs text-slate-400">{bl.domain_count.toLocaleString()} domains</span>
+                    )}
+                    {bl.format && (
+                      <span className="text-xs text-slate-400">· {FORMAT_NAMES[bl.format] || bl.format}</span>
                     )}
                   </div>
                   {bl.description && <div className="text-sm text-slate-500 mb-1">{bl.description}</div>}
@@ -143,16 +154,20 @@ export default function BlocklistsPage() {
                   onChange={e => setForm(f => ({ ...f, name: e.target.value }))} autoFocus />
               </div>
               <div>
-                <label className="label">Source URL <span className="text-slate-400 font-normal">(hosts file format)</span></label>
+                <label className="label">Source URL</label>
                 <input className="input font-mono text-sm" placeholder="https://…"
                   value={form.url}
                   onChange={e => setForm(f => ({ ...f, url: e.target.value }))} />
               </div>
               <div>
-                <label className="label">Description <span className="text-slate-400 font-normal">(optional)</span></label>
-                <input className="input" placeholder="e.g. Steven Black unified hosts"
-                  value={form.description}
-                  onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+                <label className="label">List format</label>
+                <select className="input"
+                  value={form.format}
+                  onChange={e => setForm(f => ({ ...f, format: e.target.value }))}>
+                  {FORMATS.map(f => (
+                    <option key={f.value} value={f.value}>{f.name} ({f.hint})</option>
+                  ))}
+                </select>
               </div>
               <p className="text-xs text-slate-400">Blocklist will be inactive until manually synced and enabled.</p>
             </div>

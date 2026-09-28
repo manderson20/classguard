@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.4] - 2026-09-28
+
+### Added
+
+- **`url_list` blocklist source format** with a format selector in the Blocklists UI: parses Securly-style URL-pattern lists (`*.example.com/`, full URLs). DNS filtering is host-level, so entries scoped to a specific path are skipped rather than over-blocking the whole host. Parsed domains are deduplicated before storage so `domain_count` matches the Redis set cardinality (URL-pattern lists commonly list each domain twice). The format is also editable on existing sources via the API and UI.
+
+---
+
 ## [0.17.3] - 2026-09-28
 
 ### Changed
