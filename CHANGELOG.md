@@ -12,6 +12,12 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.6] - 2026-09-28
+
+### Security
+
+- **uuid advisory (moderate, GHSA "missing buffer bounds check in v3/v5/v6")**: backend override pins exceljs's transitive `uuid` 8.3.2 → 11.1.1 (the patched release; still ships a CommonJS build with the same `v4` export exceljs uses). Not exploitable in ClassGuard (exceljs only calls `v4()` without a buffer), but clears the last open Dependabot alert. Verified: clean `npm ci`, `npm audit` reports 0 vulnerabilities, xlsx write/read round-trip including a data-bar conditional format (the exceljs code path that calls uuid).
+
 ## [0.17.5] - 2026-09-28
 
 ### Changed
