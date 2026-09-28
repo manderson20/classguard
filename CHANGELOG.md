@@ -12,6 +12,12 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.8] - 2026-09-28
+
+### Fixed
+
+- **Admin UI kept running the previous release after a deploy**: `index.html` was served without a `Cache-Control` header, so browsers cached it heuristically and a normal reload kept booting the old hashed bundle until a hard refresh (seen after 0.17.7: the DNS Statistics fix didn't take effect until the page was hard-refreshed). SPA routes now send `Cache-Control: no-cache` — the browser revalidates on every load, a cheap 304 when unchanged. Hashed assets remain `public, immutable` for a year; the DNS block page is unchanged.
+
 ## [0.17.7] - 2026-09-28
 
 ### Fixed
