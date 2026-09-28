@@ -252,7 +252,11 @@ game_participants
   team_id      UUID REFERENCES game_teams(id) ON DELETE SET NULL
   status       TEXT NOT NULL DEFAULT 'active'   -- active | removed
   joined_at, last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now()
-  UNIQUE NULLS NOT DISTINCT (session_id, user_id)
+  -- One row per ROSTERED user per session. Guests all carry user_id NULL, so a plain
+  -- UNIQUE (or NULLS NOT DISTINCT) would cap every session at a single guest — uniqueness
+  -- must apply only to rostered rows, with guests deduped by their server-minted token:
+  --   CREATE UNIQUE INDEX ON game_participants (session_id, user_id) WHERE user_id IS NOT NULL;
+  --   CREATE UNIQUE INDEX ON game_participants (guest_token) WHERE guest_token IS NOT NULL;
   -- private per-participant slot (bingo card, assigned letters…), written by engine
   -- on behalf of the game type; redacted from all other audiences
   private_state JSONB NOT NULL DEFAULT '{}'
@@ -290,7 +294,11 @@ and a results timeline for free.
 
 ### 2.4 Why sessions snapshot content
 
-`content_snapshot` decouples the live game from the template:
+`content_snapshot` decouples the live game from the template. For a set-backed template the
+snapshot is NOT just a copy of `content` (which only maps structure onto question IDs): launch
+**materializes the referenced `game_set_questions` rows into the snapshot** — prompt, answer,
+value, media refs — so editing or deleting the set later can never change or break an
+in-progress or historical session. The snapshot is the complete, self-sufficient game content:
 
 - One template can back many sessions — different teachers (via shares), different periods,
   the same period next semester — with zero cloning and no "someone edited the game while I
@@ -391,8 +399,12 @@ broadcasting:
 - Enforcement is double: an in-process `setTimeout` on the API node feeds the expiry action
   back through `applyAction` (so expiry is just another reduced action), **and** every
   incoming action first checks for a lapsed deadline and applies the expiry before the new
-  action. The second path makes timers correct even across an API restart or HA failover —
-  no timer state lives only in process memory.
+  action. Third, **startup/failover recovery**: on boot (and on VRRP promotion) the engine
+  scans active sessions for a persisted `_timer` and re-arms the in-process timeout — applying
+  the expiry immediately if the deadline already lapsed. Without this sweep, a timed phase in
+  which every client is passively waiting (Quiz Race collection) could stall forever after a
+  failover, since the lapsed-deadline check only runs when some action arrives. No timer state
+  lives only in process memory.
 
 ---
 
@@ -500,7 +512,11 @@ polling alone can't do buzzers. The Redis adapter already makes fan-out HA-corre
 
 ### 6.3 Buzzer logic (engine primitive)
 
-- Reducer opens buzzing → engine creates Redis key `game:<sessionId>:buzz:<itemRef>`.
+- Reducer opens buzzing → engine creates Redis key `game:<sessionId>:buzz:<itemRef>:<gen>`,
+  where `gen` is a per-item counter the reducer increments every time it (re)opens buzzing.
+  Without it, reopening after an incorrect answer (Jeopardy) races against the previous
+  window's still-unexpired key — the first winner would keep winning `NX` and lock everyone
+  out until the old `PX` TTL lapsed.
 - `game:buzz` socket events race on `SET key <participantId> NX PX <windowMs>` — **atomic
   first-in across both HA nodes**; exactly one wins, order is total, no app-level tiebreak
   needed. The winner is fed through `applyAction` as a `buzz_won` action; losers get an
