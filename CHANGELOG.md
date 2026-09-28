@@ -12,6 +12,14 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.3] - 2026-09-28
+
+### Changed
+
+- **Dependency batch** (closes 27 dependabot PRs): backend — pg 8.23.0, @aws-sdk/client-route-53 3.1106.0, axios 1.20.0, nanoid 5.1.16, ioredis 6.0.0, google-auth-library 11.0.0, eslint 10.9.0; frontend — @tanstack/react-query 5.102.1, vite 8.2.2, @vitejs/plugin-react 6.1.0, eslint 10.9.0, eslint-plugin-react-refresh 0.5.4, globals 17.11.0, postcss 8.5.26, React type packages; dns-engine — express-rate-limit 8.7.0, axios 1.20.0; chrome-extension — @babel/core + @babel/preset-env 8.0.6, webpack 5.111.1, webpack-cli 7.2.3, css-loader 7.1.5. Base images: node 26.9.0-alpine (all four), nginx 1.31.6-alpine (frontend). Majors (ioredis 6, google-auth-library 11, babel 8) verified functionally.
+
+---
+
 ## [0.17.2] - 2026-09-28
 
 ### Fixed
