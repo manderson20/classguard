@@ -19,7 +19,7 @@ The primary samples every node's metrics once a minute into a short-retention hi
 
 `/metrics` returns a JSON snapshot (uptime, RADIUS/DNS counters, device counts, certificate days remaining, replication lag, HA state, and OS resource usage). It is protected by a metrics token set in Integrations; localhost and cluster-internal callers are also trusted.
 
-It also reports **data-growth metrics** — total database size, browsing-log storage size, and the age of the oldest browsing-log entry. The last one doubles as a retention check: it should track at or below the configured retention window, and a value climbing past it means the nightly retention job isn't pruning. These flow into the generated Zabbix template automatically.
+It also reports **data-growth metrics** — total database size, DNS-log storage size, and the age of the oldest DNS-log entry. The last one doubles as a retention check for the DNS log specifically: it should track at or below the configured retention window, and a value climbing past it means the nightly retention job isn't pruning `dns_logs`. Note these are DNS-log measurements only — the retention job also prunes `browser_history`, but that table's growth and pruning health are not reflected in these metrics. They flow into the generated Zabbix template automatically.
 
 ## Zabbix integration
 
