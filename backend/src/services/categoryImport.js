@@ -287,22 +287,22 @@ async function doRebuildRedisCache() {
   // stale and the next reconcile pass picks it up.
   const fingerprint = await categoryFingerprint();
 
-  // Get the primary category for each domain (highest confidence, prefer manual overrides).
-  // Parallel workers are disabled for this one query: its parallel hash join
+  // One row per domain: highest confidence, then a manual override, then the
+  // newest row, then slug. A total order matters — with ties left open, the
+  // HSET loop let whichever tied row happened to arrive last win, so the
+  // cached category could differ between rebuilds and between nodes.
+  // Parallel workers are disabled for this one query: its parallel plan
   // needs more dynamic shared memory than the Postgres container's default
   // 64MB /dev/shm, and fails outright ("could not resize shared memory
-  // segment ... No space left on device"). The serial plan takes ~8s.
+  // segment ... No space left on device"). The serial plan takes ~15s.
   const rows = await withTransaction(async (client) => {
     await client.query('SET LOCAL max_parallel_workers_per_gather = 0');
     const { rows } = await client.query(`
-      SELECT dc.domain, wc.slug
+      SELECT DISTINCT ON (dc.domain) dc.domain, wc.slug
       FROM domain_categories dc
       JOIN website_categories wc ON wc.id = dc.category_id
-      WHERE NOT EXISTS (
-        SELECT 1 FROM domain_categories dc2
-        WHERE dc2.domain = dc.domain
-          AND (dc2.confidence > dc.confidence OR (dc2.confidence = dc.confidence AND dc2.is_override AND NOT dc.is_override))
-      )
+      ORDER BY dc.domain, dc.confidence DESC, COALESCE(dc.is_override, false) DESC,
+               dc.created_at DESC NULLS LAST, wc.slug
     `);
     return rows;
   });

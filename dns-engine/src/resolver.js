@@ -36,11 +36,25 @@ async function resolveQuery(name, typeNum, sourceIp) {
   // --- 0. Local authoritative records (managed in ClassGuard) -------------
   // Checked before all filtering — infrastructure queries (printers, servers)
   // are answered directly without touching the student policy pipeline.
-  const localAnswers = await localRecords.lookupLocal(domain, typeNum).catch(() => null);
+  // The forwarding-zone list is read alongside it (step 1 below), so neither
+  // fast path waits on the filtering lookups further down.
+  const [localAnswers, fwdZones] = await Promise.all([
+    localRecords.lookupLocal(domain, typeNum).catch(() => null),
+    policyCache.getForwardZones().catch(() => []),
+  ]);
   if (localAnswers !== null) {
     // null = not our zone; empty array = our zone but no record (NXDOMAIN)
     logQuery({ domain, action: 'local', sourceIp, studentId: null, deviceId: null, policyId: null, lessonSessionId: null, blockReason: null });
     return { action: 'allowed', answers: localAnswers };
+  }
+
+  // --- 1. Conditional forwarding zones — highest priority of all ----------
+  // AD internal zones (school.local, corp.example.com) go directly to the
+  // configured DC/resolver. No filtering, no logging of internal queries.
+  const fwdZone  = fwdZones.find(z => domain === z.domain || domain.endsWith(`.${z.domain}`));
+  if (fwdZone) {
+    const answers = await forwardToSpecific(domain, typeNum, fwdZone.forwardTo);
+    return { action: 'allowed', answers };
   }
 
   // Everything else the pipeline below might need is an independent Redis
@@ -52,10 +66,9 @@ async function resolveQuery(name, typeNum, sourceIp) {
   // step awaited its own lookup; the reads a given query ends up not needing
   // are cheap.
   const [
-    fwdZones, device, subnetPolicy, networkPolicy,
+    device, subnetPolicy, networkPolicy,
     dryRunState, globalAllowList, hasOverride, blockedResult, categoryResult,
   ] = await Promise.all([
-    policyCache.getForwardZones().catch(() => []),
     policyCache.getDevice(sourceIp).catch(() => null),
     policyCache.getSubnetPolicy(sourceIp).catch(() => null),
     policyCache.getNetworkPolicy().catch(() => null),
@@ -65,15 +78,6 @@ async function resolveQuery(name, typeNum, sourceIp) {
     settle(blocklist.isBlocked(domain)),
     settle(categoryLookup.getCategoryForDomain(domain)),
   ]);
-
-  // --- 1. Conditional forwarding zones — highest priority of all ----------
-  // AD internal zones (school.local, corp.example.com) go directly to the
-  // configured DC/resolver. No filtering, no logging of internal queries.
-  const fwdZone  = fwdZones.find(z => domain === z.domain || domain.endsWith(`.${z.domain}`));
-  if (fwdZone) {
-    const answers = await forwardToSpecific(domain, typeNum, fwdZone.forwardTo);
-    return { action: 'allowed', answers };
-  }
 
   // --- 2. Device lookup ---------------------------------------------------
   if (device) {
