@@ -12,6 +12,32 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.3] - 2026-09-28
+
+### Changed
+
+- **Dependency batch** (closes 27 dependabot PRs): backend — pg 8.23.0, @aws-sdk/client-route-53 3.1106.0, axios 1.20.0, nanoid 5.1.16, ioredis 6.0.0, google-auth-library 11.0.0, eslint 10.9.0; frontend — @tanstack/react-query 5.102.1, vite 8.2.2, @vitejs/plugin-react 6.1.0, eslint 10.9.0, eslint-plugin-react-refresh 0.5.4, globals 17.11.0, postcss 8.5.26, React type packages; dns-engine — express-rate-limit 8.7.0, axios 1.20.0; chrome-extension — @babel/core + @babel/preset-env 8.0.6, webpack 5.111.1, webpack-cli 7.2.3, css-loader 7.1.5. Base images: node 26.9.0-alpine (all four), nginx 1.31.6-alpine (frontend). Majors (ioredis 6, google-auth-library 11, babel 8) verified functionally.
+
+---
+
+## [0.17.2] - 2026-09-28
+
+### Fixed
+
+- **VPN container build failure on nodes without a warm Docker layer cache**: the pinned `strongswan=6.0.4-1ubuntu3.1` package was superseded in the Ubuntu archive by the `6.0.4-1ubuntu3.2` security release, and the old version is no longer downloadable — `apt-get install` exited 100 and the whole update failed on any node that had to rebuild that layer. Pin bumped to `6.0.4-1ubuntu3.2` (verified with a clean `--no-cache` build; charon-systemd starts).
+
+---
+
+## [0.17.1] - 2026-09-28
+
+### Fixed
+
+- **Admin UI could show the DNS "Site Blocked" page instead of the login page** on an HA node whose `.env` was missing `VRRP_VIP` and/or `CLASSGUARD_DOMAIN` (e.g. restored from a pre-HA backup). When that node held the floating IP, every visit to the UI via the VIP or the public domain fell through nginx's `server_name` match to the DNS-sinkhole `default_server`. Two-layer fix:
+  - nginx now serves the admin SPA for **any IPv4-literal `Host`** (a DNS-sinkholed visit always carries the blocked *domain* in `Host`, never a bare IP), so the VIP and node IPs always reach the UI regardless of `.env` completeness.
+  - `install.sh` backfills a missing/empty `VRRP_VIP` / `CLASSGUARD_DOMAIN` in `.env` from the replicated database (`radius_ha_config.vip_address` / `tls_config.domain`) on every update, so the domain-name case self-heals cluster-wide. Deliberately set values are never overwritten.
+
+---
+
 ## [0.17.0] - 2026-07-28
 
 ### Added
