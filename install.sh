@@ -320,6 +320,39 @@ if [[ -z "$NODE_ROLE_CURRENT" ]]; then
   NODE_ROLE_CURRENT=primary
 fi
 
+# ---------------------------------------------------------------------------
+# Backfill nginx-hostname variables from the cluster database. A .env from
+# before HA/TLS support (or restored from an old backup — the same class of
+# problem as the missing NODE_ROLE above) can lack VRRP_VIP and/or
+# CLASSGUARD_DOMAIN. The frontend bakes both into nginx's server_name at
+# container start; when they're missing, any visit via the floating IP or
+# the public domain doesn't match the admin SPA and falls through to the
+# default_server DNS sinkhole — "Site Blocked" where the login page should
+# be, on whichever node holds the VIP. Both values already live in the
+# replicated database (readable on a standby too), so derive them here.
+# Only ever fills a MISSING/empty value — a deliberately set one is kept.
+# On a fresh install these tables don't exist yet; the guarded psql just
+# returns empty and this is a no-op.
+env_backfill() {
+  local key="$1" value="$2" source_label="$3"
+  [[ -n "$value" ]] || return 0
+  local current
+  current=$(grep "^${key}=" .env | cut -d= -f2- || true)
+  [[ -z "$current" ]] || return 0
+  if grep -q "^${key}=" .env; then
+    sed -i "s|^${key}=.*|${key}=${value}|" .env
+  else
+    printf '%s=%s\n' "$key" "$value" >> .env
+  fi
+  info "Backfilled ${key}=${value} into .env (from ${source_label})"
+}
+VIP_FROM_DB=$(timeout 30 docker exec classguard-postgres psql -U classguard classguard -tAc \
+  "SELECT host(vip_address) FROM radius_ha_config WHERE vip_address IS NOT NULL LIMIT 1;" 2>/dev/null | tr -d '[:space:]' || true)
+DOMAIN_FROM_DB=$(timeout 30 docker exec classguard-postgres psql -U classguard classguard -tAc \
+  "SELECT domain FROM tls_config WHERE domain IS NOT NULL AND domain <> '' LIMIT 1;" 2>/dev/null | tr -d '[:space:]' || true)
+env_backfill VRRP_VIP "$VIP_FROM_DB" "radius_ha_config.vip_address"
+env_backfill CLASSGUARD_DOMAIN "$DOMAIN_FROM_DB" "tls_config.domain"
+
 # Standbys have a read-only streaming replica — migrations would fail with
 # "cannot execute ... on a read-only transaction". Schema is already in sync
 # via replication from the primary; skip migrations here.

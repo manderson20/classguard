@@ -12,6 +12,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.1] - 2026-09-28
+
+### Fixed
+
+- **Admin UI could show the DNS "Site Blocked" page instead of the login page** on an HA node whose `.env` was missing `VRRP_VIP` and/or `CLASSGUARD_DOMAIN` (e.g. restored from a pre-HA backup). When that node held the floating IP, every visit to the UI via the VIP or the public domain fell through nginx's `server_name` match to the DNS-sinkhole `default_server`. Two-layer fix:
+  - nginx now serves the admin SPA for **any IPv4-literal `Host`** (a DNS-sinkholed visit always carries the blocked *domain* in `Host`, never a bare IP), so the VIP and node IPs always reach the UI regardless of `.env` completeness.
+  - `install.sh` backfills a missing/empty `VRRP_VIP` / `CLASSGUARD_DOMAIN` in `.env` from the replicated database (`radius_ha_config.vip_address` / `tls_config.domain`) on every update, so the domain-name case self-heals cluster-wide. Deliberately set values are never overwritten.
+
+---
+
 ## [0.17.0] - 2026-07-28
 
 ### Added
