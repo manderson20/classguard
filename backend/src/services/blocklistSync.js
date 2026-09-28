@@ -131,7 +131,9 @@ async function rebuildMasterList() {
 // Sync a single source
 // ---------------------------------------------------------------------------
 
-async function syncSource(sourceId) {
+// recordStats=false skips the blocklist_sources stats UPDATE — for a standby
+// filling its own Redis, whose local Postgres is a read-only replica.
+async function syncSource(sourceId, { recordStats = true } = {}) {
   const { rows } = await query(
     'SELECT * FROM blocklist_sources WHERE id = $1',
     [sourceId]
@@ -148,7 +150,7 @@ async function syncSource(sourceId) {
   await storeInRedis(`${MASTER_KEY}:${sourceId}`, domains);
 
   // Update DB stats
-  await query(
+  if (recordStats) await query(
     `UPDATE blocklist_sources
      SET domain_count   = $1,
          last_synced_at = NOW()
@@ -166,7 +168,7 @@ async function syncSource(sourceId) {
 // Sync all active sources
 // ---------------------------------------------------------------------------
 
-async function syncAll() {
+async function syncAll({ recordStats = true } = {}) {
   const { rows } = await query(
     'SELECT id, name FROM blocklist_sources WHERE is_active = true ORDER BY name'
   );
@@ -176,7 +178,7 @@ async function syncAll() {
   const results = [];
   for (const source of rows) {
     try {
-      const result = await syncSource(source.id);
+      const result = await syncSource(source.id, { recordStats });
       results.push({ ...result, status: 'ok' });
     } catch (err) {
       console.error(`[blocklist] failed to sync "${source.name}":`, err.message);
@@ -189,6 +191,28 @@ async function syncAll() {
 }
 
 // ---------------------------------------------------------------------------
+// Fill in any active source whose Redis set is missing, then rebuild the
+// master list. Runs on EVERY node: each node's DNS engine reads its own
+// Redis, but the scheduled sync only runs on the RUN_CRON_JOBS node, so a
+// standby (or a node whose Redis was flushed) otherwise has no blocklist.
+// ---------------------------------------------------------------------------
+
+async function reconcileRedis() {
+  const { rows } = await query(
+    'SELECT id, name FROM blocklist_sources WHERE is_active = true ORDER BY name'
+  );
+  for (const source of rows) {
+    if (await redis.exists(`${MASTER_KEY}:${source.id}`)) continue;
+    try {
+      await syncSource(source.id, { recordStats: false });
+    } catch (err) {
+      console.error(`[blocklist] reconcile: failed to sync "${source.name}":`, err.message);
+    }
+  }
+  return rebuildMasterList();
+}
+
+// ---------------------------------------------------------------------------
 // Remove a source from Redis and rebuild master
 // ---------------------------------------------------------------------------
 
@@ -197,4 +221,4 @@ async function removeSource(sourceId) {
   return rebuildMasterList();
 }
 
-module.exports = { fetchAndParse, syncSource, syncAll, rebuildMasterList, removeSource };
+module.exports = { fetchAndParse, syncSource, syncAll, reconcileRedis, rebuildMasterList, removeSource };

@@ -3,9 +3,10 @@ const axios  = require('axios');
 const redis  = require('../redis');
 const { query } = require('../db');
 const config = require('../config');
-const { syncAll } = require('./blocklistSync');
+const { syncAll, reconcileRedis: reconcileBlocklistRedis } = require('./blocklistSync');
 const { syncNetworkClientsToIpam } = require('./ipamSync');
-const { syncAll: syncCategories, classifyRecentDomains } = require('./categoryImport');
+const { syncAll: syncCategories, classifyRecentDomains, reconcileRedisCache: reconcileCategoryRedis } = require('./categoryImport');
+const { rebuildCache: rebuildLocalDnsCache } = require('./localDnsCache');
 const acmeTls   = require('./acmeTls');
 const securityScan = require('./securityScan');
 const filterBypassDetection = require('./filterBypassDetection');
@@ -510,7 +511,34 @@ function startScheduler() {
     drainTabEvents().catch(err => console.error('[scheduler] tab-events drain error:', err.message));
   });
 
+  // DNS filtering caches — every node, regardless of RUN_CRON_JOBS. Each
+  // node's DNS engine reads its OWN local Redis, but the jobs that fill it
+  // (category import, blocklist sync, local-record edits) only run on the
+  // RUN_CRON_JOBS node. A standby's Redis therefore never had the category
+  // map or local zones: its DNS answered every query unfiltered and sent
+  // ClassGuard-hosted names to public upstream. Reconcile each from this
+  // node's own (replicated) Postgres — shortly after boot, then periodically.
+  let dnsCacheReconcileRunning = false;
+  const reconcileDnsCaches = async () => {
+    if (dnsCacheReconcileRunning) return;
+    dnsCacheReconcileRunning = true;
+    try {
+      await rebuildLocalDnsCache().catch(err => console.error('[scheduler] local-dns cache reconcile error:', err.message));
+      await reconcileCategoryRedis().catch(err => console.error('[scheduler] category cache reconcile error:', err.message));
+      await reconcileBlocklistRedis().catch(err => console.error('[scheduler] blocklist reconcile error:', err.message));
+    } finally {
+      dnsCacheReconcileRunning = false;
+    }
+  };
+  setTimeout(reconcileDnsCaches, 30_000);
+  cron.schedule('*/10 * * * *', reconcileDnsCaches);
+
   if (!config.node.runCronJobs) {
+    // The RUN_CRON_JOBS node's scheduled blocklist sync (below) only refreshes
+    // its own Redis — refresh this node's copy on the same schedule.
+    cron.schedule(config.blocklist.syncCron, () => {
+      syncAll({ recordStats: false }).catch(err => console.error('[scheduler] blocklist sync error:', err.message));
+    });
     console.log('[scheduler] other cron jobs disabled on this node (RUN_CRON_JOBS=false)');
     return;
   }

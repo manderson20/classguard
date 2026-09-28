@@ -314,10 +314,22 @@ async function invalidateSubnetPolicies() {
 // identity. The per-student/OU chain (getPolicy above) is extension-only now;
 // DNS only ever applies this floor (plus lesson/penalty_box mode overrides).
 // ---------------------------------------------------------------------------
+// The floor is read on every query and is tens of KB of JSON (resolved allow
+// domains), but only changes when an admin edits it — reuse the parsed object
+// while the cached string is unchanged. Callers treat it as read-only.
+let lastNetworkPolicyRaw    = null;
+let lastNetworkPolicyParsed = null;
+
 async function getNetworkPolicy() {
   const raw = await redis.get(NETWORK_POLICY_KEY).catch(() => null);
   if (raw) {
-    try { return JSON.parse(raw); } catch {}
+    if (raw === lastNetworkPolicyRaw) return lastNetworkPolicyParsed;
+    try {
+      const parsed = JSON.parse(raw);
+      lastNetworkPolicyRaw    = raw;
+      lastNetworkPolicyParsed = parsed;
+      return parsed;
+    } catch {}
   }
   try {
     const { data } = await axios.get(

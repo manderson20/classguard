@@ -27,18 +27,24 @@ function transformTrend(rows) {
 export default function DnsStats() {
   const [preset, setPreset] = useState(PRESETS[1]);
 
-  const from = new Date(Date.now() - preset.hours * 3600_000).toISOString();
-  const to   = new Date().toISOString();
-
   const { data: summary, isLoading: sLoading } = useQuery({
     queryKey: ['dns-summary', preset.hours],
     queryFn:  () => api.get(`/dns/summary?hours=${preset.hours}`),
     refetchInterval: 60_000,
   });
 
+  // The window is computed at fetch time, not render time: with from/to in
+  // the query key, every render minted a new key, so each response re-rendered
+  // into yet another fetch — the chart sat in its loading state forever while
+  // the page hammered /dns/stats several times a second.
   const { data: trend = [], isLoading: tLoading } = useQuery({
-    queryKey: ['dns-stats', preset.bucket, from, to],
-    queryFn:  () => api.get(`/dns/stats?bucket=${preset.bucket}&from=${from}&to=${to}`),
+    queryKey: ['dns-stats', preset.bucket, preset.hours],
+    queryFn:  () => {
+      const from = new Date(Date.now() - preset.hours * 3600_000).toISOString();
+      const to   = new Date().toISOString();
+      return api.get(`/dns/stats?bucket=${preset.bucket}&from=${from}&to=${to}`);
+    },
+    refetchInterval: 60_000,
   });
 
   const chartData  = transformTrend(trend);

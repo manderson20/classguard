@@ -150,10 +150,13 @@ router.post('/override', ...adminOnly, async (req, res) => {
   );
   if (!cat) return res.status(404).json({ error: 'Category not found' });
 
-  // Remove any non-override records for this domain first to avoid conflicts
+  // Remove every other record for this domain first — non-override rows, and
+  // any previous override pointing at a different category. A stale override
+  // left behind ties the new one (same confidence, both overrides), so the
+  // cache rebuild could restore the old category.
   await query(
-    'DELETE FROM domain_categories WHERE domain = $1 AND is_override = false',
-    [clean]
+    'DELETE FROM domain_categories WHERE domain = $1 AND (is_override IS NOT TRUE OR category_id <> $2)',
+    [clean, cat.id]
   );
 
   const { rows: [row] } = await query(`
