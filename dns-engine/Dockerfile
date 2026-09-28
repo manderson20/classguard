@@ -1,5 +1,5 @@
 # Pinned to the exact Node version currently deployed - see backend/Dockerfile.
-FROM node:26.9.0-alpine
+FROM node:26.10.0-alpine
 
 # Allow binding to privileged port 53 without running as root
 RUN apk add --no-cache libcap && \
