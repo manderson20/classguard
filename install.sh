@@ -336,14 +336,28 @@ fi
 env_backfill() {
   local key="$1" value="$2" source_label="$3"
   [[ -n "$value" ]] || return 0
+  # These values come from the database and this function runs as root
+  # during unattended updates — treat them strictly as data. The VIP is
+  # rendered by Postgres's host() over an inet column so it's an IP by
+  # construction, but the TLS domain is free text a superadmin can set via
+  # the API (and either could arrive via a restored/tampered backup), so:
+  # (1) allowlist hostname/IP characters only, and (2) never splice the
+  # value into a sed/shell program — the rewrite below only ever passes it
+  # to printf as an argument.
+  if ! [[ "$value" =~ ^[A-Za-z0-9.-]+$ ]]; then
+    warn "Refusing to backfill ${key} from ${source_label}: value contains unexpected characters"
+    return 0
+  fi
   local current
   current=$(grep "^${key}=" .env | cut -d= -f2- || true)
   [[ -z "$current" ]] || return 0
-  if grep -q "^${key}=" .env; then
-    sed -i "s|^${key}=.*|${key}=${value}|" .env
-  else
-    printf '%s=%s\n' "$key" "$value" >> .env
-  fi
+  local tmp
+  tmp=$(mktemp .env.backfill.XXXXXX)
+  grep -v "^${key}=" .env > "$tmp" || true   # drop an empty KEY= line if present
+  printf '%s=%s\n' "$key" "$value" >> "$tmp"
+  chmod --reference=.env "$tmp"
+  chown --reference=.env "$tmp"
+  mv "$tmp" .env
   info "Backfilled ${key}=${value} into .env (from ${source_label})"
 }
 VIP_FROM_DB=$(timeout 30 docker exec classguard-postgres psql -U classguard classguard -tAc \
