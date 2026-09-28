@@ -12,6 +12,18 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.5] - 2026-09-28
+
+### Changed
+
+- **Dependency follow-up**: dns-engine ioredis 5.11.1 → 6.0.0 (verified functionally against a live Redis) and dns2 3.0.0 → 3.1.1; chrome-extension html-webpack-plugin 5.6.7 → 5.6.8.
+
+### Fixed
+
+- **Metrics sampler now logs local-collect failures** instead of silently recording nothing — previously an unexplained gap in `node_metrics_history` on both nodes at once (carried over from the stale 2026-07-31 batch branch).
+
+---
+
 ## [0.17.4] - 2026-09-28
 
 ### Added
