@@ -51,7 +51,13 @@ async function clusterSnapshot() {
   const { collectMetrics } = require('../routes/metrics');
 
   const results = [];
-  const local = await collectMetrics().catch(() => null);
+  // Log the reason, not just null: a local-collect failure otherwise leaves
+  // an unexplained gap in node_metrics_history (both nodes at once, since a
+  // failed local snapshot usually shares its cause with the peer fetch).
+  const local = await collectMetrics().catch(err => {
+    console.error('[metrics-history] local collect failed:', err.message);
+    return null;
+  });
   if (local) results.push({ node_id: config.node.id, reachable: true, metrics: local });
 
   const nodes = await getNodes().catch(() => []);
