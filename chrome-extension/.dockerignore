@@ -1,0 +1,7 @@
+# COPY . . must never pick up host-side build/dev artifacts: a stale host
+# node_modules (built for the host libc/node) silently overwrites the fresh
+# in-image npm install and breaks the build or runtime in ways that differ
+# per node (bit classguard-1 on the 0.17.5 rollout; the peer, with a clean
+# tree, built the same commit fine).
+node_modules
+dist
