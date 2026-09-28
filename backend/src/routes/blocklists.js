@@ -9,7 +9,7 @@ const router = express.Router();
 
 const adminOnly = [authenticate, requirePermission('blocklists')];
 
-const VALID_FORMATS    = ['hosts', 'domain_list', 'dnsmasq'];
+const VALID_FORMATS    = ['hosts', 'domain_list', 'dnsmasq', 'url_list'];
 const MASTER_KEY       = 'classguard:blocklist';
 const PREVIEW_SAMPLE   = 50;
 
@@ -107,7 +107,11 @@ router.get('/:id', ...adminOnly, async (req, res) => {
 // Update a source (name, category, schedule, active state)
 // ---------------------------------------------------------------------------
 router.put('/:id', ...adminOnly, async (req, res) => {
-  const { name, category, sync_schedule, is_active } = req.body;
+  const { name, category, sync_schedule, is_active, format } = req.body;
+
+  if (format !== undefined && !VALID_FORMATS.includes(format)) {
+    return res.status(400).json({ error: `format must be one of: ${VALID_FORMATS.join(', ')}` });
+  }
 
   try {
     const { rows } = await query(
@@ -115,10 +119,11 @@ router.put('/:id', ...adminOnly, async (req, res) => {
        SET name          = COALESCE($1, name),
            category      = COALESCE($2, category),
            sync_schedule = COALESCE($3, sync_schedule),
-           is_active     = COALESCE($4, is_active)
-       WHERE id = $5
+           is_active     = COALESCE($4, is_active),
+           format        = COALESCE($5, format)
+       WHERE id = $6
        RETURNING *`,
-      [name, category, sync_schedule, is_active, req.params.id]
+      [name, category, sync_schedule, is_active, format, req.params.id]
     );
 
     if (!rows[0]) return res.status(404).json({ error: 'Not found' });
