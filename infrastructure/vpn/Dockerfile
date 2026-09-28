@@ -5,7 +5,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Pinned to the exact version available on ubuntu 26.04 at build time.
 # strongswan 6.0.4 is a major-version bump from 5.9.5 (22.04) but the
 # swanctl config format is unchanged — existing tunnel configs work as-is.
-ARG STRONGSWAN_VERSION=6.0.4-1ubuntu3.1
+ARG STRONGSWAN_VERSION=6.0.4-1ubuntu3.2
 
 RUN apt-get update && apt-get install -y \
       strongswan=${STRONGSWAN_VERSION} \
