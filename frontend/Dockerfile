@@ -1,5 +1,5 @@
 # Pinned to the exact Node version currently deployed - see backend/Dockerfile.
-FROM node:26.5.0-alpine AS build
+FROM node:26.10.0-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
@@ -10,7 +10,7 @@ RUN npm run build
 
 # Pinned to the exact nginx version currently deployed - same rationale as
 # the Node pin above.
-FROM nginx:1.31.3-alpine AS serve
+FROM nginx:1.31.6-alpine AS serve
 RUN apk add --no-cache openssl
 COPY --from=build /app/dist /usr/share/nginx/html
 # nginx Docker image processes /etc/nginx/templates/*.template via envsubst on startup
