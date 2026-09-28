@@ -1,5 +1,5 @@
 # Pinned to the exact Node version currently deployed - see backend/Dockerfile.
-FROM node:26.9.0-alpine AS build
+FROM node:26.10.0-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
