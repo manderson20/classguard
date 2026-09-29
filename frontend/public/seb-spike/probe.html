@@ -19,11 +19,13 @@
 <h1>SEB Probe</h1>
 <table>
   <tr><td>SafeExamBrowser API</td><td id="api">checking…</td></tr>
+  <tr><td>API present at load</td><td id="atload">—</td></tr>
   <tr><td>SEB version</td><td><code id="ver">—</code></td></tr>
   <tr><td>Config Key hash (this URL)</td><td><code id="ck">—</code></td></tr>
   <tr><td>Browser Exam Key hash (this URL)</td><td><code id="bek">—</code></td></tr>
   <tr><td>User agent</td><td><code id="ua"></code></td></tr>
   <tr><td>Page URL</td><td><code id="url"></code></td></tr>
+  <tr><td>token (from <code>??token=</code>)</td><td><code id="token">—</code></td></tr>
 </table>
 <p id="next"></p>
 <script>
@@ -37,16 +39,29 @@
     document.getElementById('ck').textContent  = (s && s.configKey) || '(empty)';
     document.getElementById('bek').textContent = (s && s.browserExamKey) || '(empty)';
   }
-  if (window.SafeExamBrowser && window.SafeExamBrowser.security) {
-    document.getElementById('api').textContent = 'present';
-    sebKeysUpdated();
-    if (typeof window.SafeExamBrowser.security.updateKeys === 'function') {
-      window.SafeExamBrowser.security.updateKeys(sebKeysUpdated);
+  // SEB for Windows injects the API asynchronously and it is sometimes
+  // missing when the page's scripts first run (seb-win-refactoring issue
+  // #1443), so poll for up to 5 s. seb-win calls updateKeys' argument
+  // directly; passing a named global function works on both platforms.
+  var started = Date.now();
+  var hasApi = function () { return !!(window.SafeExamBrowser && window.SafeExamBrowser.security); };
+  document.getElementById('atload').textContent = hasApi() ? 'yes' : 'no';
+  (function poll() {
+    if (hasApi()) {
+      document.getElementById('api').textContent = 'present (after ' + (Date.now() - started) + ' ms)';
+      sebKeysUpdated();
+      if (typeof window.SafeExamBrowser.security.updateKeys === 'function') {
+        window.SafeExamBrowser.security.updateKeys(sebKeysUpdated);
+      }
+    } else if (Date.now() - started < 5000) {
+      setTimeout(poll, 100);
+    } else {
+      document.getElementById('api').textContent = 'not present after 5 s (not running in SEB, or an old SEB)';
     }
-  } else {
-    document.getElementById('api').textContent = 'not present (not running in SEB, or an old SEB)';
-  }
-  var form = new URLSearchParams(location.search).get('form');
+  })();
+  var params = new URLSearchParams(location.search);
+  document.getElementById('token').textContent = params.get('token') || '(none)';
+  var form = params.get('form');
   if (form && /^https:\/\/docs\.google\.com\/forms\//.test(form)) {
     var a = document.createElement('a');
     a.className = 'btn'; a.href = form; a.textContent = 'Continue to the Form';

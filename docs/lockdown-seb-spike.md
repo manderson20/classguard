@@ -946,7 +946,7 @@ All defaults come from SW `SafeExamBrowser.Configuration/ConfigurationData/DataV
   - **Two exceptions:** the VM check (a false positive aborts SEB), and the service being ignored, which is SEB's default.
 - **The `.link.txt` files (`sebs://application/seb;base64,…`): no.** SEB for Windows can't load an embedded config at launch (§8.1.3).
 
-**Changes needed.** Describing only; the repo is not edited.
+**Changes.** All of these are now in `make-config.js` (2026-09-29), except that item 5 keeps the single `2-direct-aac-filtered` name (AAC on Mac, kiosk mode on Windows). `probe.html` also now polls for the API for up to 5 s, shows whether it was present at load (test 0c), and shows the `token` that arrived (test 3f).
 
 1. **Hosted links.** Add `--host-base <https URL of a directory where the .seb files will be served>`. For each variant also write `<variant>.hosted-link.txt` containing `sebs://<host-base-without-scheme>/<variant>.seb`. Also emit `<variant>.hosted-link-token.txt` with `…/<variant>.seb??token=spike123` for the query-parameter test. Keep the base64 links for the Mac tests.
 2. **Windows keys in `baseConfig`.** Behind `--platform win|mac|both`, default `both`: extra keys are harmless on the other platform, and the Config Key covers whatever the file contains.
@@ -997,7 +997,23 @@ All defaults come from SW `SafeExamBrowser.Configuration/ConfigurationData/DataV
    - Confirm that the `SafeExamBrowser` service is running (`sc query SafeExamBrowser`).
    - Record whether SEB 3.10.3 is out by then; if so, repeat test 2 on it.
 3. Use the same test Google Form as §5 (Verified email, Limit to 1 response, locked mode off, confirmation-message link).
-4. Generate the configs with the §8.3 changes and `--host-base https://<classguard-domain>/seb-spike/cfg/`. Upload the `.seb` files there with `Content-Type: application/seb`.
+4. Generate the configs, adding `--host-base https://<classguard-domain>/seb-spike/cfg/` (plus `--allow-vm true` if SEB refuses to start on the fleet model):
+   ```
+   node scripts/seb-spike/make-config.js \
+     --form 'https://docs.google.com/forms/d/e/<FORM_ID>/viewform' \
+     --origin 'https://<classguard-domain>' \
+     --host-base 'https://<classguard-domain>/seb-spike/cfg/' \
+     --quit-password '<ASCII test password>' \
+     --out seb-spike-out
+   ```
+   Then serve them without deploying this draft branch: on the node that currently holds the VIP, copy the files into the running frontend container. The ClassGuard frontend serves `.seb` as `application/octet-stream`, which SEB for Windows accepts.
+   ```
+   docker exec classguard-frontend mkdir -p /usr/share/nginx/html/seb-spike/cfg
+   docker cp seb-spike-out/. classguard-frontend:/usr/share/nginx/html/seb-spike/cfg/
+   docker cp frontend/public/seb-spike/probe.html   classguard-frontend:/usr/share/nginx/html/seb-spike/
+   docker cp frontend/public/seb-spike/wrapper.html classguard-frontend:/usr/share/nginx/html/seb-spike/
+   ```
+   These copies disappear on the next frontend redeploy. Only request files that exist: the SPA answers a missing path with `index.html` (`text/html`, 200), which SEB for Windows would load as a web page with default settings (§8.1.3).
 5. Logs are in `%LocalAppData%\SafeExamBrowser\Logs`. Debug is the default level, so nothing needs switching on.
 
 #### Test 0: install, probe, cross-platform Config Key
