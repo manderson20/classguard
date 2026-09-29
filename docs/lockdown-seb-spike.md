@@ -219,7 +219,11 @@ SEB doesn't exist for ChromeOS, so Chromebooks need a different lock. This secti
 - Admin console policies (e.g. no Android apps, no screenshots) would tighten this further, but they apply to the student OU all day, not just during a test. They are the district's call, outside ClassGuard.
 
 **Agreed Chromebook plan (2026-09-29)**
-1. **Default: soft lock plus forced fullscreen.** Chromebook students get today's `chrome` lock type, plus fullscreen enforcement and a `fullscreen_exit` event. The dashboard labels them "Chromebook: soft lock".
+1. **Default: soft lock plus forced fullscreen and focus snap-back.** Chromebook students get today's `chrome` lock type, plus:
+   - **Fullscreen enforcement:** re-apply fullscreen from `windows.onBoundsChanged`, with a polling timer as a backstop, and log a `fullscreen_exit` event.
+   - **Focus snap-back** (as Respondus does): when `windows.onFocusChanged` reports another window or `WINDOW_ID_NONE` (Chrome lost focus to a ChromeOS app), refocus the exam window, with a ~1 s check as a backstop. Log `focus_loss` as today, now with how long focus was away.
+
+   The dashboard labels them "Chromebook: soft lock".
 2. **Optional: Google locked mode.** When starting a session, a teacher can also enter a **second Form URL for Chromebooks**: a copy of the Form with locked mode on.
    - Chromebook students are sent to the locked copy, and Mac and Windows students to the unlocked original in SEB.
    - ClassGuard can't verify the copy really has locked mode on (FORMS-API), so the UI says so.
@@ -406,6 +410,18 @@ chrome.windows.onBoundsChanged.addListener(async (win) => {
 ```
 Leave fullscreen with the fullscreen key, Esc and a touchpad gesture. **Pass:** "exit detected" then "re-applied", and the window really returns to fullscreen.
 
+**C2b. Focus snap-back.** In the same console, run:
+```js
+const [w] = await chrome.windows.getAll({ windowTypes: ['normal'] });
+chrome.windows.onFocusChanged.addListener((id) => {
+  if (id === w.id) return;
+  console.log('focus left to', id);
+  chrome.windows.update(w.id, { focused: true })
+    .then(() => console.log('refocused'), (e) => console.log('failed', e.message));
+});
+```
+Switch away with Alt+Tab, the launcher, the shelf, and by opening Files and an Android app. **Pass:** focus returns to the Chrome window within about a second each time. Record any route where it doesn't (for example, whether an Android app or a system dialog keeps focus).
+
 **C3. Locked mode vs. the ClassGuard extension.** Make a copy of the test Form with **Locked mode ON**. As the test student, open it and start the quiz. While it's locked, check from the teacher's side:
 - Does the student's ClassGuard status stay online (live screen thumbnail, activity)?
 - Does a ClassGuard Lockdown Test started with the locked copy as its URL still work, or does the soft lock's tab handling interfere with locked mode?
@@ -438,6 +454,7 @@ Leave fullscreen with the fullscreen key, Esc and a touchpad gesture. **Pass:** 
 | 6 locked mode on Mac | | |
 | C1 Chromebook soft lock baseline | | |
 | C2 forced fullscreen re-apply | | |
+| C2b focus snap-back | | |
 | C3 locked mode vs. extension | | |
 
 ## 6. Decisions needed at review
