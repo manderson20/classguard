@@ -25,7 +25,7 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ### Fixed
 
-- **"Allow site…" in Penalty Box did nothing**: approving the request only changed its status. Approving a Penalty Box request in Unblock Requests (now tagged **Penalty Box** there) lets that student reach the site until they're released; a later restriction starts clean. Teachers can paste a full URL; it's reduced to the site's domain. The confirmation no longer claims an admin was notified, and server errors (e.g. a duplicate pending request) are shown instead of a generic "Request failed".
+- **"Allow site…" in Penalty Box did nothing**: approving the request only changed its status. Approving a Penalty Box request in Unblock Requests (now tagged **Penalty Box** there), with **Approve** or with **+ Code**, lets that student reach the site until they're released; a later restriction starts clean. The Filter Simulator shows those sites as allowed. Teachers can paste a full URL; it's reduced to the site's domain. The confirmation no longer claims an admin was notified, and server errors (e.g. a duplicate pending request) are shown instead of a generic "Request failed".
 - **Class pages never showed a student as Restricted**, so **Release** only appeared on the Penalty Box page: the class API now returns each student's restriction status.
 - **Lock / Unlock on a student's card reset after a reload**: the lock state is now remembered server-side (for every lock and unlock, including End Class and ClassPulse), so the card shows the real state.
 - **Class History labeled Monitor-only sessions "All blocked"**: they now read "Monitor only".
