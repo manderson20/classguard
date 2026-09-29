@@ -5,6 +5,7 @@ const { pool } = require('../db');
 const redis    = require('../redis');
 const { authenticate }   = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
+const { grantApprovedPenaltyRequest } = require('../services/penaltyGrants');
 
 const adminAuth = [authenticate, requirePermission('unblock_requests')];
 
@@ -77,18 +78,28 @@ router.post('/', ...adminAuth, async (req, res) => {
 
   if (!inserted) return res.status(500).json({ error: 'Failed to generate a unique code' });
 
-  // If linked to an unblock request, mark it approved
+  // If linked to an unblock request, mark it approved. For a Penalty Box
+  // "Allow site…" request the code alone wouldn't open the site (the penalty
+  // block is applied before override codes), so grant it for the
+  // restriction the same way a plain Approve does.
+  let granted = false;
   if (unblock_request_id) {
-    await pool.query(
-      `UPDATE unblock_requests
-         SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(),
-             review_note = 'Approved with temporary override code'
-       WHERE id = $2`,
-      [req.user.userId, unblock_request_id]
-    ).catch(() => {});
+    try {
+      const { rows: [request] } = await pool.query(
+        `UPDATE unblock_requests
+           SET status = 'approved', reviewed_by = $1, reviewed_at = NOW(),
+               review_note = 'Approved with temporary override code'
+         WHERE id = $2
+         RETURNING *`,
+        [req.user.userId, unblock_request_id]
+      );
+      granted = await grantApprovedPenaltyRequest(request);
+    } catch (err) {
+      console.error('[override-codes] approving linked request failed:', err.message);
+    }
   }
 
-  res.status(201).json(inserted);
+  res.status(201).json({ ...inserted, granted });
 });
 
 // ---------------------------------------------------------------------------
