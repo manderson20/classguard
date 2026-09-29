@@ -299,6 +299,16 @@ The recommendation is **gate + direct**, unless test 5 shows the wrapper works w
 
 **To investigate before Phase 2 (not yet verified).** SEB Server is SEB's own server protocol. It may offer a client ping and a remote quit that don't depend on the page. It would be much more work than the gate page.
 
+**Known gap: unmanaged devices (accepted for now, 2026-09-29).**
+- Respondus closed this gap through the LMS: the assessment platform itself refused to serve a lockdown test to anything but LockDown Browser. Google Forms can't do that. It serves the Form to any browser.
+- On school-owned devices ClassGuard covers it: the extension blocks the Form in regular Chrome during the session, and the gate page's Config Key check confirms real SEB with our config.
+- On a device ClassGuard doesn't manage, such as a personal phone, nothing stops a student who has the Form link. DNS filtering can't help, because it sees only `docs.google.com`, not which Form is being opened.
+- **Mitigations:**
+  - The Form uses **Limit to 1 response** with **verified email**, so a student gets one attempt and it's tied to their account.
+  - ClassGuard records who finished through SEB's finish link. The teacher can compare that with the Form's responses: a response from a student ClassGuard never saw finish came from somewhere else.
+  - Automating that comparison would need read access to Form responses through the Forms API, which ClassGuard doesn't have today. Possible later work.
+- **Decision:** ClassGuard targets districts with managed, school-owned devices, so this gap is accepted and not a Phase 1–4 requirement.
+
 ---
 
 ## 5. Hands-on tests (test Mac)
