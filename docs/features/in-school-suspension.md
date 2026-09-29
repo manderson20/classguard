@@ -23,8 +23,9 @@ ISS is built as a special kind of roster rather than a separate system. Everythi
 | Placement length | Flexible: from a short cool-down (e.g. 30 min or 1 hour) to "until a date". |
 | How strict | ISS staff pick per placement: **Restricted** (only allowed sites) or **Monitored** (normal school filtering, just supervised). |
 | What a Restricted student can reach | The admin **ISS baseline** list, sites ISS staff **grant directly**, and **coursework** ISS staff approve. |
-| Coursework from regular teachers | Arrives in a **queue** ISS staff approve, hold or decline. It never goes straight to the student. |
-| Delivery | Each coursework item either **opens a link in a new tab** on the student's device, or **just allows its sites**. An item can carry several sites (e.g. "read this article, write it up in a Google Doc, submit in Classroom"). |
+| Coursework from regular teachers | Sent as an **assignment package**: instructions, links, sites to allow, and **files** (worksheets, presentations, PDFs, images). Arrives in a **queue** ISS staff approve, hold or decline; it never goes straight to the student. The teacher and ISS staff effectively co-teach it. |
+| Delivery | Each package either **opens a link in a new tab** on the student's device, or **just allows its sites**. It can carry several sites (e.g. "read this article, write it up in a Google Doc, submit in Classroom"). Files are printed by ISS staff or shared to the student's **My ISS work** page. |
+| Work to do | Every package lands on the student's **Work to do** list, which ISS staff see and tick off. The teacher sees each item's progress. |
 | Regular teachers during a placement | **See only**: an "In ISS" badge, plus the ability to send coursework and talk to ISS staff. Their lock, restrict, lockdown, open/close-tab controls are off for that student until the placement ends. |
 | Communication | A **staff-only thread** per placement, between ISS staff and the student's regular teachers. |
 | Tests | A regular teacher sends a test as a queue item; ISS staff start it as a Lockdown Test when the student is ready. |
@@ -103,7 +104,7 @@ ISS is built as a special kind of roster rather than a separate system. Everythi
 
 For a **Restricted** placement, everything is blocked except the union of:
 
-1. **Google sign-in** (`accounts.google.com`, `oauth2.googleapis.com`), as in Penalty Box, so the student stays signed in.
+1. **Google sign-in** (`accounts.google.com`, `oauth2.googleapis.com`), as in Penalty Box, so the student stays signed in, and ClassGuard's own **My ISS work** page (§7).
 2. **ISS baseline:** a district-wide list admins set in **Settings** (e.g. `classroom.google.com`, `docs.google.com`, `drive.google.com`). Always allowed, never queued.
 3. **Direct grants:** sites the group's instructor (or a supervisor) adds for this student, for this placement, instantly.
 4. **Approved coursework:** every site on every approved coursework item for this placement.
@@ -139,30 +140,67 @@ The student's block page says access is limited during ISS, and that coursework 
 
 `/extension/open-tab-request` is different: for a regular teacher it **doesn't fail, it becomes a coursework item** (§7). The teacher sees "Sent to ISS for approval".
 
-## 7. Coursework queue
+## 7. Coursework: assignment packages, queue and work list
 
-**Sending coursework.** A regular teacher sees **Send coursework** on the student's card while they're **In ISS**. Using **Open URL** or **Open Tab** on that student does the same thing, pre-filled.
+The aim is to make it as easy as possible for a regular teacher to hand ISS staff **everything an assignment needs**, so the ISS instructor can "co-teach" it and get the materials to the student.
+
+**Sending an assignment package.** A regular teacher sees **Send assignment** on the student's card while they're **In ISS**. Using **Open URL** or **Open Tab** on that student starts the same dialog, pre-filled. A package has:
 - **Title:** e.g. "Ch. 5 reading + summary".
-- **Open link (optional):** a URL to open on the student's device.
-- **Sites to allow:** one or more domains. Pre-filled from the open link's domain; the teacher can add more (e.g. the article's site plus Docs and Classroom). Sites already on the ISS baseline are shown as "always allowed" and don't need adding.
+- **Instructions for the student:** shown to the student on their **My ISS work** page.
+- **Notes for ISS staff (optional):** never shown to the student (e.g. "They can use notes; collect the worksheet at the end").
+- **Links:** one or more URLs. One can be marked **open on the student's device**.
+- **Sites to allow:** one or more domains. Pre-filled from the links' domains; the teacher can add more (e.g. the article's site plus Docs and Classroom). Sites already on the ISS baseline are shown as "always allowed".
+- **Files:** drag and drop worksheets, slide decks, PDFs and images: PDF, PNG/JPEG/GIF/WebP, Word, PowerPoint, Excel, plain text. Up to 25 MB per file and 10 files / 100 MB per package; district-adjustable.
 - **Delivery:**
-  - **Open in a new tab**: needs an open link. On approval the link opens on the student's device and all listed sites are allowed.
+  - **Open in a new tab**: needs a link marked to open. On approval that link opens on the student's device and all listed sites are allowed.
   - **Just allow the sites**: on approval the sites are allowed, and the student opens them when they get to it (e.g. from Classroom).
-- **Note to ISS staff (optional).**
+- **When:** optional, e.g. "Today", "Before the end of the placement", or a date.
 - **This is a test:** see §9.
+- **Send to:** this student, or **all my students currently in ISS** (e.g. a class-wide assignment for several students placed the same day). Each student gets their own copy on their own list.
 
-**Focus sessions.** When one of the student's regular classes starts or changes a **Focus** session, that session's allowed sites arrive as one item: "\<class\>: Focus sites", delivery **Just allow the sites**. A later change updates the same item, and it's marked expired when the session ends.
+A teacher can also **Send again** a previous package to another student later, with its files.
 
-**The ISS queue**, per student on the group's page, newest first. It's handled by the group's instructors, or a supervisor. The supervisor overview shows each group's count of pending items, so a backlog in one room is visible:
-- **Approve.** ISS staff can first edit the sites and switch the delivery mode (e.g. change **Open in a new tab** to **Just allow** if the student is mid-task). The sites are allowed for the rest of the placement.
+**Focus sessions.** When one of the student's regular classes starts or changes a **Focus** session, that session's allowed sites arrive as one item: "\<class\>: Focus sites", delivery **Just allow the sites**, no files. A later change updates the same item, and it's marked expired when the session ends.
+
+**The ISS queue**, per student on the group's page, newest first. It's handled by the group's instructors, or a supervisor. The supervisor overview shows each group's count of pending items, so a backlog in one room is visible.
+- **Approve.** ISS staff can first edit the sites and links and switch the delivery mode (e.g. change **Open in a new tab** to **Just allow** if the student is mid-task). The sites are allowed for the rest of the placement, and the package moves to **Work to do**.
 - **Hold.** Stays in the queue, marked held, optionally with a note (e.g. "finishing History first"). Can be approved later.
 - **Decline**, with a short reason the teacher sees.
 - **Discuss.** Opens the staff thread with the item quoted (§8).
 - **Open again.** For an approved **Open in a new tab** item, reopens the link on the student's device.
 - **Revoke.** Removes an approved item's sites from the allow list; other items or grants may still allow the same site.
-- **Auto-approve from \<teacher\>**, per placement: items from that teacher are approved on arrival, still logged, and still visible in the queue.
+- **Auto-approve from \<teacher\>**, per placement: packages from that teacher are approved on arrival, still logged, and still visible.
 
-**The teacher's view.** Each item's status (waiting, held, approved, declined, expired) shows on the student's card and in the item list, with the ISS staff's note. Status changes arrive live.
+**Monitored placements** (decided at review, §11 #6):
+- **Just allow the sites** packages skip approval. They're marked **Delivered** and go straight onto the student's **Work to do** list, so ISS staff always see what's assigned.
+- **Open in a new tab** packages still wait for approval.
+- Nothing overrides district filtering in Monitored mode. If a package's site is blocked by district filtering, the item says so for the teacher and ISS staff; ISS staff can switch the placement to Restricted if the site is really needed.
+
+**Work to do**, per student on the group's page (and summarized per group on the supervisor overview):
+- Every approved or delivered package, with its instructions, links, files, "when" and sending teacher.
+- ISS staff mark each one **Done**, optionally with a note (e.g. "worksheet collected", "submitted in Classroom 10:40"), or **Not finished** at the end of the placement.
+- The list stays with the student if they move to another group.
+
+**Files.** For each file, ISS staff can:
+- **Download or print** it (e.g. a paper worksheet);
+- **Share with student**, which puts it on the student's **My ISS work** page.
+
+Nothing is shared with the student automatically; the teacher can mark files as "share with the student" when sending, and ISS staff can change that.
+
+**My ISS work** is a page on the student's device, hosted by ClassGuard and always reachable during a placement, even Restricted.
+- It lists the student's current work: titles, **instructions for the student**, links, shared files (PDFs and images open in the browser; Office files download) and when each is due. It never shows notes for ISS staff.
+- The extension opens it when a placement starts and whenever something new is shared.
+- The student can't mark items done; ISS staff do.
+- It's available only while a placement is active.
+
+**The teacher's view.** Each package's status shows on the student's card and in the teacher's item list, with the ISS staff's notes, and changes arrive live:
+- waiting, held, approved/delivered, declined, expired;
+- then **Done** or **Not finished**.
+
+**File handling:**
+- **Storage.** Files are stored **in the database**, so they are replicated to the standby node and included in backups. Chat attachments today live on each server's local disk, which a failover doesn't carry over.
+- **Serving.** Files are only served to ISS staff who can act on the placement, the sending teacher, and (for shared files) the student during the placement. Downloads use `Content-Disposition` and `X-Content-Type-Options: nosniff`, and only the listed types are accepted, checked by content as well as extension.
+- **Retention.** Files are deleted a set time after the placement ends. It's a district setting, default 30 days. Package text and statuses are kept with the placement record.
 
 ## 8. Staff thread
 
@@ -219,21 +257,30 @@ iss_placements
 iss_site_grants                    -- direct grants (§5 item 3)
   id, placement_id, domain, granted_by, created_at, revoked_at
 
-iss_coursework_items
+iss_coursework_items               -- one assignment package for one placement
   id, placement_id, sent_by, class_id (NULL for manual),
-  source ('teacher'|'focus_session'|'open_tab'),
+  source ('teacher'|'focus_session'|'open_tab'), copied_from_item_id,
   lesson_session_id (for focus_session items),
-  kind ('coursework'|'test'), title, note,
-  open_url, sites JSONB (domains), delivery ('open_tab'|'allow_only'),
+  kind ('coursework'|'test'), title,
+  instructions_student, notes_staff, due_hint, due_date,
+  links JSONB ([{url, open_on_device}]), sites JSONB (domains),
+  delivery ('open_tab'|'allow_only'),
   test_duration_minutes, lockdown_session_id,
-  status ('pending'|'held'|'approved'|'declined'|'expired'|'test_finished'),
-  decided_by, decided_at, decision_note, created_at, updated_at
+  status ('pending'|'held'|'approved'|'delivered'|'declined'|'expired'|'test_finished'),
+  decided_by, decided_at, decision_note,
+  progress ('todo'|'done'|'not_finished'), progress_by, progress_at, progress_note,
+  created_at, updated_at
+
+iss_item_files
+  id, item_id, file_name, mime_type, size_bytes, content BYTEA,
+  shared_with_student BOOLEAN, uploaded_by, created_at, deleted_at
 
 iss_auto_approve                   -- per placement, per teacher
   placement_id, teacher_id, created_by, created_at
 
 settings keys 'iss_baseline_domains' (JSON array), 'iss_end_of_day_time' (default '16:00'),
-  'iss_instructors_can_place' (boolean)
+  'iss_instructors_can_place' (boolean), 'iss_file_limits' (per-file / per-package),
+  'iss_file_retention_days' (default 30)
 chat_threads: type adds 'staff'; iss_placement_id UUID NULL
 chat_thread_members.role adds 'staff'
 lockdown_sessions.iss_item_id UUID NULL
@@ -251,7 +298,9 @@ Every placement change (including group moves), queue decision and group staffin
 5. **End of day:** a configurable setting, default 4:00 PM (§4).
 7. **Reports:** a separate `iss.reports` permission, assignable to any role (§3).
 
-**Still open: 6. Coursework during a Monitored placement.**
+6. **Coursework during a Monitored placement:** option **B**. "Just allow the sites" packages skip approval and are **Delivered** straight onto the student's **Work to do** list, which ISS staff see; "Open in a new tab" still waits for approval, and nothing overrides district filtering (§7).
+
+**Background for #6** (kept for reference):
 
 In a Monitored placement the student keeps normal school filtering, so a coursework item's two parts behave differently:
 - **"Open in a new tab"** still does something the ISS staff should control: it pops a tab on the student's device.
@@ -264,7 +313,7 @@ Examples:
 
 Options:
 - **A. Everything goes through the queue**, whatever the mode. It's consistent and ISS staff always see what's assigned, at the cost of approving things that change nothing.
-- **B (suggested). In Monitored mode, "Just allow" items skip approval.** They appear in the queue as **Delivered** (a to-do list for the instructor and a record for the teacher). "Open in a new tab" items still wait for approval. Nothing overrides district blocks in Monitored mode; the teacher sees "blocked by district filtering" on the item, and ISS staff can switch the placement to Restricted if the site is really needed.
+- **B (chosen). In Monitored mode, "Just allow" items skip approval.** They appear in the queue as **Delivered** (a to-do list for the instructor and a record for the teacher). "Open in a new tab" items still wait for approval. Nothing overrides district blocks in Monitored mode; the teacher sees "blocked by district filtering" on the item, and ISS staff can switch the placement to Restricted if the site is really needed.
 - **C. No coursework in Monitored mode**, just messages in the staff thread. Simplest, but teachers lose the status tracking.
 
 ## 12. Build phases (one PR each, plus Help articles)
@@ -286,14 +335,21 @@ Options:
    - `iss` mode in the resolver, DNS and extension;
    - see-only controls for regular teachers, the "In ISS" badge, and placement and release notices;
    - the ISS Viewer read-only view.
-2. **Coursework queue:**
-   - Send coursework, with multi-site items and both delivery options;
+2. **Coursework queue and work list:**
+   - Send assignment (text, links, sites, both delivery options, send to several ISS students, send again);
    - Open URL / Open Tab turned into queue items;
    - Focus-session items;
    - approve, hold, decline, revoke and auto-approve;
+   - Monitored-mode delivery;
+   - the **Work to do** list with Done / Not finished;
    - live status for teachers.
-3. **Staff thread:** the `staff` thread type, Discuss from items, the teacher and ISS staff views, archiving at placement end.
-4. **Tests:** test items, Start test as a Lockdown Test, and event routing to both teachers.
-5. **Reports:** ISS reports behind `iss.reports`, filtered by school.
+3. **Files and My ISS work:**
+   - file uploads on packages, stored in the database, with type and size checks and retention;
+   - download and print for ISS staff;
+   - Share with student;
+   - the student's **My ISS work** page, reachable during Restricted placements.
+4. **Staff thread:** the `staff` thread type, Discuss from items, the teacher and ISS staff views, archiving at placement end.
+5. **Tests:** test items, Start test as a Lockdown Test, and event routing to both teachers.
+6. **Reports:** ISS reports behind `iss.reports`, filtered by school.
 
 Phase 1 is useful on its own (cool-downs, supervision, direct grants). Phases 2–4 add the link with regular teachers.
