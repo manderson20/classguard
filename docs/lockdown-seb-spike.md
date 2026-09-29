@@ -19,6 +19,9 @@ Citations use these short names.
 | **DL** | https://safeexambrowser.org/download_en.html |
 | **APPLE-AAC** | https://developer.apple.com/documentation/automaticassessmentconfiguration |
 | **CHROMIUM** | chromium/src at `979281823a50` |
+| **CHROMIUM-2** | chromium/src at [`5a1f0ec9`](https://github.com/chromium/chromium/tree/5a1f0ec90b18293353efc06314154fbc57f02d69) (2026-09-29), used for §1.10 |
+| **FORMS-LOCKED** | https://support.google.com/docs/answer/7634943 |
+| **FORMS-API** | Google Forms API v1 discovery document, https://forms.googleapis.com/$discovery/rest?version=v1 (fetched 2026-09-29) |
 
 ---
 
@@ -187,6 +190,37 @@ User-agent keys:
 - The policy text: "also allows enabling the automatic invocation … of external application registered as protocol handlers for the listed protocols" (Chrome 86+).
 - **Candidate: URLAllowlist `sebs://*`.** It also skips Chrome's anti-flood rule, which otherwise blocks a second launch that lacks a user gesture (external_protocol_handler.cc L529-563).
 
+### 1.10 ChromeOS: what an extension can and can't lock
+
+SEB doesn't exist for ChromeOS, so Chromebooks need a different lock. This section records what's possible.
+
+**The hard lock is reserved for Google's own extensions**
+- ChromeOS has a `locked-fullscreen` window state that "cannot be exited by user action and is available only to allowlisted extensions on Chrome OS" (CHROMIUM-2 `chrome/common/extensions/api/windows.json#L60-62`).
+- It is gated by the `lockWindowFullscreenPrivate` permission. The allowlist holds only hashed IDs for Chromium's API-test extension, **Assessment Assistant** (the engine behind Forms locked mode), and **Share to Classroom** (CHROMIUM-2 `chrome/common/extensions/api/_permission_features.json#L559-573`).
+- A third-party extension like ClassGuard's can't be added to that list. **ClassGuard can't hard-lock a Chromebook.**
+
+**Google Forms locked mode is the only hard lock available** (FORMS-LOCKED)
+- It needs Workspace for Education, a school-managed Chromebook per student, and ChromeOS 75+.
+- Students "can't use other apps", and "some extensions and keyboard shortcuts are disabled". Google doesn't say which extensions, so **whether ClassGuard's force-installed extension keeps running during locked mode is unknown** (test C3).
+- The teacher is emailed when a student exits the quiz or opens another tab.
+- It is a per-Form setting ("Chromebook settings → Locked mode"). **The Forms API doesn't expose it**: `FormSettings` has only `emailCollectionType` and `quizSettings.isQuiz` (FORMS-API). ClassGuard therefore can't turn it on, and can't even read whether a Form has it on.
+- It is reported to block the Form on non-Chromebooks (§1.8; test 6 confirms on a Mac).
+
+**What ClassGuard's extension can do** (today's `chrome` soft lock, `chrome-extension/src/lib/lockdownGuard.js`)
+- Today it allows only the Form's URLs (DNR), collapses the student to one tab, closes new tabs and windows, and logs `new_tab`, `tab_switch`, `new_window` and `focus_loss`.
+- It **can't** stop the student from leaving Chrome for ChromeOS apps (Files, Android apps, the launcher, the calculator). It can only detect the focus loss and report it.
+- It **doesn't use fullscreen today**. The public `fullscreen` window state is available to any extension (CHROMIUM-2 `windows.json#L57-58`), but the student can exit it. The extension can watch `chrome.windows.onBoundsChanged`, re-apply fullscreen, and log a `fullscreen_exit` event. Whether re-applying works without a user gesture on ChromeOS needs checking (test C2).
+- Admin console policies (e.g. no Android apps, no screenshots) would tighten this further, but they apply to the student OU all day, not just during a test. They are the district's call, outside ClassGuard.
+
+**Agreed Chromebook plan (2026-09-29)**
+1. **Default: soft lock plus forced fullscreen.** Chromebook students get today's `chrome` lock type, plus fullscreen enforcement and a `fullscreen_exit` event. The dashboard labels them "Chromebook: soft lock".
+2. **Optional: Google locked mode.** When starting a session, a teacher can also enter a **second Form URL for Chromebooks**: a copy of the Form with locked mode on.
+   - Chromebook students are sent to the locked copy, and Mac and Windows students to the unlocked original in SEB.
+   - ClassGuard can't verify the copy really has locked mode on (FORMS-API), so the UI says so.
+   - The cost is that responses land in two Forms. The teacher UI must say this plainly.
+   - If test C3 shows locked mode disables the ClassGuard extension, those students drop out of ClassGuard's live log for the duration, and Google's email notifications are the teacher's only signal.
+3. **Routing.** The policy carries both URLs and the extension picks by `chrome.runtime.getPlatformInfo().os`. The server doesn't need to know a device's OS up front. The extension reports its OS when the lock engages, so the dashboard can label each student.
+
 ---
 
 ## 2. How this fits the existing ClassGuard architecture
@@ -219,7 +253,7 @@ This extends the existing **Lockdown Test** feature instead of adding a parallel
   - Keep blocking the Form URL in regular Chrome using the same DNR lockdown-mode rules, inverted. This needs a new rule outside the mode branch, because today's URL rules only apply in `standard` mode.
   - If SEB never reports in within N seconds, report `seb_not_launched`.
   - The extension has **no platform detection today**; this adds it.
-- **Extension, on Chromebooks** (`os === 'cros'`). Fall back to today's `chrome` lock type. It already exists, is enforced by the same policy path, and needs no new teacher workflow. The dashboard labels those students "Chromebook: soft lock". The alternative, telling teachers to use Google's locked mode, would mean two Form settings per mixed class, which contradicts the "leave locked mode off" instruction.
+- **Extension, on Chromebooks** (`os === 'cros'`). Today's `chrome` lock type plus forced fullscreen, with an optional teacher-supplied locked-mode copy of the Form. See the agreed plan in §1.10.
 - **Liveness during AAC.** The ClassGuard extension **loses network access**: AAC allows network only for SEB (APPLE-AAC). So an extension heartbeat can't be the signal, and the page inside SEB has to report.
 - **DNS doesn't help.** The DNS engine sees hostnames only and ignores `lockdown` mode, so it plays no part.
 
@@ -343,6 +377,36 @@ Turn **Locked mode ON** for the test Form. Open it:
 
 Record the exact messages. This becomes the teacher-facing warning text in Phase 4.
 
+### Chromebook tests (test Chromebook)
+Use a managed Chromebook signed in as a **test-OU student** whose OU allows developer tools (`DeveloperToolsAvailability`), so the extension's service worker can be inspected.
+
+**C1. Today's soft lock, baseline.** Start a normal ClassGuard Lockdown Test for the test student from ActiveLesson. Then try each of these and record whether it works and whether an event appears in the teacher's live log:
+- open the launcher and start Files, the calculator, and an Android app (if the OU allows Android apps);
+- Alt+Tab between them and Chrome;
+- the screenshot key;
+- a new tab, a new window, and closing the test tab.
+
+**C2. Forced fullscreen.** In `chrome://extensions` → ClassGuard → service worker **Inspect**, run:
+```js
+const [w] = await chrome.windows.getAll({ windowTypes: ['normal'] });
+await chrome.windows.update(w.id, { state: 'fullscreen' });
+chrome.windows.onBoundsChanged.addListener(async (win) => {
+  const cur = await chrome.windows.get(win.id);
+  if (cur.state === 'fullscreen') return;
+  console.log('exit detected');
+  chrome.windows.update(win.id, { state: 'fullscreen' })
+    .then(() => console.log('re-applied'), (e) => console.log('failed', e.message));
+});
+```
+Leave fullscreen with the fullscreen key, Esc and a touchpad gesture. **Pass:** "exit detected" then "re-applied", and the window really returns to fullscreen.
+
+**C3. Locked mode vs. the ClassGuard extension.** Make a copy of the test Form with **Locked mode ON**. As the test student, open it and start the quiz. While it's locked, check from the teacher's side:
+- Does the student's ClassGuard status stay online (live screen thumbnail, activity)?
+- Does a ClassGuard Lockdown Test started with the locked copy as its URL still work, or does the soft lock's tab handling interfere with locked mode?
+- After exiting, did the teacher get Google's email notification?
+
+**Pass:** the extension keeps working during locked mode. If it doesn't, note exactly what stops. That decides how §1.10 option 2 is presented to teachers.
+
 ### Results
 
 | Test | Result | Notes |
@@ -366,6 +430,9 @@ Record the exact messages. This becomes the teacher-facing warning text in Phase
 | 5b wrapper, open form | | |
 | 5c wrapper Finish | | |
 | 6 locked mode on Mac | | |
+| C1 Chromebook soft lock baseline | | |
+| C2 forced fullscreen re-apply | | |
+| C3 locked mode vs. extension | | |
 
 ## 6. Decisions needed at review
 
