@@ -296,9 +296,9 @@ Every placement change (including group moves), queue decision and group staffin
 3. **Read-only visibility for other staff:** the optional **ISS Viewer** role (`iss.view`), used only if a district wants it (§3).
 4. **Telling regular teachers:** yes, a live notice on placement and release (§4).
 5. **End of day:** a configurable setting, default 4:00 PM (§4).
+6. **Coursework during a Monitored placement:** option **B**. "Just allow the sites" packages skip approval and are **Delivered** straight onto the student's **Work to do** list, which ISS staff see; "Open in a new tab" still waits for approval, and nothing overrides district filtering (§7).
 7. **Reports:** a separate `iss.reports` permission, assignable to any role (§3).
 
-6. **Coursework during a Monitored placement:** option **B**. "Just allow the sites" packages skip approval and are **Delivered** straight onto the student's **Work to do** list, which ISS staff see; "Open in a new tab" still waits for approval, and nothing overrides district filtering (§7).
 
 **Background for #6** (kept for reference):
 
