@@ -12,6 +12,12 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.10] - 2026-09-28
+
+### Fixed
+
+- **Chrome extension builds failing since 0.17.5 ("archiver is not a function")**: the extension-builder image ran `npm install` before copying `patches/`, so patch-package never applied the crx shim for archiver 8. It was masked until 0.17.5, when `.dockerignore` stopped `COPY . .` from dragging in the host's already-patched `node_modules`. Every rebuild since then failed and the served `.crx` stayed at 0.0.21, so devices never received 0.0.22. `patches/` is now copied before the install; verified in a fresh image build that the shim is applied and crx packs a valid Cr24 package.
+
 ## [0.17.9] - 2026-09-28
 
 ### Added
