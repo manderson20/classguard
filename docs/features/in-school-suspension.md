@@ -25,6 +25,7 @@ ISS is built as a special kind of roster rather than a separate system. Everythi
 | What a Restricted student can reach | The admin **ISS baseline** list, sites ISS staff **grant directly**, and **coursework** ISS staff approve. |
 | Coursework from regular teachers | Sent as an **assignment package**: instructions, links, sites to allow, and **files** (worksheets, presentations, PDFs, images). Arrives in a **queue** ISS staff approve, hold or decline; it never goes straight to the student. The teacher and ISS staff effectively co-teach it. |
 | Delivery | Each package either **opens a link in a new tab** on the student's device, or **just allows its sites**. It can carry several sites (e.g. "read this article, write it up in a Google Doc, submit in Classroom"). Files are printed by ISS staff or shared to the student's **My ISS work** page. |
+| Google Classroom | A **Classroom scanner** notices when a teacher posts in Google Classroom for a course with a student currently in ISS, turns the post into a draft package, and **prompts the teacher** to send it to ISS (§7a). |
 | Work to do | Every package lands on the student's **Work to do** list, which ISS staff see and tick off. The teacher sees each item's progress. |
 | Regular teachers during a placement | **See only**: an "In ISS" badge, plus the ability to send coursework and talk to ISS staff. Their lock, restrict, lockdown, open/close-tab controls are off for that student until the placement ends. |
 | Communication | A **staff-only thread** per placement, between ISS staff and the student's regular teachers. |
@@ -202,6 +203,57 @@ Nothing is shared with the student automatically; the teacher can mark files as 
 - **Serving.** Files are only served to ISS staff who can act on the placement, the sending teacher, and (for shared files) the student during the placement. Downloads use `Content-Disposition` and `X-Content-Type-Options: nosniff`, and only the listed types are accepted, checked by content as well as extension.
 - **Retention.** Files are deleted a set time after the placement ends. It's a district setting, default 30 days. Package text and statuses are kept with the placement record.
 
+## 7a. Google Classroom scanner
+
+Most coursework is posted in Google Classroom. Rather than asking teachers to repackage it, ClassGuard watches Classroom for them and asks.
+
+**What triggers a prompt.** A post is **published** (including a scheduled post going live) while a student is in an ISS placement, in a Classroom course that:
+- is linked to a ClassGuard class (`classes.google_classroom_id`, already set by the Google Classroom roster sync); and
+- has that student enrolled.
+
+It must be assigned to the student: to all students, or to specific students including them. Covered post types:
+- **assignments and questions** (`courseWork`);
+- **materials** (`courseWorkMaterials`);
+- **announcements** that carry materials or links.
+
+**What the scanner reads**, and how it turns a post into a **draft assignment package**:
+
+| In the Classroom post | In the draft package |
+|---|---|
+| Title | Title |
+| Description / announcement text | Instructions for the student |
+| Due date and time | When |
+| Link materials | Links, with their sites added to **Sites to allow** |
+| YouTube videos | Links; `youtube.com` added to the sites |
+| Drive files and folders | Links (Docs, Drive and Classroom are usually on the ISS baseline). Optionally, **Attach a PDF copy**: Docs, Slides and Sheets are exported to PDF, and uploaded files like PDFs and images are copied into the package, so ISS staff can print them. |
+| Google Forms | Links. It's flagged **"Looks like a quiz or test — send as a test?"**, which turns it into a test item (§9). |
+| A link to the post in Classroom | Kept on the package for ISS staff, so they can open the original |
+
+**Prompting the teacher.** For each new post, the teacher who posted it (and co-teachers of the course) get a **"Send to ISS?"** prompt, listing which of their students in that course are in ISS right now:
+- **In ClassGuard:** a pop-up window if they have ClassGuard open, and a badge on **My Classes** until they answer.
+- **On their device:** a Chrome notification from the ClassGuard extension, if the teacher's Chrome runs it. Clicking it opens the review window.
+
+The review window shows the draft package, fully editable. The teacher can:
+- **Send to ISS**, choosing which of the listed students, with files and delivery options as in §7;
+- **Not needed** (e.g. an in-class activity that doesn't apply);
+- **Remind me later**;
+- turn on **Always send posts from this class while students are in ISS**, per class. Future posts are then sent automatically, and still go through the ISS queue.
+
+**Catching up.** When a student is placed, each of their teachers' placement notice (§4) also lists posts from **earlier that day** in that teacher's Classroom courses. The teacher can send any of them the same way.
+
+**How it reads Classroom.**
+- It reuses the existing Google service account with domain-wide delegation, reading **as the course's teacher**, like the Classroom roster sync and ClassPulse's Slides import.
+- It needs extra read-only scopes, which the district adds in the Google Admin console: coursework, coursework materials and announcements; Drive read-only, already used by ClassPulse, is needed only for PDF copies. The exact scope strings are confirmed against the API at build time.
+- **Polling, not push**, to start. Every 2 minutes it checks only the courses of students **currently placed**, one request per post type per course, filtered to posts newer than the last check. With no one in ISS, it makes no calls.
+  - Classroom push notifications (Cloud Pub/Sub) only cover assignments, not materials or announcements. They also need a Google Cloud project with Pub/Sub and billing. They could be added later to cut the delay.
+- **Off by default.** It's a district setting, and it needs the Classroom roster sync, so that ClassGuard classes are linked to Classroom courses.
+
+**Privacy.**
+- It reads only posts in courses where a student is currently placed.
+- It stores only the drafts the teacher sees, plus which posts it has already seen.
+- It never reads student submissions or grades.
+- Drafts the teacher dismisses are deleted after the placement ends.
+
 ## 8. Staff thread
 
 - Created with the placement. Members:
@@ -271,6 +323,17 @@ iss_coursework_items               -- one assignment package for one placement
   progress ('todo'|'done'|'not_finished'), progress_by, progress_at, progress_note,
   created_at, updated_at
 
+iss_classroom_suggestions          -- scanner drafts awaiting the teacher
+  id, placement_id, teacher_id, course_id (Classroom), class_id,
+  post_type ('coursework'|'material'|'announcement'), post_id, post_link,
+  draft JSONB (the draft package), status ('pending'|'sent'|'dismissed'|'snoozed'),
+  item_id (the package created when sent), created_at, updated_at
+  UNIQUE (placement_id, post_type, post_id)
+iss_classroom_auto_send            -- "always send posts from this class" (per placement or standing)
+  class_id, teacher_id, created_at
+iss_classroom_cursor               -- last check per course and post type
+  course_id, post_type, checked_at, last_update_time
+
 iss_item_files
   id, item_id, file_name, mime_type, size_bytes, content BYTEA,
   shared_with_student BOOLEAN, uploaded_by, created_at, deleted_at
@@ -280,7 +343,7 @@ iss_auto_approve                   -- per placement, per teacher
 
 settings keys 'iss_baseline_domains' (JSON array), 'iss_end_of_day_time' (default '16:00'),
   'iss_instructors_can_place' (boolean), 'iss_file_limits' (per-file / per-package),
-  'iss_file_retention_days' (default 30)
+  'iss_file_retention_days' (default 30), 'iss_classroom_scanner' (off by default)
 chat_threads: type adds 'staff'; iss_placement_id UUID NULL
 chat_thread_members.role adds 'staff'
 lockdown_sessions.iss_item_id UUID NULL
@@ -299,6 +362,10 @@ Every placement change (including group moves), queue decision and group staffin
 6. **Coursework during a Monitored placement:** option **B**. "Just allow the sites" packages skip approval and are **Delivered** straight onto the student's **Work to do** list, which ISS staff see; "Open in a new tab" still waits for approval, and nothing overrides district filtering (§7).
 7. **Reports:** a separate `iss.reports` permission, assignable to any role (§3).
 
+
+**New questions from §7a (Classroom scanner):**
+8. **Teacher devices.** Do teachers' Chromebooks and Chrome profiles run the ClassGuard extension? If not, the prompt is in-app only, plus the My Classes badge.
+9. **Email.** Should a prompt the teacher hasn't answered within, say, 15 minutes also go by email?
 
 **Background for #6** (kept for reference):
 
@@ -348,8 +415,15 @@ Options:
    - download and print for ISS staff;
    - Share with student;
    - the student's **My ISS work** page, reachable during Restricted placements.
-4. **Staff thread:** the `staff` thread type, Discuss from items, the teacher and ISS staff views, archiving at placement end.
-5. **Tests:** test items, Start test as a Lockdown Test, and event routing to both teachers.
-6. **Reports:** ISS reports behind `iss.reports`, filtered by school.
+4. **Google Classroom scanner:**
+   - the extra read-only scopes and district setting;
+   - polling the courses of placed students;
+   - draft packages from assignments, materials and announcements, with PDF copies of Drive files and Forms flagged as tests;
+   - the Send to ISS prompt (in-app pop-up, My Classes badge, extension notification);
+   - Not needed, Remind me later and Always send;
+   - the catch-up list at placement.
+5. **Staff thread:** the `staff` thread type, Discuss from items, the teacher and ISS staff views, archiving at placement end.
+6. **Tests:** test items, Start test as a Lockdown Test, and event routing to both teachers.
+7. **Reports:** ISS reports behind `iss.reports`, filtered by school.
 
-Phase 1 is useful on its own (cool-downs, supervision, direct grants). Phases 2–4 add the link with regular teachers.
+Phase 1 is useful on its own (cool-downs, supervision, direct grants). Phases 2–6 add the link with regular teachers. Everything here is a starting point: details will be refined once it's running and in use.
