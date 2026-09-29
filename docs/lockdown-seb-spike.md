@@ -532,6 +532,18 @@ Some tests allow notes, so they aren't a lockdown in the traditional sense, but 
 - **Possible middle tier:** "locked, with allowed resources". Same devices and flow as a lockdown, but the teacher adds allowed URLs. SEB's URL filter and the Chromebook soft lock's allow rules can both carry extra entries. Worth considering only if teachers ask for it.
 - UI idea: a single "Start test" dialog with **Locked** / **Open notes (monitored)** instead of two separate features.
 
+### Later: remote proctoring (not in Phases 1–4)
+
+Question raised 2026-09-29: can the lockdown also video-proctor a student testing from home?
+
+- **SEB has no webcam proctoring any more.**
+  - SEB for Windows disabled its Jitsi Meet and Zoom video proctoring in March 2024 and deleted the code in April 2024; it is gone from every 3.10 release (seb-win-refactoring commits `956771c0`, `e8ebd284`).
+  - SEB for macOS compiles both out: `JitsiMeetProctoringSupported NO`, `ZoomProctoringSupported NO` (SM `Classes/SEBController.h#L242-243`).
+- **What remains is screen proctoring:** periodic screenshots plus metadata (active app, URL, window title), uploaded to the *SEB Server* screen-proctoring service. It needs a self-hosted SEB Server, and on macOS it makes SEB fall back from AAC to the classic kiosk (§1.6).
+- **ClassGuard already covers screen monitoring for Chromebooks at home:** with the soft lock, the extension stays online, so Live View works wherever the device has internet. On Windows the extension stays online too, but SEB hides Chrome, so Live View can't show the exam. On Macs the extension is offline under AAC.
+- **Webcam capture from the extension is technically possible** (camera access through an offscreen document, auto-granted by policy), but it's a privacy decision, not a technical one. Recordings of students are education records under FERPA. A federal court held a webcam room scan of a public-university student's home to be an unreasonable Fourth Amendment search (*Ogletree v. Cleveland State University*, N.D. Ohio 2022). This conflicts with this feature's own principle (state only, no screen recording).
+- **Current position:** no video proctoring. If needed, the options are teacher-run video calls (e.g. Meet) alongside the soft lock, or a dedicated proctoring product with its own legal review.
+
 ## 7. What's in this commit / left to do
 
 **In this commit:**
