@@ -102,6 +102,11 @@ async function init() {
 // than ever surfacing a skippable prompt.
 // ---------------------------------------------------------------------------
 async function authenticate() {
+  // No JWT yet (or it expired): if this device is also offline, sign-in
+  // fails below and syncPolicy() never runs — release a timed-out lockdown
+  // first so it can't outlive its session while the device can't sign in.
+  await releaseExpiredCachedLockdown();
+
   let googleToken;
   try {
     googleToken = await getGoogleToken(false);
@@ -152,7 +157,10 @@ async function authenticate() {
 // ---------------------------------------------------------------------------
 async function syncPolicy(jwtOverride) {
   const jwt = jwtOverride || await getStoredJWT();
-  if (!jwt) return;
+  if (!jwt) {
+    await releaseExpiredCachedLockdown();
+    return;
+  }
 
   try {
     const policy = await apiFetch('/users/me/effective-policy', { jwt });
@@ -174,6 +182,19 @@ async function syncPolicy(jwtOverride) {
       await applyLockdownState(cached);
     }
   }
+}
+
+// For paths that can't reach the server at all (no JWT, sign-in failing
+// offline): if the cached policy is a lockdown whose end time has passed,
+// swap it for its standard-mode fallback — cache included, so this happens
+// once — and apply that. Anything else in the cache is left as it is.
+async function releaseExpiredCachedLockdown() {
+  const cached = await getCachedPolicy();
+  const released = dropExpiredLockdown(cached);
+  if (released === cached) return;
+  await chrome.storage.local.set({ [POLICY_CACHE_KEY]: released });
+  await enforcePolicy(released);
+  await applyLockdownState(released);
 }
 
 async function getCachedPolicy() {
