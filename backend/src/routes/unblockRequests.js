@@ -4,6 +4,7 @@ const { pool } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const zammad   = require('../services/zammad');
+const { grantApprovedPenaltyRequest } = require('../services/penaltyGrants');
 
 // Authenticated admin middleware
 const adminAuth = [authenticate, requirePermission('unblock_requests')];
@@ -161,7 +162,12 @@ router.patch('/:id', ...adminAuth, async (req, res) => {
       [status, req.user.userId, review_note || null, req.params.id]
     );
     if (!request) return res.status(404).json({ error: 'Request not found' });
-    res.json(request);
+
+    // A Penalty Box "Allow site…" request: approving it lets the student
+    // reach that site for the rest of the restriction it was made for (not
+    // a later one). Ordinary requests are only recorded, as before.
+    const granted = status === 'approved' ? await grantApprovedPenaltyRequest(request) : false;
+    res.json({ ...request, granted });
   } catch (err) {
     console.error('[unblock-requests] PATCH error:', err);
     res.status(500).json({ error: 'Failed to update request' });

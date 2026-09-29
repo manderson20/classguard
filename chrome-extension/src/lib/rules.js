@@ -180,10 +180,14 @@ function buildRules(policy, overrideDomains = []) {
     }
 
   } else if (mode === 'penalty_box') {
-    // Block all, allow Google sign-in endpoints so the student can still authenticate
+    // Block all, allow Google sign-in endpoints so the student can still
+    // authenticate, plus any site an admin approved for this restriction
+    // ("Allow site…" in Penalty Box, carried as penaltyAllowDomains). The
+    // policy's other allow-list domains deliberately stay blocked here.
     rules.push(redirectRule(BLOCK_ALL_MAIN, { urlFilter: '|http' }, 'penalty'));
     rules.push(blockRule(BLOCK_ALL_SUB,     { urlFilter: '|http' }));
-    rules.push(allowRule(2000, ['accounts.google.com', 'oauth2.googleapis.com']));
+    const penaltyAllow = Array.isArray(policy.penaltyAllowDomains) ? policy.penaltyAllowDomains : [];
+    rules.push(allowRule(2000, ['accounts.google.com', 'oauth2.googleapis.com', ...penaltyAllow]));
 
   } else {
     // Standard mode: block only the custom deny list; allow list takes priority

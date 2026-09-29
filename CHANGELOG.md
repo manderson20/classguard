@@ -12,6 +12,28 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.12] - 2026-09-29
+
+### Security
+
+- **Teachers could restrict, release or re-roster any student**: the Penalty Box restrict/release endpoints and the class add/remove-member endpoints didn't check that the student or class belonged to the teacher (only the UI limited it), so any teacher could restrict or release any student in the district through the API, or add any student to their own class and so gain monitoring of them. Restrict/release now require the student to be on one of the teacher's rosters (admins unchanged), and class membership edits are admin-only (rosters come from Roster Sync; the UI never used them).
+
+### Changed
+
+- **Penalty Box now outranks a Focus class**: a restricted student stays restricted even while one of their classes is in Focus mode, instead of regaining that class's allowed sites. Only a Lockdown Test outranks it. The Filter Simulator's policy chain shows the new order.
+- **Bell-schedule auto-started classes start in Monitor only and end at the end of the period**: they previously started in Focus with no allowed sites (blocking all browsing until the teacher noticed) and never ended by themselves. Ending works like End Class (Focus lifted, locked screens unlocked). Classes a teacher starts still run until End Class.
+
+### Fixed
+
+- **"Allow site…" in Penalty Box did nothing**: approving the request only changed its status. Approving a Penalty Box request in Unblock Requests (now tagged **Penalty Box** there), with **Approve** or with **+ Code**, lets that student reach the site until they're released; a later restriction starts clean. The Filter Simulator shows those sites as allowed. Teachers can paste a full URL; it's reduced to the site's domain. The confirmation no longer claims an admin was notified, and server errors (e.g. a duplicate pending request) are shown instead of a generic "Request failed".
+- **Class pages never showed a student as Restricted**, so **Release** only appeared on the Penalty Box page: the class API now returns each student's restriction status.
+- **Lock / Unlock on a student's card reset after a reload**: the lock state is now remembered server-side (for every lock and unlock, including End Class and ClassPulse), so the card shows the real state.
+- **Class History labeled Monitor-only sessions "All blocked"**: they now read "Monitor only".
+- **Penalty Box expiry left the old policy cached** and didn't notify the student's device (the UI doesn't set expiries today, so this only affected API use).
+- **Phone Directory's Export CSV failed silently**: errors are now shown next to the button.
+
+Includes nodemailer 10 (#301; requires Node 20+, the API image runs Node 26 — verified SMTP transport creation and sendMail). Needs extension 0.0.24 (penalty-box allowed sites), which rolls out through the normal extension auto-update.
+
 ## [0.17.11] - 2026-09-29
 
 ### Fixed

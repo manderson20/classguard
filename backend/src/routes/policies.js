@@ -90,8 +90,15 @@ router.post('/simulate', authenticate, requireMinRole('teacher'), requirePermiss
     return res.json({ blocked: false, reason: 'lesson_allow', domain, trace, policy_chain: policyChain });
   }
 
-  // Penalty box
+  // Penalty box — like resolver.js, the policy's allow list (which carries
+  // the sites approved for this restriction via "Allow site…") is checked
+  // before the penalty block.
   if (policy?.mode === 'penalty_box') {
+    const allowedMatch = (policy.resolvedAllowDomains || []).find(e => domain === e || domain.endsWith(`.${e}`));
+    if (allowedMatch) {
+      trace.push({ step: 'penalty_box', result: 'allowed', matched: allowedMatch });
+      return res.json({ blocked: false, reason: 'penalty_box_allowed_site', domain, trace, policy_chain: policyChain });
+    }
     trace.push({ step: 'penalty_box', result: 'blocked' });
     return res.json({ blocked: true, reason: 'penalty_box', domain, trace, policy_chain: policyChain });
   }

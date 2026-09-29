@@ -18,7 +18,7 @@ async function exportCsv() {
   const res = await fetch('/api/v1/phones/directory-export.csv', {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
-  if (!res.ok) return;
+  if (!res.ok) throw new Error(`Export failed (HTTP ${res.status})`);
   const blob = await res.blob();
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
@@ -30,6 +30,11 @@ async function exportCsv() {
 
 export default function PhoneDirectory() {
   const [search, setSearch] = useState('');
+  const [exportError, setExportError] = useState(null);
+  const onExport = () => {
+    setExportError(null);
+    exportCsv().catch((err) => setExportError(err.message || 'Export failed'));
+  };
   const inputRef = useRef(null);
   const q = useDebounced(search);
 
@@ -51,10 +56,13 @@ export default function PhoneDirectory() {
             Search by name, extension, or building
           </p>
         </div>
-        <button onClick={exportCsv} className="btn btn-secondary flex items-center gap-1.5 flex-shrink-0">
-          <MdiIcon path={mdiDownload} size="1em" />
-          Export CSV
-        </button>
+        <div className="flex flex-col items-end gap-1 flex-shrink-0">
+          <button onClick={onExport} className="btn btn-secondary flex items-center gap-1.5">
+            <MdiIcon path={mdiDownload} size="1em" />
+            Export CSV
+          </button>
+          {exportError && <span className="text-xs text-red-600">{exportError}</span>}
+        </div>
       </div>
 
       <div className="relative mb-6">
