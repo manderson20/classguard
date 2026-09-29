@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Phase 0 SEB spike page (docs/lockdown-seb-spike.md, test 5): the
+     "wrapper" layout — a ClassGuard page embedding the Google Form in an
+     iframe, with a visible heartbeat counter and a Finish link. Static; the
+     heartbeat is only counted on-page (nothing is sent). Remove after the spike. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SEB Wrapper Test</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 14px -apple-system, system-ui, sans-serif; background: #fff; color: #1e293b; }
+  header { display: flex; align-items: center; gap: 1rem; padding: .5rem 1rem; border-bottom: 1px solid #e2e8f0; }
+  header .spacer { flex: 1; }
+  iframe { border: 0; width: 100%; height: calc(100% - 45px); }
+  a.btn { padding: .35rem .8rem; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; }
+</style>
+</head>
+<body>
+<header>
+  <strong>ClassGuard wrapper test</strong>
+  <span id="hb">heartbeats: 0</span>
+  <span class="spacer"></span>
+  <a class="btn" id="finish" href="#">Finish</a>
+</header>
+<iframe id="f" title="Form"></iframe>
+<script>
+  // Only the Form's ID is taken from ?form=; the iframe URL is rebuilt from
+  // constants so the query string can't point it anywhere else.
+  var m = /^https:\/\/docs\.google\.com\/forms\/d\/(e\/)?([A-Za-z0-9_-]+)\//.exec(
+    new URLSearchParams(location.search).get('form') || '');
+  if (m) {
+    document.getElementById('f').src =
+      'https://docs.google.com/forms/d/' + (m[1] ? 'e/' : '') + m[2] + '/viewform?embedded=true';
+  } else {
+    var msg = document.createElement('p');
+    msg.style.padding = '1rem';
+    msg.textContent = 'Missing or invalid ?form= (must be a docs.google.com/forms URL).';
+    document.body.appendChild(msg);
+  }
+  // The Finish link navigates the top-level page to SEB's quit URL. It is
+  // always this origin's /seb-quit (make-config.js sets the 5-wrapper
+  // variant's quitURL to match) and never taken from the query string.
+  document.getElementById('finish').href = location.origin + '/seb-quit';
+  var n = 0;
+  setInterval(function () { document.getElementById('hb').textContent = 'heartbeats: ' + (++n); }, 5000);
+</script>
+</body>
+</html>
