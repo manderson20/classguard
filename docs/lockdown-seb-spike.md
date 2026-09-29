@@ -1,8 +1,8 @@
 # Lockdown via Safe Exam Browser: Phase 0 spike
 
-**Status:** research done, hands-on tests pending. Sections 1–3 are verified against primary sources and cited. Section 5 lists the tests that need the test Mac. The recommendation in section 4 is provisional until those results are in, and **Phase 1 does not start until this doc is reviewed.**
+**Status:** research done, hands-on tests pending. Sections 1–3 are verified against primary sources and cited. Section 5 lists the tests that need the test Mac and a test Chromebook. **Section 8 covers SEB for Windows** (research 2026-09-29, with its own tests in §8.5). The recommendation in section 4 is provisional until those results are in, and **Phase 1 does not start until this doc is reviewed.**
 
-**Goal (recap).** A teacher picks a Google Form and starts a lockdown. Each targeted student's MacBook opens the Form in stock Safe Exam Browser (SEB) under Apple's Automatic Assessment Configuration (AAC). When the student submits, or the teacher ends the session, the Mac returns to normal. ClassGuard generates the SEB config, launches SEB from the Chrome extension, and tracks session state. It never touches answers or records screens.
+**Goal (recap).** A teacher picks a Google Form and starts a lockdown. Each targeted student's MacBook (or Windows laptop, §8) opens the Form in stock Safe Exam Browser (SEB) under Apple's Automatic Assessment Configuration (AAC). When the student submits, or the teacher ends the session, the Mac returns to normal. ClassGuard generates the SEB config, launches SEB from the Chrome extension, and tracks session state. It never touches answers or records screens.
 
 ## Sources
 
@@ -290,7 +290,7 @@ The recommendation is **gate + direct**, unless test 5 shows the wrapper works w
 3. The teacher adds one line to the Form's confirmation message ("Click here to finish"), linking to `https://<classguard>/lockdown/seb/<token>/finish`. ClassGuard records `submitted` and 302s to the session's `quitURL`, and SEB quits (test 4).
 4. The session has a per-session quit password. The teacher's dashboard shows it, for unlocking a crashed or rebooted "Re-Opening Locked Exam" Mac, or for ending one student manually.
 
-**Status while answering.** A student stays "in progress" with no live heartbeat while on Google's pages. The dashboard shows "in SEB since hh:mm". A student is flagged "abandoned" if `ends_at` passes, or if the extension comes back online before the finish endpoint was hit, which means SEB exited another way.
+**Status while answering.** A student stays "in progress" with no live heartbeat while on Google's pages. The dashboard shows "in SEB since hh:mm". A student is flagged "abandoned" if `ends_at` passes, or if the extension comes back online before the finish endpoint was hit, which means SEB exited another way. **On Windows the extension never goes offline** (§8.2 #2), so there only the `ends_at` rule applies.
 
 **Teacher ends the session**
 - Pending students stop launching.
@@ -312,7 +312,7 @@ How each platform meets this:
 |---|---|---|
 | Finished | The extension watches the lock tab's navigation. When it sees the Form's post-submit confirmation, it releases locally at once and reports `submitted`; the server ends that student's session. Which URL marks the *final* submit, not a section change, is test C4. | The Form's confirmation message links to the finish endpoint → 302 to `quitURL` → SEB quits (tests 4a/4b). The link text must be impossible to miss. |
 | Teacher ends, or time runs out | Policy push, as today. **Plus a local expiry:** the extension stores `endsAt` and releases itself when it passes, even offline. Today it re-applies the cached lockdown policy when offline and ignores `endsAt`. | SEB can't be quit remotely while on Google's pages (§4). **When a session ends or expires, the dashboard shows its quit password prominently**, so the teacher can read it out. It is per-session, so revealing it after the session is harmless. |
-| Lid closed / sleep | On wake the service worker may have restarted. The lock must re-attach its tab, window and focus handlers from stored state, then re-check `endsAt` and the server. Today the handlers are attached only when a lock first engages, so after a service-worker restart they are likely missing (test C5). | SEB keeps running through sleep and resumes (test 4f). |
+| Lid closed / sleep | On wake the service worker may have restarted. The lock must re-attach its tab, window and focus handlers from stored state, then re-check `endsAt` and the server. Today the handlers are attached only when a lock first engages, so after a service-worker restart they are likely missing (test C5). Mac: SEB keeps running through sleep and resumes (test 4f). Windows: SEB keeps the system awake while running; lid close is unverified (§8.5 test 2). |
 | Crash or reboot | Stored state re-engages or releases on startup, as for sleep. | "Re-Opening Locked Exam!" needs the quit password (§1.7). Covered by the same password reveal, and the dashboard shows the password to the teacher during the session too. |
 | Stuck anyway | Teacher End, or IT ends the session on `/lockdown`. Local expiry is the backstop. | Quit password from the dashboard. IT keeps a runbook entry (Phase 5 deployment doc). |
 
@@ -518,6 +518,12 @@ Click **Next** to section 2, then **Submit**. **Record** the URL and method logg
    - Whether the MDM is Mosyle; ClassGuard already integrates with it.
    - Whether Workspace sign-in goes through a third-party IdP.
 5. **Remote quit.** Is the teacher fallback in §4 (no remote quit while a student is on Google's pages) acceptable, or should SEB Server be investigated before Phase 2?
+6. **Windows: if Google sign-in fails in SEB** (§8.2 #3, decided by §8.5 test 1). Options: Forms without sign-in with identity from ClassGuard; the Chrome soft lock on Windows, like Chromebooks; or no SEB on Windows.
+7. **Windows: SEB service policy** (§8.2 #5). Warn if missing for the pilot, then require it?
+8. **Windows: district agents** (§8.2 #6). Which always-on agents (RMM, MDM, security, classroom tools) must be exempted from SEB's prohibited-process list?
+9. **Windows: VM detection** (§8.2 #7). Allow VMs in configs until SEB 3.10.3 fixes the false positives, or require 3.10.3?
+10. **Accessibility accommodations** (§8.2 #11). A per-student flag for screen readers and the touch keyboard, which switches SEB for Windows to its other kiosk mode.
+11. **Hosted configs on both platforms** (§8.2 #1). The embedded-config link doesn't work on Windows, so the Phase 1 config endpoint serves `.seb` files for Mac too.
 
 ### Later: open-notes tests (not in Phases 1–4)
 
@@ -534,6 +540,568 @@ Some tests allow notes, so they aren't a lockdown in the traditional sense, but 
 - Two static spike pages, `frontend/public/seb-spike/probe.html` and `wrapper.html`. They send no data anywhere. Remove them after the spike.
 
 **Left to do:**
-- Run section 5 on the test Mac and fill in the results table.
+- Run section 5 on the test Mac and a test Chromebook, and §8.5 on a Windows test PC; fill in the results tables.
+- Update `make-config.js` for Windows (§8.3) before the Windows tests.
 - Review and decide section 6.
 - Then Phase 1: config generation, the gate and finish endpoints, and the server-side Config Key check.
+
+---
+
+## 8. SEB for Windows: counterpart to §1–§5
+
+**Status:** research done, hands-on tests pending. Everything below is checked against the SEB for Windows source, the official SEB docs, and Microsoft, Chromium, CEF and Google primary sources. Each "(Mac: §x)" note points to the macOS finding it confirms or contradicts. Items marked **unverified** need the Windows test PC (§8.5).
+
+### Sources
+
+Citations use these short names, plus the macOS ones from the top of this doc (DL, DEV-CK, DEV-INT, CHROMIUM).
+
+| Short name | Source |
+|---|---|
+| **SW** | seb-win-refactoring at the **latest release, tag `v3.10.2` = [`397f8e12`](https://github.com/SafeExamBrowser/seb-win-refactoring/tree/397f8e124387c54a9a770809003dd2e31946dcd5)** (2026-05-08). Paths are relative to this commit; permalink = `https://github.com/SafeExamBrowser/seb-win-refactoring/blob/397f8e124387c54a9a770809003dd2e31946dcd5/<path>#L<a>-L<b>`. This is the current Windows repo: the README calls it "Safe Exam Browser for Windows", DL links its releases, and it is active and not archived. **The tag sits on release branch `3.10.2` and is not an ancestor of `master`.** |
+| **SW-main** | `master` at [`016d2341`](https://github.com/SafeExamBrowser/seb-win-refactoring/tree/016d23413e3799ff6ac61e774ebaac81d4818682) (2026-09-25), 105 commits past the tag. The unreleased patch branch `3.10.3` is at `60898667` (2026-09-11). Differences from the tag are called out. |
+| **WIN-MANUAL** | https://safeexambrowser.org/windows/win_usermanual_en.html |
+| **WIN-RELNOTES** | https://safeexambrowser.org/windows/win_release_notes_en.html |
+| **GH-REL** | https://github.com/SafeExamBrowser/seb-win-refactoring/releases/tag/v3.10.2 (via `gh api`) |
+| **GH#n** | `https://github.com/SafeExamBrowser/seb-win-refactoring/issues/n` (or `/discussions/n`) |
+| **CEF** | chromiumembedded/cef, branch `7727` (the CEF used by SEB 3.10.2's Chromium 147) at `76d24426` |
+| **CHROMIUM-W** | chromium/src `main` at `5a1f0ec90b18` (2026-09-29), read through the GitHub mirror because googlesource returned 503. The macOS line references at `979281823a50` match it line for line. |
+| **CR147** | chromium tag `147.0.7727.118` (the engine in SEB 3.10.2, per WIN-RELNOTES) |
+| **GOOG-EMBED** | https://support.google.com/accounts/answer/7675428 |
+| **GOOG-2020** | https://developers.googleblog.com/guidance-to-developers-affected-by-our-effort-to-block-less-secure-browsers-and-applications/ |
+| **CEFSHARP-147** | https://github.com/cefsharp/CefSharp/releases/tag/v147.0.100 |
+| **MS-SMODE** | https://support.microsoft.com/en-us/windows/windows-10-and-windows-11-in-s-mode-faq-851057d6-1ee9-b9e5-c30b-93baebeebc85 |
+| **MS-NETFX** | https://learn.microsoft.com/en-us/dotnet/framework/install/versions-and-dependencies |
+| **MS-WDA** | https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowdisplayaffinity |
+| **CHROME-RT** | https://developer.chrome.com/docs/extensions/reference/api/runtime#type-PlatformOs |
+| **CHROME-POL** | https://chromeenterprise.google/policies/ (read through `policy_templates_en-US.json`) |
+
+---
+
+### 8.1 Verified SEB for Windows facts
+
+#### 8.1.1 Version, platform, license, install, service
+
+**Version and platform**
+- The latest release is **SEB 3.10.2 for Windows**, build 3.10.2.920, published **2026-05-08** (GH-REL; DL: "Current version for Windows 10 (Version 1803 or newer) and Windows 11").
+- 3.10.3 is in development. The developers promise it "in the upcoming weeks", mainly to fix false virtual-machine detections (GH#1517, 2026-09-10; 3.10.3 dev build posted 2026-09-11). `master` is further ahead, and a developer calls it "version 4.0" (GH#1510).
+- The browser engine is **CEF/CefSharp, Chromium 147.0.7727.118** (WIN-RELNOTES 3.10.2). WIN-MANUAL: "based on the Chromium Embedded Framework CEF". (Mac: WKWebView.)
+- Supported: Windows 10 1803+ and Windows 11, 32- and 64-bit (WIN-MANUAL "Operating System"; README).
+- **ARM64: there is no native build.**
+  - Release assets are x64 MSI, x86 MSI and a SetupBundle.exe only (GH-REL).
+  - The bundle installs the x64 MSI whenever `VersionNT64` is true (SW `SetupBundle/Bundle.wxs#L16-31`).
+  - A developer reported a multi-minute startup delay for the x64 build under ARM emulation and recommended the **x86 build** as a workaround (GH#1024, 2024-11-18).
+  - GH#1554 (open, 2026-09-25) reports the bundle failing on ARM64 with 0x80070666.
+- **S mode: not possible.** In S mode only Microsoft Store apps can be installed (MS-SMODE), and SEB is an MSI/EXE.
+
+**Installer and deployment**
+- **Per-machine** WiX MSI (`InstallScope="perMachine"`, SW `Setup/Product.wxs#L5`). It installs to Program Files (WIN-MANUAL).
+- The MSIs do **not** include the prerequisites. WIN-MANUAL: "you'll have to manually install the required runtime dependencies when using the MSI packages".
+  - .NET Framework 4.8 comes with Windows 10 1903+ and Windows 11 (MS-NETFX).
+  - The **Visual C++ 2015–2022 Redistributable must be deployed separately**. The bundle chains `vc_redist` with `/install /quiet /norestart` (SW `SetupBundle/VisualCppRuntime.wxs#L9-26`).
+  - For Intune, GPO or other MDM: deploy VC++ first, then the MSI as a per-machine app. The silent switches are standard Windows Installer ones; test 0 checks them.
+- **Admin rights are needed to install** "due to its Windows service component as well as file and protocol associations" (developer, GH#43).
+- **Running SEB needs no admin rights.** `SafeExamBrowser.exe` and the Client are `asInvoker` (SW `SafeExamBrowser.Runtime/app.manifest#L7`, `SafeExamBrowser.Client/app.manifest#L7`), so standard student accounts can run it.
+
+**Protocol and file registration** (SW `Setup/Components/Application.xslt#L18-34`)
+- `HKCR\seb` and `HKCR\sebs` get `URL Protocol` and `shell\open\command = "…\SafeExamBrowser.exe" "%1"`.
+- A `.seb` ProgId is registered with content type `application/seb`, so a double-clicked `.seb` file opens SEB.
+
+**License**
+- The repo `LICENSE.txt` is MPL 2.0, and so are the source headers.
+- WIN-MANUAL still says "Mozilla Public License Version 1.1", which is out of date.
+- Parts of the integrity code are native modules that ship with the binaries. The C# falls back when they are missing, e.g. `KeyGenerator` (SW `SafeExamBrowser.Configuration/Cryptography/KeyGenerator.cs#L100-117`). As on the Mac, we use the stock signed build.
+
+**The SEB Service**
+- It is installed as the Windows service `SafeExamBrowser`, running as **LocalSystem** with auto-start (SW `Setup/Components/Service.xslt#L13-15`).
+- What it does: per session, it sets and restores registry policies and service states (SW `SafeExamBrowser.Service/Operations/LockdownOperation.cs#L46-61`):
+  - the Ctrl+Alt+Del screen options: change password, lock, sign out, switch user, Task Manager, power options, Ease of Access, network selector;
+  - Chrome's notification policy;
+  - "find printer";
+  - remote connections;
+  - Windows Update.
+- WIN-MANUAL (Security pane) says the service is "necessary to block and unblock some system features (the options in the Windows Security Screen invoked by Ctrl-Alt-Del) and pausing Windows Update".
+- **SEB's own default is to ignore the service.** `Service.IgnoreService = true` (SW `SafeExamBrowser.Configuration/ConfigurationData/DataValues.cs#L292`), which dates back to 3.0.1 (WIN-RELNOTES: "bypass SEB service as default").
+  - To use it, the config must set `sebServiceIgnore = false`.
+  - `sebServicePolicy` then decides what happens when the service is unreachable: 0 allow, 1 warn, 2 refuse to start. The default is 2 (DataValues.cs `#L293`; SW `…/DataMapping/ServiceDataMapper.cs#L175-192`; SW `SafeExamBrowser.Runtime/Operations/Session/ServiceOperation.cs#L116-151`).
+- **What fails without it:** Ctrl+Alt+Del still offers Task Manager, Lock, Sign out and Switch user, and Windows Update keeps running.
+  - Lock and unlock events are then **ignored** by SEB (SW `SafeExamBrowser.Client/Responsibilities/MonitoringResponsibility.cs#L263-277`).
+  - Remote-session detection and VM detection don't depend on the service (§8.1.4).
+
+#### 8.1.2 Config file format
+
+**What the Windows loader accepts** (SW `SafeExamBrowser.Configuration/DataFormats/`)
+- **Raw XML plist**: a case-insensitive `<?xm` prefix, used as-is (`XmlParser.cs#L26`, `#L63-74`).
+- The prefixes are `pswd`, `pwcc`, `plnd`, `pkhs` and `phsk` (`BinaryBlock.cs#L13-17`).
+- **The outer gzip is optional** (`BinaryParser.cs#L86`).
+- **The inner gzip after `plnd` is also optional** (`BinaryParser.cs#L139-145`). (Mac: the inner gunzip is mandatory, so keep emitting either raw XML or `gzip("plnd"+gzip(xml))`.)
+- The file must start with `<?xm`: a UTF-8 BOM would break detection. make-config.js emits no BOM.
+
+**Value parsing**
+- `<string/>` becomes null and `<string></string>` becomes "". Both serialize as `""` in the Config Key JSON (`XmlParser.cs#L266`; `Json.cs#L95-103`).
+- An unknown element type fails the whole load (`XmlParser.cs#L271-278`).
+- Keys the client doesn't recognize are ignored, and so are values of the wrong type. Every mapper checks the value's type, e.g. `value is bool`.
+
+**`sebConfigPurpose`**
+- Only the value 1 means "configure client". **Any other value, including 0 and 2, is an exam session**, since Windows has no "managed" purpose (SW `…/DataMapping/ConfigurationFileDataMapper.cs#L28-36`).
+- An exam config is never written to `SebClientSettings.seb`. Only purpose 1 calls `ConfigureClientWith` (SW `SafeExamBrowser.Runtime/Operations/Session/ConfigurationOperation.cs#L182-185`).
+- What purpose 0 still leaves on disk:
+  - logs in `%LocalAppData%\SafeExamBrowser\Logs` (WIN-MANUAL);
+  - the browser cache, which is deleted at shutdown by default (`removeBrowserProfile`; DataValues.cs `#L180`);
+  - the encrypted session-integrity cache `%LocalAppData%\SafeExamBrowser\Temp\cache.bin` (§8.1.7).
+- **The machine's client config is loaded first.** If `%ProgramData%\SafeExamBrowser\SebClientSettings.seb` (or the `%AppData%` one) exists, SEB loads it before the link. It is only used to decrypt a password-protected exam config (`ConfigurationOperation.cs#L112-131`), so it doesn't affect our plain configs.
+
+**Malformed values**
+- **3.10.2 does not validate `hashedQuitPassword`.** Any string is accepted (`SecurityDataMapper.cs#L152-158`). (Mac 3.7.1: a malformed hash fails the load.)
+- **3.10.3 and `master` add a `DataValidator`** (SW-main `SafeExamBrowser.Configuration/ConfigurationData/DataValidator.cs#L43-65`, `#L96-112`, called from `ConfigurationRepository.cs#L143`; also on branch `3.10.3`). It fails the load (InvalidData) when:
+  - `hashedAdminPassword`, `hashedQuitPassword` or `sebServerFallbackPasswordHash` is not empty and not 64 hex characters;
+  - **any key or string value contains `"` followed by optional whitespace and a comma**.
+  - ClassGuard must never emit `",` in any string, e.g. inside a Form URL or a filter expression.
+- **The quit-password hash is not NFC-normalized on Windows.** `HashAlgorithm.GenerateHashFor` is plain `SHA256(UTF8(password))` as lowercase hex, and the comparison ignores case (SW `SafeExamBrowser.Configuration/Cryptography/HashAlgorithm.cs#L19-29`; `SafeExamBrowser.Client/Responsibilities/ClientResponsibility.cs#L151-152`). (Mac: NFC first.) **Use ASCII-only quit passwords** so one hash works on both.
+
+#### 8.1.3 `seb://` / `sebs://` links
+
+**How a link reaches SEB**
+- Chrome launches `"SafeExamBrowser.exe" "<url>"` through the HKCR registration.
+- The runtime takes `args[1]` as the config URI (`ConfigurationOperation.cs#L404-416`).
+- `NetworkResourceLoader` maps `seb`→`http` and `sebs`→`https` and fetches with .NET `HttpClient`, sending `User-Agent: SEB/<version>` (SW `SafeExamBrowser.Configuration/DataResources/NetworkResourceLoader.cs#L36-42`, `#L89-108`, `#L133-146`).
+
+**Request sequence for a hosted config**
+1. `CanLoad` sends a **HEAD**. If that isn't 2xx or 401, it sends a **GET** (`#L165-204`).
+2. `TryLoad` then sends **another GET** (`#L66-87`).
+3. **So each launch makes two or three requests.** The config endpoint must be idempotent: expire tokens by time, not on first fetch.
+
+**Responses** (Mac: §1.3 differs; see "HTTP error pages")
+- **Non-2xx other than 401:** no loader matches, and the result is `NotSupported`. SEB shows a "not supported configuration resource" message and quits (`ConfigurationOperation.cs#L371-402`; SW `SafeExamBrowser.Runtime/RuntimeController.cs#L44-80`, `App.cs#L68-75`).
+- **`Content-Type: text/html` or HTTP 401 → `LoadWithBrowser`.** SEB starts with **default settings plus that URL as the start URL**. It also clears the prohibited and permitted lists, **ignores the service**, **allows VMs** and allows reconfiguration (`NetworkResourceLoader.cs#L77-80`, `#L148-163`; `ConfigurationOperation.cs#L201-220`).
+  - **The config endpoint must never answer an expired or invalid token with an HTML page or a 401.** Return 404 or 410 as `text/plain`.
+- **Any other 2xx body** goes to the parsers. The unused `SupportedContentTypes` list aside, there is no Content-Type check. `application/seb`, `application/octet-stream` and `text/xml` all work.
+
+**Embedded config `sebs://application/seb;base64,…`: not supported at launch on Windows.** (Mac: supported.)
+- The runtime has only `FileResourceLoader` and `NetworkResourceLoader` (SW `SafeExamBrowser.Runtime/CompositionRoot.cs#L228-230`). The link would become `https://application/seb;base64,…`, fail, and SEB would quit.
+- The `data:` rewrite exists only inside a **running** SEB browser, for links clicked in a page (`SafeExamBrowser.Browser/Handlers/RequestHandler.cs#L121-159`).
+- **Therefore Windows needs a hosted config, `sebs://<classguard>/…/<token>.seb`.**
+- Separately, Chrome ≤ M140 silently dropped external-protocol URLs over 2048 characters on Windows. The limit was removed in M143 (CHROMIUM-W `chrome/browser/platform_util_win.cc#L88-115`; removal commit `7373ed96`, first in 143.0.7463.0). Short hosted links avoid the question.
+
+**Per-student token `??token=`**
+- If the link's query contains a second `?`, SEB stores the part from the last `?` as the start-URL query (`ConfigurationOperation.cs#L246-257`).
+- With `startURLAppendQueryParameter = true` (default false, DataValues.cs `#L205`), it is appended to the start URL: `&token=…` if the start URL already has a query, otherwise `?token=…` (SW `SafeExamBrowser.Browser/BrowserApplication.cs#L293-310`).
+- **The download URL is not stripped on Windows** (Mac strips it). The HEAD and GETs go to `https://host/x.seb??token=…`, so the server sees a first parameter named `?token`. The config endpoint must tolerate or ignore it.
+
+**SEB already running**
+- A second `SafeExamBrowser.exe` is blocked by a global mutex. It shows "You can only run one instance of SEB at a time." and exits, and **the link is not passed to the running instance** (SW `SafeExamBrowser.Runtime/App.cs#L19`, `#L39-54`). (Mac: refused unless `examSessionReconfigureAllow` and the URL match.)
+- In-browser reconfiguration exists but needs `examSessionReconfigureAllow` and a matching `examSessionReconfigureConfigURL` when a quit password is set (SW `SafeExamBrowser.Client/Responsibilities/BrowserResponsibility.cs#L126-153`). We don't use it.
+- **Unverified:** which desktop that second-instance message box appears on while SEB owns a new desktop.
+
+**Config load fails at launch:** SEB shows an error dialog and quits (`ConfigurationOperation.cs#L371-402`; `RuntimeController.cs#L44-80`). (Same as Mac.)
+
+#### 8.1.4 Settings
+
+All defaults come from SW `SafeExamBrowser.Configuration/ConfigurationData/DataValues.cs` and key names from `Keys.cs`.
+
+**macOS §1.4 keys on Windows**
+
+| Key | Honored on Windows? | Windows default | Notes / source |
+|---|---|---|---|
+| `sebConfigPurpose` | yes | exam | 1 = client config, anything else = exam (§8.1.2) |
+| `startURL` | yes | `https://www.safeexambrowser.org/start` | `#L202` |
+| `lockdownModePolicy` | **no** (Mac-only) | n/a | no Windows mapping; still counts in the Config Key (§8.1.5) |
+| `browserWindowWebView` | **no** (Mac-only) | n/a | one engine (CEF) |
+| `sendBrowserExamKey` | **yes: sends both headers** | false | `BrowserDataMapper.cs#L492-499` (see 8.1.5) |
+| `URLFilterEnable` / `URLFilterEnableContentFilter` | yes | off | content filter only applies if main filter is on (`BrowserDataMapper.cs#L475-482`); **content filtering works in CEF** (`ResourceHandler.cs#L149-171`), unlike the Mac doc/code discrepancy |
+| `URLFilterRules` | yes, same `{active, regex, expression, action}` format; action 1 = allow, anything else = block | none | `BrowserDataMapper.cs#L604-640`; block rules first, then allow, unmatched = **block** (`Filters/RequestFilter.cs#L23-64`); start URL auto-allowed (`BrowserWindow.cs#L299-307`); simplified rules: host `a.b` also matches subdomains, a leading `.` pins the exact host, path is anchored (optional trailing `/`), a rule without a query matches any query, `?.` forbids a query (`Filters/Rules/SimplifiedRule.cs#L94-150`; WIN-MANUAL Filter Section) |
+| `examSessionClearCookiesOnStart` / `…OnEnd` | yes | true / true | `#L181-182` |
+| `allowBrowsingBackForward` | yes | false | `#L185-187`, `BrowserDataMapper.cs#L247-254` |
+| `browserWindowAllowReload` | yes | true, **with reload warning** (`showReloadWarning` true) | `#L188`, `#L193`; F5 is enabled by default (`#L227`) |
+| `quitURL` | yes | "" | §8.1.7 |
+| `quitURLConfirm` | yes | **false** (Mac: true) | never set in DataValues, so it is the C# default (`Settings/Browser/BrowserSettings.cs#L87`); we set false anyway |
+| `hashedQuitPassword` | yes | "" | no NFC; unvalidated in 3.10.2 (§8.1.2) |
+| `detectAccessibilityApps` | **no** (Mac-only) | n/a | Windows has its own Ease-of-Access check (§8.1.6) |
+| `allowOpenAndSavePanel` | **no** (Mac-only) | n/a | use the Windows keys below |
+| `browserUserAgent` (suffix) | yes | none | `BrowserDataMapper.cs#L580-586` |
+| `browserUserAgentMac`, `…MacCustom` | **no** | n/a | Windows equivalents: `browserUserAgentWinDesktopMode` (0 = default, anything else = custom) + `browserUserAgentWinDesktopModeCustom`; touch mode uses `browserUserAgentWinTouchMode` / `…Custom` (`BrowserDataMapper.cs#L561-578`) |
+
+**User agent**
+- The default is `Mozilla/5.0 (Windows NT <major.minor>) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/<full Chromium version> SEB/<version>`.
+- A custom UA still gets ` SEB/<version>` appended (SW `SafeExamBrowser.Browser/BrowserApplication.cs#L476-497`). As on the Mac, SEB can never pass as plain Chrome.
+
+**File upload and download** (Windows-specific keys)
+- `allowDownloads` defaults to **true** and `allowUploads` to **false** (`#L173`, `#L179`). The combined key was removed in 3.9.0 (WIN-RELNOTES 3.9.0).
+- For Forms: set `allowDownloads = false`. Set `allowUploads = true` only if a Form has file-upload questions, which also needs Google Drive (§8.1.8).
+- `downloadAndOpenSebConfig` defaults to true (`#L171`). Harmless, because reconfiguration isn't allowed while a quit password is set.
+
+**Windows-only keys we must decide on**
+
+| Key | Default | Recommendation / notes |
+|---|---|---|
+| `createNewDesktop` / `killExplorerShell` | new desktop (`#L266`; mapping `SecurityDataMapper.cs#L131-150`) | **`createNewDesktop = true`**. Chrome and everything else stays on the original desktop, out of reach. `killExplorerShell` is needed only for the touch on-screen keyboard or the NVDA/JAWS screen readers: "Screen readers NVDA and JAWS are not compatible with kiosk mode Create New Desktop" (WIN-RELNOTES, all 3.x); "The Windows on-screen keyboard is not working with the Create New Desktop kiosk mode" (WIN-MANUAL). Decide per student for accommodations. |
+| `sebServiceIgnore` / `sebServicePolicy` | true / 2 | **`false` / 1 (warn) for the pilot, 2 once the service is proven on the fleet** (§8.1.1). |
+| `allowVirtualMachine` | false (`#L269`) | **3.10.1/3.10.2 flag real laptops as VMs**: Dell Latitude 3420/5500, HP ProDesk 600 G6, Intel Core Ultra (GH#1510, GH#1517, GH#1542, open). The fix is due in 3.10.3. VM detection guards against BYOD tricks and matters little on managed laptops with standard accounts. **Set `true` unless 3.10.3 is deployed and test 2 passes.** The check aborts before the session starts (`Runtime/Operations/Session/VirtualMachineOperation.cs#L44-59`). |
+| `allowScreenSharing` | false | Maps to **both** "allow window capture" and "allow remote connections" (`Keys.cs#L266`, `#L305`). While false, SEB **refuses to start in a remote (RDP) session** (`RemoteSessionOperation.cs#L43-58`) and sets `WDA_EXCLUDEFROMCAPTURE` on its windows (`Client/Operations/WindowGuardOperation.cs#L35-44`; `UserInterface.Shared/Utilities/WindowExtensions.cs#L55`; MS-WDA: Windows 10 2004+, "not a security feature"). Keep false. |
+| `insideSebEnable*` (Switch User, Lock, Change Password, Task Manager, Log Off, Shut Down, Ease of Access, Network selector, VMware shade) | all disabled | Only enforced when the service is used (`LockdownOperation.cs#L46-61`). Keep the defaults. |
+| `enableWindowsUpdate` | disabled | Service only. Keep disabled so updates can't reboot mid-Form. |
+| `enableChromeNotifications` | disabled | With the service active, SEB **writes `HKU\<SID>\Software\Policies\Google\Chrome\DefaultNotificationsSetting = 2`** during the session and deletes it afterwards (`Lockdown/…/UserHive/ChromeNotificationConfiguration.cs`). This could conflict with a district user-level Chrome policy. **Consider `true`** so SEB leaves Chrome's policy alone; Chrome's windows are hidden anyway. |
+| `prohibitedProcesses` | 54 built-in entries (`#L103-156`) | See below. |
+| `permittedProcesses` | none | Keep empty. |
+| `enableAltTab`, `enableStartMenu`, `enablePrintScreen`, `enableF1…F12`, `enableRightMouse`, … | keyboard hook (§8.1.6) | Keep the defaults. |
+| `clipboardPolicy` | isolated (`#L264`) | Clipboard is limited to SEB (Mac AAC clears the pasteboard instead). Keep. |
+| `allowedDisplaysMaxNumber` / `allowedDisplayBuiltinEnforce` / `allowedDisplaysIgnoreFailure` | 1 / false / false (`#L210-213`) | **SEB refuses to start with a second display attached** (projector, dock monitor) (`Runtime/Operations/Session/DisplayMonitorOperation.cs#L45-64`). Keep 1 and tell teachers; test 2 checks the message. |
+| `enableSessionVerification` | true (`#L268`) | Crash-recovery lock (§8.1.7). Keep. |
+| `enableCursorVerification`, `allowStickyKeys` | true / false | Can **abort the session** on custom cursor schemes or tampered Ease-of-Access (`Runtime/Operations/Session/SessionIntegrityOperation.cs#L27-40`, `#L95-130`). Keep; note for support. |
+| `disableSessionChangeLockScreen` | false | With the service active, a lock, unlock or user switch shows SEB's red lock screen, which needs the quit password to resume (`MonitoringResponsibility.cs#L263-300`; `ClientResponsibility.cs#L135-170`). Test 2 covers lid close. |
+| `touchOptimized` | desktop | Touch mode needs `killExplorerShell` (WIN-MANUAL). |
+
+**Default prohibited processes** (3.10.2, SW DataValues.cs `#L103-156`)
+- The list includes: **Teams.exe, MS-teams.exe (new Teams), Zoom.exe, Discord.exe (and PTB/Canary), slack.exe, spotify.exe, VLC.exe, Microsoft.Media.player.exe**, Skype, Telegram, Element, Guilded, OBS, Camtasia, TeamViewer.exe, VNC, WebEx, GoToMeeting, join.me, **mstsc.exe**, **chromoting.exe / remoting_host.exe (Chrome Remote Desktop)**, **PCMonitorSrv.exe / pcmontask.exe**, and **sethc.exe** (Sticky Keys).
+- **chrome.exe, msedge.exe and ClassGuard are not on it.**
+- The SEB Config Tool adds `Chrome.exe`, `Firefox.exe` and other browsers **only when a config is saved in Disable-Explorer-Shell mode** (SW `SebWindowsConfig/SEBSettings.cs#L818-829`, `#L1619-1623`). Our server-generated configs never pass through the tool.
+- **The list grows.** Branch `3.10.3` adds TeamViewer_Desktop/Service, tv_w32/x64 and UltraViewer. **`master` (4.0) adds 35 more (95 in total), mostly remote-support and RMM agents**: `screenconnect.client.exe`, `screenconnect.service.exe`, `ninjarmmagent.exe`, `logmein.exe`, `splashtopstreamer.exe`, `quickassist.exe`, `AnyDesk.exe`, `MouseWithoutBorders.exe`, … (SW-main `DataValues.cs#L104-198`).
+
+**How prohibited processes are handled**
+- **At startup** (SW `ApplicationMonitor.cs#L278-308`; `Client/Operations/ApplicationOperation.cs#L83-106`, `#L144-199`):
+  - SEB asks the student to let it terminate running prohibited apps. **"No" aborts the launch.**
+  - If termination fails, for example because the process is a **SYSTEM service**, the launch fails.
+- **During the session:** a newly started prohibited process is killed. If that fails, SEB shows the red lock screen, which needs the quit password (`ApplicationMonitor.cs#L391-435`; `MonitoringResponsibility.cs#L140-161`).
+- **Disabling a default entry:** a config entry with the same `executable` and `originalName`, `os = 1` and `active = false` removes it (SW `…/DataMapping/ApplicationDataMapper.cs#L40-77`; WIN-MANUAL: defaults "cannot be removed … But you can deactivate").
+- **Action:** inventory the district's agents (RMM, MDM, remote support, classroom-management tools) and deactivate any on this list, **especially before SEB 4.0 ships**.
+
+#### 8.1.5 Config Key / Browser Exam Key
+
+**Engine and headers**
+- The engine is CEF/CefSharp; HTTP headers **do** work.
+- With `sendBrowserExamKey = true`, SEB adds `X-SafeExamBrowser-ConfigKeyHash` and `X-SafeExamBrowser-RequestHash`. They go on **main-frame requests** and on requests to the **same host as the current page** (SW `SafeExamBrowser.Browser/Handlers/ResourceHandler.cs#L126-147`).
+  - That means they would also be sent on top-level navigations to Google.
+- The default is off (DataValues.cs `#L199-200`). (Mac: headers only in the deprecated classic WebView.)
+
+**JavaScript API** (SW `SafeExamBrowser.Browser/Content/Api.js#L9-16`; `Handlers/RenderProcessMessageHandler.cs#L37-45`)
+- Injected on every JS context creation. For each frame it computes the keys from **that frame's URL**:
+  ```js
+  SafeExamBrowser = { version: 'SEB_Windows_<build>',
+    security: { browserExamKey: '<hash>', configKey: '<hash>', updateKeys: (callback) => callback() } }
+  ```
+- **`updateKeys(cb)` calls the function you pass directly and synchronously, with no arguments.** (Mac: it takes a *named global* function and runs `name + "();"`.)
+  - **Portable pattern:** declare `function cgKeysReady(){…}` at global scope and call `SafeExamBrowser.security.updateKeys(cgKeysReady)`. This satisfies both platforms (Mac side per §1.5; confirm in test 0).
+- DEV-CK says Windows 3.3.2+ sets the variables at page load without `updateKeys`.
+- **Injection is asynchronous** (`frame.ExecuteJavaScriptAsync`), and an open report shows `SafeExamBrowser` intermittently `undefined` at `DOMContentLoaded` (GH#1443, open since 2026-04, not reproduced by the developers).
+  - **The gate page must poll**, e.g. every 100 ms for up to about 5 s. It must not treat a missing API as "not SEB" on the first check.
+- `SafeExamBrowser.version` is `SEB_Windows_<build>`, not the DEV-CK format.
+
+**Hash per URL** (SW `SafeExamBrowser.Configuration/Cryptography/KeyGenerator.cs#L53-69`)
+- `sha256_hex(url_without_fragment + configKey)`, the same as Mac. The hash covers the full URL, **including any `?token=` that SEB appended**.
+
+**Config Key derivation** (SW `ConfigurationData/DataProcessor.cs#L49-65`, `ConfigurationData/Json.cs#L19-105`)
+- SHA-256 over SEB-JSON built from **the keys actually in the file**, with no defaults added (DEV-CK: "only uses setting key/values … actually contained in an opened config file").
+- `originatorVersion` is dropped and empty dicts are skipped.
+- Keys are sorted with `StringComparer.InvariantCulture`. For ASCII-letter keys this gives the same order as a case-insensitive sort.
+- No whitespace, **no escaping**; `<data>` becomes Base64 and `<date>` becomes `ToString("o")`.
+- **The same computation as Mac for the configs we emit**: ASCII keys, no `<real>`, no `<date>`, no `<data>`. DEV-CK: "SEB for Windows and SEB for iOS will generate the same key as SEB for macOS." **One server-side Config Key therefore serves both platforms.** Test 0 confirms it by comparing the Mac and Windows probe hashes for the same URL.
+- Mac-only keys (`lockdownModePolicy`, `browserWindowWebView`, `detectAccessibilityApps`, `allowOpenAndSavePanel`) are ignored by the Windows client but **still hashed**. That is fine, because both platforms hash the same file.
+- **Quirks to avoid:**
+  - If the alphabetically last key is `originatorVersion` or an empty dict, Windows emits a trailing comma (`Json.cs#L41-44`). So emit no `originatorVersion` and no empty dicts.
+  - `<real>` values format differently from Mac's `%.15g`. We emit none.
+- **Browser Exam Key:** differs per platform, build and x86/x64 (WIN-RELNOTES: "different for the 32-bit (x86) and 64-bit (x64) build"). Don't use it.
+
+#### 8.1.6 Lockdown strength (no AAC on Windows)
+
+**What SEB blocks** (kiosk mode, WIN-MANUAL "Features" and Security pane)
+- **Desktop.** With **Create New Desktop**, SEB runs on a fresh Win32 desktop, so the taskbar, Start menu, other windows and notifications of the original desktop are invisible and unreachable (`Runtime/Operations/Session/KioskModeOperation.cs#L120-133`). With **Disable Explorer Shell**, Explorer is killed and restarted afterwards.
+- **Keyboard hook** (SW `SafeExamBrowser.Monitoring/Keyboard/KeyboardInterceptor.cs#L47-88`):
+  - always blocked: the Apps key, **Alt+Tab**, **Alt+Space**, and **all injected keystrokes** (since 3.10.0; an opt-out, `enableInjected`, exists only on `master`: SW-main `Keys.cs#L211`);
+  - blocked by default: LWin/RWin (**Win key**), **PrintScreen**, Alt+F4, Alt+Esc, Ctrl+Esc.
+  - F1–F12, Esc and Ctrl+C/V/X stay enabled, with the clipboard isolated.
+- **Other applications.** Windows of processes that aren't SEB and aren't permitted are **hidden** when they come to the foreground or appear as overlays. If hiding fails, SEB closes them, and if that fails, **kills the process** (`ApplicationMonitor.cs#L125-143`, `#L233-258`, `#L437-461`).
+- **Ctrl+Alt+Del** can't be hooked. Its options are removed **only through the service** (§8.1.1).
+- **Screen capture.** `WDA_EXCLUDEFROMCAPTURE` on SEB's windows, and PrintScreen is blocked.
+- **Remote sessions.** SEB refuses to run in an RDP session unless `allowScreenSharing` is set. 3.10.2 adds "Improved remote session detection" (WIN-RELNOTES).
+- **Other checks:** VM detection, the display count, and integrity checks for cursors, Ease of Access and Sticky Keys (§8.1.4).
+
+**Network: other software stays online. This is the key difference from Mac.**
+- WIN-MANUAL (Applications pane): "SEB only has a URL filter for the built-in browser, other applications and the system are not blocked from accessing the internet."
+- **Chrome is not killed and not prohibited by default** (§8.1.4). Its windows are hidden, or out of sight on the original desktop.
+- So the **ClassGuard extension's service worker should keep running and keep heartbeating** during the SEB session. (Mac/AAC: offline.) Test 2 must confirm this.
+- **Caveat:** any Chrome window that appears during the session (the extension opening a tab, a Chrome prompt) gets hidden. If hiding fails, the Chrome process holding it could be killed (`ApplicationMonitor.cs#L233-258`). **On Windows the extension must not open windows, tabs or notifications while SEB is active.**
+
+#### 8.1.7 Quitting
+
+**Quit URL matching**
+- The pattern is `^` + escaped(`quitURL` with trailing `/` trimmed) + `/?$`, **case-insensitive**, matched against the full request URL (SW `SafeExamBrowser.Browser/Handlers/RequestHandler.cs#L161-181`).
+- It is an **exact match**: query strings must match, and an optional trailing slash is allowed. It is **not a prefix match**. WIN-RELNOTES 3.6.0: "Fixed bug with quit URL where URLs not exactly matching the quit URL would also trigger a shutdown."
+- (Mac: exact after trimming leading and trailing `/`, and case sensitivity isn't stated. Pick a lowercase quit URL without a query and both platforms behave the same.)
+
+**Where it's checked**
+- In `OnBeforeBrowse` for **every frame**, **before** the URL filter, and the navigation is cancelled (`RequestHandler.cs#L78-86`). So the quit URL needn't be allowlisted, and the server never sees the request to it.
+- **Redirects count.** CEF calls `OnBeforeBrowse` from a navigation throttle with `is_redirect = WasServerRedirect()` (CEF `libcef/browser/net/throttle_handler.cc#L79-86`, `#L97-103`). **A 302 from the finish endpoint to the quit URL should therefore trigger the quit** (test 4b).
+- It also fires inside iframes, unlike a top-level-only check.
+
+**Password and settings**
+- The quit URL bypasses the quit password and `allowQuit`: it goes straight to `TryRequestShutdown()` with no password check (`SafeExamBrowser.Browser/BrowserWindow.cs#L638-673`; `SafeExamBrowser.Client/Responsibilities/ClientResponsibility.cs#L100-113`). WIN-MANUAL: "The password is not prompted when using a Quit Link".
+- `quitURLRestart = true` would reset the browser instead of quitting, and defaults to false (DataValues.cs `#L198`).
+
+**Crash and reboot recovery: the Windows equivalent of "Re-Opening Locked Exam"**
+- When a quit password is set and `enableSessionVerification` is on (default), SEB caches the session's (Config Key, start URL) at start and clears it on a clean quit (SW `SafeExamBrowser.Client/Responsibilities/IntegrityResponsibility.cs#L101-142`, `#L186-208`; `SafeExamBrowser.Configuration/Integrity/IntegrityModule.cs#L212-230`).
+- After a crash, a kill or a reboot, opening a config with the **same Config Key or the same start URL** shows a red lock screen: "The last session with the currently active configuration or start URL was not terminated properly! Please enter the correct password to unlock SEB." (SW `SafeExamBrowser.I18n/Data/en.xml#L210-212`).
+- The quit password clears it (`ClientResponsibility.cs#L135-170`).
+- The cache is per user: `%LocalAppData%\SafeExamBrowser\Temp\cache.bin`.
+- **With per-session configs**, only reopening *the same session's* link triggers the lock.
+- **Client crash:** the runtime shows an error and exits (`Runtime/Responsibilities/ClientResponsibility.cs#L67-91`).
+- **Registry lockdown after a crash:** restored by the service when SEB next runs and quits, on reboot, or on uninstall, or with `SafeExamBrowser.ResetUtility.exe` run as admin (WIN-MANUAL Registry pane).
+
+#### 8.1.8 Google sign-in, Forms, iframes
+
+**Google says CEF sign-in is blocked**
+- GOOG-EMBED: "Google might stop sign-ins from browsers that … Are embedded in a different application". Also: "If you implemented "Sign in with Google" with the Chromium Embedded Framework, you'll need to migrate".
+- GOOG-2020: "Google Account sign-ins from all embedded frameworks will be blocked starting on January 4, 2021. This block affects CEF-based apps". Also: "We do not allow sign-in from browsers based on frameworks like CEF". And: "The browser must not use another browser's User-Agent string".
+- CEFSHARP-147, the CefSharp release matching SEB 3.10.2's engine, still says "Google will block logins from CEF based browsers to Google Services, this includes Gmail, Drive, Docs".
+- The CEF maintainer: "You should expect Google login not to work in CEF or any other unbranded Chromium-based browser" (https://magpcss.org/ceforum/viewtopic.php?f=6&t=18165, 2021).
+- This is **more explicit than anything Google says about WKWebView** (Mac §1.8).
+
+**SEB-side evidence is thin and old**
+- No SEB issue or discussion reports the "This browser or app may not be secure" page.
+- Two indirect reports say Google sign-in worked in SEB for Windows: GH#498 (2022, SEB 3.4: "a quiz that contains a link to login to google account first … starts without any issues") and GH discussion #122 (2021).
+- Discussion #1432 (2026-03) reports an unexplained error after a Google login in 3.10.0 and has no replies.
+- The SEB developers: "We … are not using nor have any experience with Google Workspace" (GH#511, 2022).
+- **Treat Google sign-in in SEB for Windows as likely blocked until test 1 proves otherwise.**
+- Spoofing a Chrome UA is against Google's stated rules (GOOG-2020), and SEB appends `SEB/x.y` anyway.
+
+**Iframes and third-party cookies** (Mac: blocked by ITP)
+- SEB sets no cookie policy or Chromium feature flags; it only uses switches like `disable-pinch` and `use-fake-ui-for-media-stream` (SW `BrowserApplication.cs#L321-366`, `#L431-441`).
+- Chromium 147 defaults to `kIncognitoOnly`, so **third-party cookies are allowed** in a normal profile (CR147 `components/content_settings/core/browser/cookie_settings.cc#L82-88`). The 3PC-deprecation features are off by default (CR147 `components/content_settings/core/common/features.cc#L75`).
+- `accounts.google.com` sign-in pages still return `X-Frame-Options: DENY` (observed 2026-09-29).
+- **So on Windows the wrapper layout works only if the student has already signed in at top level in the same SEB session.** Sign-in can never happen in the frame. That doesn't help the cross-platform design, and sign-in itself is the open question.
+- A form that doesn't require sign-in rendered in an iframe: a public `/viewform?embedded=true` returned no XFO (observed 2026-09-29).
+
+**Google Forms locked mode** requires a managed Chromebook (https://support.google.com/docs/answer/7634943), and the page doesn't mention Windows. Treat it as blocking on Windows too (test 6).
+
+#### 8.1.9 Launching from Chrome on Windows
+
+**Same code path as macOS**
+- `URLAllowlist` → `LaunchUrlWithoutSecurityCheck` (no prompt, no anti-flood) and `AutoLaunchProtocolsFromOrigins` are platform-independent (CHROMIUM-W `chrome/browser/chrome_content_browser_client.cc#L1206-1353`; `chrome/browser/external_protocol/external_protocol_handler.cc#L297-328`, `#L614-631`).
+- Supported platforms (CHROME-POL):
+  - URLAllowlist: `chrome.*` from 86;
+  - AutoLaunchProtocolsFromOrigins: `chrome.*` from 85.
+- **§1.9's recommendation (URLAllowlist `sebs://*`) carries over unchanged.**
+
+**Windows-specific details**
+- Chrome looks up the handler through `AssocQueryString`/HKCR and requires the `URL Protocol` value, which SEB's installer writes (CHROMIUM-W `chrome/browser/shell_integration_win.cc#L161-219`).
+- Chrome's prompt is the same dialog on both platforms: "Open $1?" / "$ORIGIN wants to open this application." (`chrome/browser/ui/views/external_protocol_dialog.cc#L93-115`).
+- **Launch.** Chrome escapes the URL, quotes it and calls `ShellExecuteA` (`platform_util_win.cc#L88-115`). A failure is **silent**: the return value is ≤ 32 and no UI is shown.
+  - Base64 characters `+ / =` pass through unescaped. This is moot for hosted links.
+- **Unverified:** whether Windows shows any extra UI of its own. Nothing in Chrome's path adds one.
+- **Command-line cap:** 32,767 characters for CreateProcess (https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-createprocessw).
+
+**Platform detection:** `chrome.runtime.getPlatformInfo().os === 'win'` on Windows. The enum is `mac`, `win`, `android`, `cros`, `linux`, `openbsd` (CHROME-RT; CHROMIUM-W `extensions/common/api/runtime.json#L98-108`).
+
+**Anti-flood without the policy:** each extension API call re-arms Chrome's "one launch without a gesture" flag, so each `tabs.update` gets one launch. The same applies on Mac (CHROMIUM-W `extensions/browser/extension_function_dispatcher.cc#L411-413`).
+
+#### 8.1.10 Other things a district must know
+
+- **Deploy per machine** with admin rights: the MSI plus the VC++ redistributable. Students run SEB as standard users (§8.1.1).
+- **Antivirus and EDR.**
+  - SEB installs a low-level keyboard hook, a SYSTEM service that edits HKLM/HKU policy keys, and a process killer.
+  - WIN-RELNOTES 3.0.1 records anti-malware false positives that "blocked the SEB Windows Service".
+  - GH#1443's reporter suspects Defender in intermittent failures (unconfirmed).
+  - An intermittent "You can only run one instance" after a Windows 11 25H2 upgrade was left unresolved as "an issue on your side" (GH#1480).
+  - **Pilot on the district image with the district EDR, and allowlist `C:\Program Files\SafeExamBrowser\` if needed.**
+- **Multiple monitors:** SEB refuses to start with more than one display by default (§8.1.4).
+- **Touch 2-in-1s.** The on-screen keyboard doesn't work with Create New Desktop (WIN-MANUAL). All injected key events are blocked in 3.10.x. **Unverified:** whether the Windows touch keyboard's input counts as injected. Test 2.
+- **Accessibility.** NVDA and JAWS need Disable Explorer Shell (WIN-RELNOTES). Assistive tools that inject keystrokes broke in 3.10.0 (GH#1284, GH#1310); the opt-out exists only on `master`. **Plan per-student accommodations.**
+- **Windows Hello and lock.**
+  - Without the service, lock and unlock are ignored, so the student can lock and unlock with Hello and return to SEB.
+  - With the service, Lock is disabled. Any session lock or switch shows SEB's red lock screen, which needs the quit password (§8.1.4).
+  - Lid close and sleep behaviour is **unverified** (test 2).
+- **Power.** `displayAlwaysOn` and `systemAlwaysOn` default to true (DataValues.cs `#L211`, `#L298`), which prevents idle sleep during the session.
+- **Logs** are in `%LocalAppData%\SafeExamBrowser\Logs\*_Runtime.log`, `*_Client.log` and `*_Browser.log`. The Browser log records blocked URLs (WIN-MANUAL). The default log level is Debug (`#L238`).
+
+---
+
+### 8.2 Differences from macOS that change the design
+
+| # | Windows fact | Design consequence |
+|---|---|---|
+| 1 | **No embedded-config links at launch.** `sebs://application/seb;base64,…` fails (§8.1.3). | **Host the config on both platforms:** `sebs://<classguard>/lockdown/seb/<token>.seb`. The config endpoint must: answer **HEAD and GET, repeatably** (2–3 requests per launch, so expire by time, not on first use); return **no HTML and no 401** on errors (they trigger "load as web page" with *default* settings), using 404/410 as `text/plain`; tolerate a `??token=` query in the request; and serve over publicly trusted HTTPS. |
+| 2 | **No network isolation.** Chrome keeps running with its windows hidden, so **the ClassGuard extension stays online** (§8.1.6). | (a) The "extension came back online, so abandoned" rule from §4 **doesn't work on Windows**. Use "gate reported `launched`, then no finish hit by `ends_at`" instead. (b) New option: the extension can keep sending a heartbeat on Windows, so the dashboard can show "device online, in SEB since hh:mm". It can't see SEB, though. (c) The extension **must not open tabs, windows or notifications while an SEB lockdown is active on Windows**, or SEB hides them, and in the worst case kills Chrome. |
+| 3 | **Google blocks sign-in from CEF-based browsers** (§8.1.8). | **Test 1 decides whether sign-in-required Forms can run in SEB on Windows.** If they can't, the options are: (a) Windows uses Forms that don't require sign-in, with identity from ClassGuard (e.g. a pre-filled field carrying the student token, validated server-side); (b) Windows students use the Chrome soft lock, like Chromebooks; (c) drop SEB on Windows. **Decision needed at review.** |
+| 4 | Third-party cookies are **allowed** in CEF (§8.1.8). | The wrapper iframe can see a Google session that was established at top level. That doesn't solve sign-in, so it doesn't change the §4 choice. **Gate + direct stays the cross-platform layout.** |
+| 5 | **The SEB service is off by default.** Without it Ctrl+Alt+Del still offers Task Manager, Sign out, Lock and Switch user (§8.1.1). | Configs for Windows set `sebServiceIgnore = false`, and `sebServicePolicy` = 1 for the pilot, then 2. The service must be running on every laptop (MSI auto-start). |
+| 6 | **Default prohibited processes**: Teams, Zoom, Discord, Slack, Spotify, VLC, TeamViewer, mstsc, Chrome Remote Desktop host, … SEB 4.0 adds RMM agents like ScreenConnect, NinjaRMM, LogMeIn, Splashtop and Quick Assist (§8.1.4). | The student is asked to close them, and a SYSTEM agent that can't be killed **blocks the launch** or locks the session. **Inventory district agents** and emit `prohibitedProcesses` entries with `active = false` for the ones that must keep running. Chrome is not prohibited. |
+| 7 | **False VM detections** on common school laptops in 3.10.1/3.10.2 (§8.1.4). | Set `allowVirtualMachine = true` in ClassGuard configs, or require SEB ≥ 3.10.3 after test 2. |
+| 8 | JS API: `updateKeys(fn)` calls `fn` directly; the injection is asynchronous and sometimes missing at DOMContentLoaded (§8.1.5). | The gate page uses a **named global callback** and **polls** for `window.SafeExamBrowser` before deciding. The server Config Key computation is **shared** with Mac. |
+| 9 | Quit-password hash without NFC; 3.10.3+ requires a 64-hex hash and rejects `",` in any string (§8.1.2). | ASCII-only generated quit passwords. The config generator rejects `",` in any string. |
+| 10 | Single instance: a second link while SEB runs is **dropped** with a dialog (§8.1.3). | Same outcome as Mac: the extension must not retry-launch while the gate has reported `launched`. |
+| 11 | One display by default; NVDA/JAWS and the touch keyboard need Disable Explorer Shell; injected input is blocked (§8.1.10). | Teacher-facing preflight text ("unplug external monitors"), plus a per-student accommodation flag that emits `killExplorerShell = true`. |
+| 12 | Only one Google-related page of ours ever runs in SEB (the gate), and the quit URL works on redirects and in any frame (§8.1.7). | §4's finish-endpoint pattern (record `submitted`, then 302 to `quitURL`) should work unchanged. Test 4b confirms it. |
+
+**Decisions to add to §6:** item 3 (Windows Google sign-in fallback), item 5 (service policy), item 6 (the district-agent allowlist), item 7 (VM policy vs. waiting for 3.10.3), and the accommodations flag (item 11).
+
+---
+
+### 8.3 `scripts/seb-spike/make-config.js` on Windows
+
+**Would its configs work as-is?**
+- **The `.seb` files: mostly yes.**
+  - They are raw XML starting `<?xml` with no BOM, which Windows accepts (§8.1.2).
+  - Double-clicking a `.seb` opens SEB, through the `.seb` ProgId.
+  - All values are bool, integer, string, array or dict.
+  - `hashQuitPassword` produces 64 lowercase hex characters, which passes the 3.10.3+ validator.
+  - The Mac-only keys are ignored.
+  - **Two exceptions:** the VM check (a false positive aborts SEB), and the service being ignored, which is SEB's default.
+- **The `.link.txt` files (`sebs://application/seb;base64,…`): no.** SEB for Windows can't load an embedded config at launch (§8.1.3).
+
+**Changes needed.** Describing only; the repo is not edited.
+
+1. **Hosted links.** Add `--host-base <https URL of a directory where the .seb files will be served>`. For each variant also write `<variant>.hosted-link.txt` containing `sebs://<host-base-without-scheme>/<variant>.seb`. Also emit `<variant>.hosted-link-token.txt` with `…/<variant>.seb??token=spike123` for the query-parameter test. Keep the base64 links for the Mac tests.
+2. **Windows keys in `baseConfig`.** Behind `--platform win|mac|both`, default `both`: extra keys are harmless on the other platform, and the Config Key covers whatever the file contains.
+   ```js
+   // Windows (SEB 3.10.x) – ignored by SEB for macOS
+   createNewDesktop: true,          // kiosk mode (SecurityDataMapper.cs L131-150)
+   killExplorerShell: false,
+   sebServiceIgnore: false,         // default true = service not used (DataValues.cs L292)
+   sebServicePolicy: 1,             // 1 = warn if the service is missing (ServiceDataMapper.cs L183-192)
+   allowVirtualMachine: args['allow-vm'] === 'true',   // 3.10.1/3.10.2 false positives (GH#1517)
+   allowDownloads: false,           // Windows default true (DataValues.cs L173)
+   allowUploads: false,             // Windows default false; Forms file-upload needs true
+   enableChromeNotifications: true, // don't let the service rewrite Chrome's notification policy
+   ```
+   Also pass `quitURLConfirm: false` explicitly. It already is; keep it, because the defaults differ (Windows false, Mac true).
+3. **The query-parameter variant.** Add `startURLAppendQueryParameter: true` to the probe variant, so the probe page shows the `token` that arrived.
+4. **Windows UA variant for test 1c.** Emit `1c-signin-custom-ua-win` with `browserUserAgentWinDesktopMode: 1` and `browserUserAgentWinDesktopModeCustom: <current stable Chrome for Windows UA>`. Label it "diagnostic only": SEB still appends `SEB/x.y`, and Google forbids UA spoofing (GOOG-2020).
+5. **Variant naming.** `2-direct-aac-filtered` has AAC in its name, but on Windows it is the kiosk variant. Emit it once and describe it as "AAC on Mac, kiosk on Windows", or add an alias `2w-direct-kiosk-filtered` with the same content.
+6. **Guards.**
+   - Reject non-ASCII `--quit-password` (no NFC on Windows).
+   - Reject any string containing `",` (3.10.3+ validator).
+   - Never emit `originatorVersion`, empty dicts or `<real>`/`<date>`/`<data>` (Config Key parity, `Json.cs#L41-44`). The current code already doesn't.
+7. **Optional: `--deactivate-prohibited name1.exe,name2.exe`.** It emits `prohibitedProcesses: [{active:false, executable, originalName, os:1, description:'district agent'}]` for district agents found during the pilot (§8.1.4).
+8. **Comments.** Update the header comment. The base64 link is **macOS only**, and Windows needs the hosted form. Cite `NetworkResourceLoader.cs#L133-146` and `CompositionRoot.cs#L228-230` at `397f8e12`.
+
+---
+
+### 8.4 Layout on Windows (§3/§4 recheck)
+
+| | Direct | Wrapper | Gate + direct |
+|---|---|---|---|
+| Google sign-in | top-level, but **CEF sign-in is expected to be blocked** (test 1) | sign-in can't happen in the frame (XFO DENY); works only after a prior top-level sign-in, since 3PC is allowed | same as Direct |
+| Verify real SEB with our config | no | JS API | JS API, **with polling** |
+| Heartbeat while answering | none from SEB, **but the ClassGuard extension stays online** | wrapper plus extension | extension only |
+| Submitted, then quit | – | Finish link (the quit URL fires in any frame) | finish endpoint, then 302 to `quitURL` |
+
+**Gate + direct stays the recommendation for both platforms.** Whether Windows can use SEB at all for sign-in-required Forms depends on test 1.
+
+---
+
+### 8.5 Hands-on tests (Windows test PC)
+
+#### Setup
+1. Use a district-image Windows 11 laptop, the fleet model, with the district EDR and a **standard student account**. Record the Windows build, model, CPU and whether it is ARM.
+2. Install as admin:
+   - the VC++ 2015–2022 x64 redistributable;
+   - `SEB_3.10.2.920_x64_Setup.msi` via `msiexec /i … /qn`. DL publishes a SHA-1 (`4a469df8…`) only next to the SetupBundle link, so verify the bundle if you use it; for the MSI, check the Authenticode signature.
+   - Confirm that the `SafeExamBrowser` service is running (`sc query SafeExamBrowser`).
+   - Record whether SEB 3.10.3 is out by then; if so, repeat test 2 on it.
+3. Use the same test Google Form as §5 (Verified email, Limit to 1 response, locked mode off, confirmation-message link).
+4. Generate the configs with the §8.3 changes and `--host-base https://<classguard-domain>/seb-spike/cfg/`. Upload the `.seb` files there with `Content-Type: application/seb`.
+5. Logs are in `%LocalAppData%\SafeExamBrowser\Logs`. Debug is the default level, so nothing needs switching on.
+
+#### Test 0: install, probe, cross-platform Config Key
+- **0a. Probe.** Open `0-probe.seb` by double-click. **Pass:**
+  - "SafeExamBrowser API: present", reached with polling;
+  - `SafeExamBrowser.version` starts with `SEB_Windows_3.10.2`;
+  - a CK hash is shown;
+  - the UA contains `SEB/3.10.2`.
+- **0b.** Run the same probe variant on the test Mac. **Pass:** the Windows and Mac `configKey` values are **identical for the identical URL**. This proves a single server-side Config Key.
+- **0c.** Reload the probe 10 times. Record how often the API is missing at DOMContentLoaded (GH#1443).
+- **0d.** `updateKeys(cgKeysReady)` with a named global function calls it on both platforms.
+
+#### Test 1: Google sign-in in SEB for Windows (gating)
+- **1a.** `1a-signin-nofilter.seb`: sign in as a test-OU student, answer and submit. **Pass:** no "Couldn't sign you in / This browser or app may not be secure", and the submission shows the verified email. Screenshot any block page.
+- **1b.** `2-direct-…-filtered.seb`: repeat. Collect the blocked URLs from `*_Browser.log`. That list becomes the Windows allowlist; compare it with the Mac list.
+- **1c.** Only if 1a fails: `1c-signin-custom-ua-win.seb`. **Diagnostic only**; don't ship a spoofed UA.
+- **1d.** If the district uses a SAML IdP, repeat 1a through it.
+
+#### Test 2: kiosk lockdown
+With the filtered config running (service on, `sebServicePolicy = 1`):
+
+| Action | Expected |
+|---|---|
+| Alt+Tab, Win key, Win+D, Win+Tab, Ctrl+Esc | blocked |
+| Alt+F4 on the SEB window | blocked |
+| PrintScreen, Win+Shift+S, Snipping Tool | blocked, or the SEB window is excluded from the capture |
+| Ctrl+Alt+Del | Task Manager, Lock, Sign out and Switch user **missing** (service on); **repeat with `sebServiceIgnore = true`** and record what's available and what Task Manager shows |
+| Notifications / toasts (Teams, Chrome) | not visible |
+| Copy text from before the session and paste into the Form | not pasted (isolated clipboard) |
+| **ClassGuard extension** | **still heartbeating** (server log) the whole time; Chrome **not killed** |
+| Extension opens a tab (trigger a policy update) | Chrome window hidden; record whether Chrome survives |
+| Teams / Zoom / Spotify running before launch | SEB asks to close them; record the dialog |
+| Each district agent (RMM, MDM, classroom tool) | record whether SEB lists or kills it |
+| External monitor plugged in before / during | start refused / record behaviour |
+| Lid close, then reopen with Windows Hello | record: SEB lock screen? password needed? |
+| Touch keyboard on a 2-in-1 (Create New Desktop, then Disable Explorer Shell) | record whether typing works (injected-input block) |
+| VM detection | record the message if SEB refuses to start; retry with `--allow-vm true` |
+
+#### Test 3: launch from Chrome on Windows
+- **3a. Typed.** Paste the `…hosted-link.txt` URL into Chrome. Record the prompt text ("Open …?") and whether SEB launches.
+- **3b. Extension-initiated.** In the extension service worker console: `chrome.runtime.getPlatformInfo()` → `os: 'win'`, then `chrome.tabs.update({url: '<hosted link>'})`. Record the prompt and whether SEB launches.
+- **3c. Test-OU URLAllowlist `sebs://*`.** Repeat 3b. **Pass:** no prompt.
+- **3d. Second launch.** While SEB is running, fire 3b again. Expected: no second SEB, no visible dialog for the student. Record where the "one instance" box appears.
+- **3e. Error responses.** Point links at URLs returning 404, 410, **200 `text/html`** and **401**. Expected: 404/410 give a SEB error dialog and SEB quits; HTML/401 load as a web page with default settings, which must never happen in production. Record the server access log (HEAD + GET count).
+- **3f. Token.** Use `…hosted-link-token.txt` with the probe. **Pass:** the probe shows `token=spike123`, and the CK hash still verifies server-side for the full URL.
+- **3g. Base64 link (negative control).** Paste a `.link.txt`. Expected: SEB error "not supported". This confirms that §8.2 #1 is real.
+
+#### Test 4: quitting
+- **4a. Quit link** in the Form's confirmation message. Record whether Google wraps it through `www.google.com/url?q=`, the exact URL chain (Browser log), and that SEB quits with no password prompt.
+- **4b. 302 to the quit URL** from an HTTPS endpoint. **Pass:** SEB quits.
+- **4c. Force-quit attempts:** Ctrl+Shift+Esc, Ctrl+Alt+Del → Task Manager (service on and off), `taskkill` from another admin session if available. Record.
+- **4d. Reboot mid-session** (hold power). Reopen the **same** hosted link. **Pass:** the red "last session … not terminated properly" lock, cleared by the quit password. Also record the Ctrl+Alt+Del options after reboot and before reopening (registry restored?).
+- **4e. Reload:** F5 on the confirmation page and on a half-filled Form. Record the reload warning and any resubmission.
+
+#### Test 5: wrapper vs direct (Windows)
+- **5a.** `5-wrapper.seb` with a sign-in-required Form, **without** a prior top-level sign-in. Expected: can't sign in within the frame.
+- **5b.** Same, but first sign in top-level in the same SEB session (direct variant, then navigate to the wrapper). Record whether the Form in the iframe sees the session (3PC allowed).
+- **5c.** A Form that doesn't require sign-in in the iframe: loads and submits?
+- **5d.** The "Finish" link inside the wrapper quits SEB.
+
+#### Test 6: Google Forms locked mode on Windows
+Locked mode on: open the Form in Chrome on Windows and in SEB (`1a`). Record the exact messages.
+
+#### Results
+
+| Test | Result | Notes |
+|---|---|---|
+| 0 install (msiexec /qn, service running) | | |
+| 0a probe (API, version, CK, UA) | | |
+| 0b CK identical to Mac | | |
+| 0c API missing at DOMContentLoaded (n/10) | | |
+| 0d named-callback updateKeys | | |
+| 1a sign-in, no filter | | |
+| 1b sign-in, filtered (blocked-URL list) | | |
+| 1c custom UA (diagnostic) | | |
+| 1d SAML IdP | | |
+| 2 kiosk checklist | | |
+| 2 extension stays online | | |
+| 2 district agents / prohibited list | | |
+| 2 VM detection on fleet model | | |
+| 2 touch keyboard / accessibility | | |
+| 3a typed hosted link | | |
+| 3b extension link (`os: 'win'`) | | |
+| 3c URLAllowlist `sebs://*` | | |
+| 3d second launch | | |
+| 3e error responses (404/410/HTML/401; request count) | | |
+| 3f `??token=` | | |
+| 3g base64 link fails | | |
+| 4a quit link | | |
+| 4b 302 to quit URL | | |
+| 4c force quit | | |
+| 4d reboot / session-integrity lock | | |
+| 4e reload | | |
+| 5a wrapper, no prior sign-in | | |
+| 5b wrapper after top-level sign-in | | |
+| 5c wrapper, open form | | |
+| 5d wrapper Finish | | |
+| 6 locked mode on Windows | | |
+
+### 8.6 Could not verify from sources (needs the test PC)
+- Whether Google sign-in currently succeeds in SEB 3.10.2 (tests 1a/1d). Google's documents say CEF is blocked; SEB user reports from 2021–2022 suggest it once worked.
+- Which desktop SEB's second-instance message and Chrome's hidden windows live on, and whether Chrome survives a failed hide.
+- The Windows touch keyboard vs. the injected-input block; lid close with the service on.
+- What Task Manager shows from Ctrl+Alt+Del without the service while SEB owns a new desktop.
+- VM-detection behaviour on the district's laptop model (3.10.2 vs. 3.10.3).
+- Whether Windows adds any UI of its own when Chrome's `ShellExecuteA` launches `sebs:`; the exact app name in Chrome's prompt.
+- The exact `Windows NT x.y` value and the Sec-CH-UA client hints SEB sends.
