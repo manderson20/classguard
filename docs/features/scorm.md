@@ -1,6 +1,6 @@
 # SCORM support: feature spec
 
-**Status:** draft for review (2026-09-29). Nothing is built yet.
+**Status:** draft for review (2026-09-29; §11 decisions added after the first review). Nothing is built yet.
 
 ## 1. Goal
 
@@ -49,6 +49,9 @@ SCORM packages are third-party HTML and JavaScript, and ClassGuard can't vet wha
 
 **Upload:** a zip, up to a district limit (default **500 MB** per package).
 
+**Expected sources** (§11 #2): vendor courses, including **Infosec IQ**, which exports its security-awareness training as SCORM; textbook and training publishers; and in-house authoring tools (Articulate Storyline and Rise, iSpring, Adobe Captivate, H5P, and similar). Phase 1 testing uses sample exports from several of these, starting with Infosec IQ, since authoring tools each have their own quirks (e.g. how they save resume data or report completion).
+- **Infosec IQ, specifically:** ClassGuard already integrates with Infosec IQ's own platform (its learners and campaigns). A district could run Infosec IQ training either there or as SCORM modules in ClassGuard's staff training (§8.4). Doing both for the same module would track it twice. The staff-training assign dialog warns when a package's title matches an active Infosec IQ campaign.
+
 **On import:**
 1. **Validate the zip.** Reject path traversal (`../`), absolute paths and symlinks. Cap the file count and the uncompressed size, to guard against zip bombs.
 2. **Parse `imsmanifest.xml`:**
@@ -94,6 +97,17 @@ Each learner has **attempts** per assignment:
 - started, last-activity and finished times;
 - the full data-model values, for troubleshooting.
 
+**Retention** (decided, §11 #6). Configurable per district, with these defaults:
+- **Student attempts:** kept until **one year after the school year** in which the assignment ended, then deleted.
+  - That covers late grade changes, appeals and "what did they do last year" questions without keeping detailed student learning data indefinitely.
+  - For ClassGuard's purposes the score is only a copy: the gradebook of record is Classroom or the SIS.
+- **Staff training completions:** kept **3 years** after completion, so the district can prove annual training (e.g. for cyber-insurance or compliance audits) across several cycles.
+  - The detailed data-model values and resume data are trimmed after 90 days; the completion record itself stays for the full period.
+- **Preview attempts** aren't kept.
+- **Removing a package** doesn't remove its attempts until their retention period ends. The report keeps the package title.
+
+The district should check these defaults against its state's records-retention schedule for school districts and adjust them in Settings.
+
 **Saving.** The player sends updates on every `Commit`, and also periodically and when the page closes. So a closed lid or tab loses at most the last few seconds. The course's own resume data then puts the learner back where they were.
 
 ## 8. The four uses
@@ -104,7 +118,14 @@ Each learner has **attempts** per assignment:
   - a **My assignments** page, reached from the ClassGuard extension's popup; or
   - a link the teacher posts in Google Classroom, which opens the same page on the student's device and hands over the student's session from the extension.
 - **Teacher report:** per student, status, score, time spent, attempts and last activity. It can be exported as CSV.
-- **Later, needs investigation:** sending scores back to Google Classroom. The Classroom API only lets an app grade coursework that the same app created, so ClassGuard would have to create the Classroom assignment itself.
+- **Scores to Google Classroom** (decided, §11 #4). The Classroom API only lets an app set grades on Classroom assignments **that the same app created**. So scores go to Classroom only when **ClassGuard posts the assignment**:
+  - The assign dialog has **Post to Google Classroom** (course, topic, points). ClassGuard creates the Classroom assignment, with a link that opens the module, and sends each student's score back as a draft grade the teacher reviews and returns in Classroom as usual.
+  - If a teacher posts the module link in Classroom **themselves**, scores stay in ClassGuard and can't be sent to Classroom.
+  - **This is explained to teachers where it matters:**
+    - in the assign dialog, next to the option: "Scores can only be sent to Google Classroom for assignments ClassGuard posts for you. If you post the link yourself, scores stay in ClassGuard's report.";
+    - on the report page of an assignment without it;
+    - in the Help article.
+  - It needs one more Google scope, Classroom coursework read and write, added by the district in the Google Admin console. Without it the option is hidden and the dialog says why.
 
 ### 8.2 ISS assignment packages
 - A package item can include a SCORM module. The student opens it from **My ISS work**, which is already reachable during a Restricted placement.
@@ -119,7 +140,7 @@ Each learner has **attempts** per assignment:
 ### 8.4 Staff training
 - Holders of `scorm.training` assign modules to staff: by school, by role, by group or individually. Each assignment can have a due date, recurrence (e.g. yearly) and reminders.
 - Staff see a **My training** page in ClassGuard, with modules to do, due dates and completion history. They launch modules there.
-- Reports show completion by school and person, overdue lists and CSV export. Attempts are kept for the district's chosen retention period; it's an audit record.
+- Reports show completion by school and person, overdue lists and CSV export. Attempts are kept as an audit record (retention in §7).
 
 ## 9. Filtering interactions
 
@@ -165,18 +186,19 @@ scorm_attempts
 
 settings keys: 'scorm_enabled', 'scorm_content_host', 'scorm_max_package_mb' (500),
   'scorm_storage_quota_gb' (20), 'scorm_teacher_upload' (true),
-  'scorm_attempt_retention_days'
+  'scorm_student_retention' (default: 1 year after the school year ends),
+  'scorm_staff_retention_days' (default 1095), 'scorm_detail_trim_days' (default 90)
 permissions: scorm.library, scorm.training, scorm.reports
 ```
 
-## 11. Open questions
+## 11. Review decisions (2026-09-29)
 
-1. **Content address.** Can the district add a DNS name such as `content.<classguard-domain>` pointing at the ClassGuard VIP? The certificate would come from the existing ACME setup.
-2. **Where modules come from.** Vendor courses (training providers, textbook publishers), in-house authoring tools (Articulate, iSpring, Adobe Captivate, H5P), or both? This decides which quirks to test first.
-3. **Storage.** Is 500 MB per package and 20 GB total right for a start?
-4. **Scores to Google Classroom.** Is this needed, given that ClassGuard would have to create the Classroom assignments itself (§8.1)?
-5. **Sequencing.** Is "parts are freely choosable" acceptable for multi-part 2004 packages at first?
-6. **Records.** How long should student and staff attempt data be kept? Student attempt data is part of the student's record.
+1. **Content address:** yes, the district will add a DNS name like `content.<classguard-domain>` for SCORM content (§3).
+2. **Sources:** vendors (including Infosec IQ, which supports SCORM), publishers and authoring tools, possibly more. Testing covers several, starting with Infosec IQ (§4).
+3. **Storage:** 500 MB per package and a 20 GB total quota to start (§5).
+4. **Scores to Google Classroom:** yes, by having ClassGuard post the Classroom assignment. The limit (it doesn't work for links teachers post themselves) is explained in the assign dialog, the report and the Help article (§8.1).
+5. **Sequencing:** freely choosable parts for multi-part SCORM 2004 packages at first (§2).
+6. **Retention:** configurable. The defaults are student attempts until one year after the school year ends, and staff training completions for 3 years, with detail trimmed after 90 days (§7).
 
 ## 12. Build phases (one PR each, plus Help articles)
 
@@ -188,10 +210,14 @@ permissions: scorm.library, scorm.training, scorm.reports
    - the player on scorm-again, with launch tokens;
    - attempts and saving;
    - the library with preview and sharing (sharing by school needs ISS Phase 0's schools).
-2. **Class assignments:** assign to a class or students, the student **My assignments** page (from the extension popup and Classroom links), teacher reports and CSV.
+2. **Class assignments:**
+   - assign to a class or students;
+   - the student **My assignments** page, from the extension popup and Classroom links;
+   - teacher reports and CSV;
+   - **Post to Google Classroom** with score passback, and the teacher-facing explanation of when scores can and can't go to Classroom.
 3. **Staff training:** assign to staff by school, role or group; due dates, recurrence and reminders; **My training**; training reports.
 4. **ISS integration:** SCORM in assignment packages, auto-done on completion. After ISS Phase 3.
 5. **ClassPulse activity:** the SCORM activity type and live progress.
-6. **Later:** scores to Google Classroom, SCORM 2004 sequencing, xAPI or cmi5 if needed.
+6. **Later:** SCORM 2004 sequencing, xAPI or cmi5 if needed, and an object store if the library outgrows the database.
 
 As with ISS, this is a starting point to refine once modules are running in real classes.
