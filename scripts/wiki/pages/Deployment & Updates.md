@@ -10,6 +10,8 @@ Each node runs a host-level **update watcher** on a timer. When an update is sch
 - A version bump is required for the update flow to offer an update; deploying without bumping the version does nothing.
 - The watcher retries the completion handshake while the API is still booting, so a slow start doesn't wedge the update.
 - The flow is **self-healing**: a deploy that crashes mid–container-recreate is detected and finished on the watcher's next tick, and a stale in-progress marker can't block future updates.
+- Each update also **backfills missing HA settings** (the virtual IP and the public domain) in a node's environment file from the replicated database, so a node restored from an older backup heals itself. Values that are already set are never overwritten.
+- After an update, a **normal page reload** loads the new admin UI: the app shell is served with `Cache-Control: no-cache`, while the hashed JS/CSS bundles stay cached long-term.
 
 ## Versioning
 
@@ -21,13 +23,15 @@ ClassGuard uses `MAJOR.MINOR.PATCH`:
 
 The version lives in `VERSION`, the backend and frontend `package.json`, the UI footer, and `CHANGELOG.md` — all bumped together per release.
 
+The **Chrome extension** has its own version (`chrome-extension/package.json`), bumped only when extension code changes. On update, an extension-builder container packs and signs the new `.crx` and publishes it with an `update.xml` manifest under `/downloads/`; managed Chrome devices pick it up through Chrome's normal extension auto-update, usually within a few hours.
+
 ## Order of a release
 
 1. Merge the change to `main` (branch protection requires green CI).
 2. Bump the version and update `CHANGELOG.md`.
 3. Schedule the update for all nodes.
 4. Watch the rollout; the virtual IP should stay put (a graceful reload keeps VRRP state).
-5. Verify the change live.
+5. Verify the change live: each node's `/health` reports the new version, and for an extension release `/downloads/update.xml` lists the new extension version.
 
 ## High availability during updates
 

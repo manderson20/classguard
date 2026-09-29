@@ -24,7 +24,11 @@ Neither is redundant; each closes the other's blind spots.
 
 ## High availability
 
-Nodes form an active/standby cluster with a floating virtual IP. Keepalived (VRRP) holds the VIP on the healthy primary and fails it over if a tracked service (the API, FreeRADIUS) goes unhealthy. Postgres replicates primary→standby; the standby's database is read-only, so write-path jobs (schedulers, samplers) run only where the DB is writable. See [[HA Cluster|HA Cluster]].
+Nodes form an active/standby cluster with a floating virtual IP. Keepalived (VRRP) holds the VIP on the healthy primary and fails it over if a tracked service (the API, FreeRADIUS) goes unhealthy. Postgres replicates primary→standby; the standby's database is read-only, so write-path jobs (schedulers, samplers) run only where the DB is writable.
+
+Each node's DNS engine answers from that node's own Redis cache, so **every node, standby included, keeps its own DNS caches filled**, starting shortly after boot and then every 10 minutes:
+- the **website-category map** and **local DNS records** are rebuilt from the node's replicated database, so they match the primary;
+- **blocklists** are not stored in the database. Each node downloads them from their source URLs itself: any missing list is fetched at boot, and all lists refresh on the regular blocklist schedule. A standby's copy can therefore briefly lag the primary's after a list changes upstream, and refilling it needs internet access to the list sources. See [[HA Cluster|HA Cluster]].
 
 ## Deployment & updates
 
