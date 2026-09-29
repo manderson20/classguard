@@ -1,6 +1,6 @@
 # In-School Suspension (ISS): feature spec
 
-**Status:** draft for review (2026-09-29). Nothing is built yet. Phase 1 starts after review, and after 0.17.12 (PR #303) is deployed, since it builds on that release's Penalty Box changes.
+**Status:** draft for review (2026-09-29; §3 and §11 updated after the first review). Nothing is built yet. Phase 1 starts after review, and after 0.17.12 (PR #303) is deployed, since it builds on that release's Penalty Box changes.
 
 ## 1. Goal
 
@@ -17,8 +17,9 @@ ISS is built as a special kind of roster rather than a separate system. Everythi
 
 | Question | Decision |
 |---|---|
-| ISS roles | Two levels, switched on for individual teachers by an admin as needed: an **ISS Instructor** runs one or more ISS groups (rooms); an **ISS Supervisor** oversees every ISS group. One person can be both. |
-| Who can place a student | ISS staff and admins only: an instructor places into their own group(s), a supervisor into any group. Regular teachers ask in person or through the office. |
+| ISS roles | Permission-based ISS roles assigned to staff as needed, each **scoped to one or more schools**. Built-in templates: **ISS Viewer**, **ISS Instructor** (runs ISS groups/rooms), **ISS Supervisor** (oversees every group in their schools). Districts can edit them or create their own. One person can hold several. |
+| Schools | Learned from roster sync. A superadmin can scope any role assignment to several schools. |
+| Who can place a student | Whoever holds the **Place students** permission. District-wide, the district decides which roles get it (e.g. building administration and ISS staff in a small school). Regular teachers never can. |
 | Placement length | Flexible: from a short cool-down (e.g. 30 min or 1 hour) to "until a date". |
 | How strict | ISS staff pick per placement: **Restricted** (only allowed sites) or **Monitored** (normal school filtering, just supervised). |
 | What a Restricted student can reach | The admin **ISS baseline** list, sites ISS staff **grant directly**, and **coursework** ISS staff approve. |
@@ -28,41 +29,67 @@ ISS is built as a special kind of roster rather than a separate system. Everythi
 | Communication | A **staff-only thread** per placement, between ISS staff and the student's regular teachers. |
 | Tests | A regular teacher sends a test as a queue item; ISS staff start it as a Lockdown Test when the student is ready. |
 
-## 3. Roles, groups and permissions
+## 3. Roles, groups, schools and permissions
 
-**ISS groups.** An ISS group is one ISS room: a name (e.g. "ISS — Building A, Room 104"), one or more instructors, and the students currently placed in it. Supervisors create, rename, archive and staff groups. A district with one ISS room has one group.
+**Schools.** ISS access is scoped by school, and the schools come from roster sync:
+- **OneRoster** (e.g. Infinite Campus, PowerSchool) already tags each class and user with its school ("org"). Roster sync gains a `schools` table plus school links for classes and users. Today it only fetches orgs to test the connection.
+- **Google-only districts** map Google OU paths to schools in Settings (e.g. `/Students/High School` → High School).
+- A student's school is the one roster sync gives them. Staff belong to the schools of the classes they teach, plus any schools an admin adds.
 
-**Two ISS roles**, set per teacher account by an admin with the `users` permission on the **Users** page (`users.iss_role`: none, instructor or supervisor). They aren't separate logins; the person keeps their own classes too.
+**ISS groups.** An ISS group is one ISS room: a name (e.g. "ISS — High School, Room 104"), the **school(s)** it serves, one or more instructors, and the students currently placed in it. A district with one ISS room has one group.
 
-| | **ISS Instructor** | **ISS Supervisor** |
-|---|---|---|
-| Sees | Their own group(s): the students, their queues and threads | **Every** ISS group, as an overview (who is placed where, until when, pending coursework per group) and by opening any group |
-| Places students | Into their own group(s) | Into any group, and can **move** a student between groups |
-| Controls placed students | Full Active Lesson controls, site grants and coursework decisions in their group(s) | The same in any group, e.g. covering an absent instructor |
-| Manages groups | No | Creates and archives groups, and assigns instructors to them |
+**ISS permissions.** Every ISS ability is a separate permission. A role holds any set of them.
 
-- **"ISS staff"** below means a placement's group instructors plus any ISS supervisor.
-- A supervisor who also runs a room is simply also an instructor of that group. In a one-person setup, one supervisor with one group covers everything.
-- **Admins** have supervisor-level access. Admin-tier custom roles get a new permission key `iss` ("In-School Suspension") in the permission catalog, so an admin role can be allowed or denied ISS like any other area. Superadmins always have it.
-- **Search.** ISS staff can find **any student in the district** when placing. School scoping is an open question (§11).
-- **Hand-offs.** Supervision often changes between periods or when someone is absent. A group can have several instructors, and a supervisor can step into any group. Each placement records who placed the student, and each decision records who made it.
+| Permission | Allows |
+|---|---|
+| `iss.view` | Read-only view of who is placed in which group, until when (no notes, no queues). For counselors or office staff, if a district wants that. |
+| `iss.instruct` | Running the groups they're assigned to: full Active Lesson controls, direct site grants, coursework decisions, starting tests, the staff threads. |
+| `iss.place` | Placing students, and extending, changing mode or ending placements, within the groups they can act on. |
+| `iss.supervise` | Everything above for **every** group in their schools: the overview of all groups, covering any group, moving students between groups, creating and archiving groups, assigning instructors. |
+| `iss.reports` | ISS reports (e.g. placements and time in ISS per student, per school, per term). Sensitive, so it's separate from the other permissions. |
+
+**Roles.** An ISS role is a named set of those permissions. ClassGuard ships three editable templates; districts can change them or add their own (e.g. "Building Administrator" = place + supervise + reports).
+
+| Template | Permissions |
+|---|---|
+| **ISS Viewer** | `iss.view` |
+| **ISS Instructor** | `iss.instruct`, and `iss.place` if the district allows instructors to place (district setting, §4) |
+| **ISS Supervisor** | `iss.view`, `iss.instruct`, `iss.place`, `iss.supervise` |
+
+**Assignments.** An admin assigns an ISS role to a staff member **for one or more schools** on the **Users** page. The school choices are those learned from roster sync.
+- **Superadmins** can assign any school combination (e.g. a district-level supervisor over three buildings).
+- Admins with the `iss` admin permission can assign within their own schools.
+- One person can hold several assignments (e.g. Instructor at the middle school, Supervisor at the high school). A small school can give one person the Supervisor role for its single school.
+
+**What scoping means:**
+- ISS staff only see, search for and place **students of their assigned schools**, and only see **groups serving those schools**.
+- Placement search, the supervisor overview, reports and read-only views are all filtered by school.
+- An instructor acts on the groups they're assigned to; a supervisor acts on every group in their schools.
+
+- **"ISS staff"** below means anyone with `iss.instruct` on the placement's group, plus supervisors of its school.
+- **Hand-offs.** A group can have several instructors, and a supervisor can step into any group in their schools. Each placement records who placed the student, and each decision records who made it.
+- **Admins** keep full access through the admin permission `iss` in the custom-role permission catalog (school-limited like other admin areas once schools exist). Superadmins always have it.
 - **Scoping rule** (extends the #303 rule "teachers act only on students on their rosters"). A teacher may act on a student if either:
   - the student is on one of their rosters **and not in an active ISS placement**; or
-  - the student **is** placed in an ISS group they instruct, or they are an ISS supervisor.
+  - they hold `iss.instruct` on the student's current ISS group, or `iss.supervise` for its school.
 
 ## 4. Placements
+
+**Who can place.** Holders of `iss.place`. A district setting, **Instructors can place students**, decides whether the ISS Instructor template includes it: on in a district where the ISS instructor handles referrals, off where only building administration places students after a discipline event.
 
 **Placing a student.** From an ISS group's page, **Place student** (a supervisor can also place from the overview and choose the group):
 - **Student:** search by name or email across the district.
 - **Group:** the group the student goes to. Pre-selected when placing from a group's page.
 - **Mode:** **Restricted** or **Monitored**. The default is Restricted; ISS staff can switch mid-placement.
-- **Length:** **30 min**, **1 hour**, **Rest of period** (from the student's bell schedule, when one resolves), **Rest of day** (the last period's end, or 4 pm when no schedule resolves), **Until…** (a date and time), or **Until I end it**.
+- **Length:** **30 min**, **1 hour**, **Rest of period** (from the student's bell schedule, when one resolves), **Rest of day** (the last period's end, otherwise the district's **ISS end-of-day time** setting, default **4:00 PM**), **Until…** (a date and time), or **Until I end it**.
 - **Reason / notes:** optional, private. Visible only to ISS staff with access to the placement's group (its instructors, supervisors) and admins; never to regular teachers or the student.
 
 **While placed:**
 - The group's instructors (or a supervisor) can **Extend**, **Change mode** or **End now**.
 - A supervisor can **Move to another group**. The student's grants, coursework and thread go with them, and the new group's instructors take over.
 - Only one active placement per student; placing an already-placed student offers to extend the existing one instead.
+
+**Telling the student's teachers.** When a student is placed, and again when they're released, each of their regular teachers gets a live notice in ClassGuard ("\<student\> is in ISS until 2:15 PM" / "…is back from ISS"), alongside the **In ISS** badge on the student's card. The notice shows no reason. Email is a later option.
 
 **Ending.** A placement ends when ISS staff end it or its end time passes (the scheduler checks every minute, as for Lockdown Tests). Ending:
 - lifts the ISS restriction (policy invalidated, device notified), and unlocks the screen if ISS staff locked it;
@@ -161,11 +188,24 @@ The student's block page says access is limited during ISS, and that coursework 
 ## 10. Data model (new migration)
 
 ```
-users.iss_role                     TEXT NOT NULL DEFAULT 'none'
-                                     CHECK (iss_role IN ('none','instructor','supervisor'))
+schools                            -- from roster sync (OneRoster orgs of type school)
+  id, name, oneroster_sourced_id, google_ou_prefixes JSONB, created_at
+classes.school_id                  UUID NULL
+user_schools                       -- students' and staff's schools
+  user_id, school_id, source ('roster'|'manual'), PRIMARY KEY (user_id, school_id)
+
+iss_roles                          -- templates + district-defined roles
+  id, name, permissions JSONB (iss.view|iss.instruct|iss.place|iss.supervise|iss.reports),
+  is_template, created_at, updated_at
+iss_role_assignments
+  id, user_id, role_id, created_by, created_at
+iss_role_assignment_schools
+  assignment_id, school_id
 
 iss_groups
   id, name, created_by, created_at, archived_at
+iss_group_schools
+  group_id, school_id
 
 iss_group_instructors
   group_id, user_id, added_by, added_at    PRIMARY KEY (group_id, user_id)
@@ -192,7 +232,8 @@ iss_coursework_items
 iss_auto_approve                   -- per placement, per teacher
   placement_id, teacher_id, created_by, created_at
 
-settings key 'iss_baseline_domains' (JSON array)
+settings keys 'iss_baseline_domains' (JSON array), 'iss_end_of_day_time' (default '16:00'),
+  'iss_instructors_can_place' (boolean)
 chat_threads: type adds 'staff'; iss_placement_id UUID NULL
 chat_thread_members.role adds 'staff'
 lockdown_sessions.iss_item_id UUID NULL
@@ -200,26 +241,51 @@ lockdown_sessions.iss_item_id UUID NULL
 
 Every placement change (including group moves), queue decision and group staffing change is also written to `teacher_actions`, for the audit trail and reports.
 
-## 11. Open questions
+## 11. Review decisions and remaining questions
 
-1. **School scoping.** Can ISS staff place students from any school in the district, or only their own building(s)? The design starts district-wide; scoping by building would need a building attribute on students and staff, which ClassGuard doesn't track reliably today. With several groups, a related question is whether a supervisor should be limited to certain groups (e.g. one supervisor per building) rather than all of them. The design has supervisors see every group.
-2. **Instructor placement rights.** Instructors can place students into their own groups in this design. Should placing be supervisor-only in some districts, with instructors running the room? That could be a district setting.
-3. **Visibility for other staff.** Should counselors or front-office admins see who is in ISS (read-only)? The design allows admins only.
-4. **Notifications.** Should a regular teacher be told when their student is placed or released (live toast, email)? The design uses the live "In ISS" badge only.
-5. **Rest-of-day fallback.** Is 4 pm right when no bell schedule resolves for a student?
-6. **Monitored mode and coursework.** In Monitored mode the student already has normal filtering, so "Just allow the sites" items change nothing. Should those skip the queue and just notify ISS staff?
-7. **Records.** Should placements appear in **Reports** (e.g. ISS minutes per student per term)? That data is sensitive, so it would be admin-only.
+**Decided at review (2026-09-29):**
+1. **School scoping:** schools are learned from roster sync; roles are scoped to schools; superadmins can assign several schools to one assignment (§3).
+2. **Who places:** the `iss.place` permission, with a district-wide setting for whether instructors get it (§4).
+3. **Read-only visibility for other staff:** the optional **ISS Viewer** role (`iss.view`), used only if a district wants it (§3).
+4. **Telling regular teachers:** yes, a live notice on placement and release (§4).
+5. **End of day:** a configurable setting, default 4:00 PM (§4).
+7. **Reports:** a separate `iss.reports` permission, assignable to any role (§3).
+
+**Still open: 6. Coursework during a Monitored placement.**
+
+In a Monitored placement the student keeps normal school filtering, so a coursework item's two parts behave differently:
+- **"Open in a new tab"** still does something the ISS staff should control: it pops a tab on the student's device.
+- **"Just allow the sites"** usually changes nothing, because those sites are already reachable under normal filtering.
+
+Examples:
+- *Cool-down, 1 hour, Monitored.* The math teacher sends "Finish the Khan Academy practice set", **Just allow** khanacademy.org. The student can already reach it, so approving grants nothing. But the ISS instructor still wants to see the assignment, so they can tell the student what to work on.
+- *Same cool-down.* The English teacher sends "Read this article", **Open in a new tab**. If it opened immediately it would interrupt whatever the student is doing, so the instructor should decide when it opens.
+- *Monitored, but a site the district normally blocks.* A science teacher sends a video site the district blocks. Should approving it open that site during a *Monitored* placement? Under normal filtering it stays blocked.
+
+Options:
+- **A. Everything goes through the queue**, whatever the mode. It's consistent and ISS staff always see what's assigned, at the cost of approving things that change nothing.
+- **B (suggested). In Monitored mode, "Just allow" items skip approval.** They appear in the queue as **Delivered** (a to-do list for the instructor and a record for the teacher). "Open in a new tab" items still wait for approval. Nothing overrides district blocks in Monitored mode; the teacher sees "blocked by district filtering" on the item, and ISS staff can switch the placement to Restricted if the site is really needed.
+- **C. No coursework in Monitored mode**, just messages in the staff thread. Simplest, but teachers lose the status tracking.
 
 ## 12. Build phases (one PR each, plus Help articles)
 
+0. **Schools from roster sync:**
+   - OneRoster orgs of type school become `schools`, with class and user school links;
+   - the Google OU → school mapping in Settings;
+   - a school shown on classes and users.
+
+   Useful beyond ISS: bell schedules, reports and admin scoping can use it later.
 1. **Roles, groups and placements:**
-   - the `iss_role` setting (instructor, supervisor) and the `iss` permission;
+   - ISS permissions, the three role templates, and school-scoped role assignments (superadmin can assign several schools);
+   - the `iss` admin permission;
+   - the district settings (instructors can place, end-of-day time, baseline sites);
    - ISS groups and their instructors;
    - placements with Restricted and Monitored modes, and durations including cool-downs;
    - an ISS group page (roster of active placements with the Active Lesson tools), and the supervisor overview of all groups, with moves between groups;
    - the baseline list and direct grants;
    - `iss` mode in the resolver, DNS and extension;
-   - see-only controls for regular teachers and the "In ISS" badge.
+   - see-only controls for regular teachers, the "In ISS" badge, and placement and release notices;
+   - the ISS Viewer read-only view.
 2. **Coursework queue:**
    - Send coursework, with multi-site items and both delivery options;
    - Open URL / Open Tab turned into queue items;
@@ -228,5 +294,6 @@ Every placement change (including group moves), queue decision and group staffin
    - live status for teachers.
 3. **Staff thread:** the `staff` thread type, Discuss from items, the teacher and ISS staff views, archiving at placement end.
 4. **Tests:** test items, Start test as a Lockdown Test, and event routing to both teachers.
+5. **Reports:** ISS reports behind `iss.reports`, filtered by school.
 
 Phase 1 is useful on its own (cool-downs, supervision, direct grants). Phases 2–4 add the link with regular teachers.
