@@ -5,6 +5,7 @@ const { query } = require('../db');
 const redis  = require('../redis');
 const { calcPulseScore } = require('../services/classpulse');
 const { teacherOwnsStudent } = require('../services/teacherRoster');
+const { recordScreenLock } = require('../services/screenLock');
 
 const setupSockets = (io) => {
   // Authenticate every socket connection with the same JWT used by the REST API
@@ -305,10 +306,12 @@ const setupSockets = (io) => {
     // session page and exempts it from the overlay so students can still
     // answer questions while everything else is locked.
     if (studentId) io.to(`student:${studentId}`).emit('lock:engage', { message, targetPath, allowPulse });
+    recordScreenLock(studentId, true).catch(() => {});
   });
 
   events.on('teacher:unlock_request', ({ studentId }) => {
     if (studentId) io.to(`student:${studentId}`).emit('lock:release');
+    recordScreenLock(studentId, false).catch(() => {});
   });
 
   events.on('teacher:open_tab_request', ({ studentId, url }) => {

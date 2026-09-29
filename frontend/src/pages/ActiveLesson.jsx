@@ -393,7 +393,6 @@ function RandomPickerBanner({ picked, onPickAgain, onClose, exhausted }) {
 
 function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRestrict, onRelease, onLock, onUnlock, onOpenTab, onOpenTabUrl, onCloseTab, onFullScreen, lockdownSession, lockdownEventCount, onEndLockdown, showScreen, screenFrame, now }) {
   const [highlight, setHighlight]   = useState(false);
-  const [locked, setLocked]         = useState(false);
   const [urlInputOpen, setUrlInputOpen] = useState(false);
   const [urlInput, setUrlInput]     = useState('');
   const [historyOpen, setHistoryOpen]   = useState(false);
@@ -414,12 +413,15 @@ function StudentTile({ student, activity, lesson, selected, onToggleSelect, onRe
   })();
 
   const isRestricted = student.policy_mode === 'penalty_box';
+  // Server-side mirror of the lock (GET /classes/:id), updated optimistically
+  // by the lock/unlock mutations, so it survives a page reload.
+  const locked       = !!student.screen_locked;
   const isBlocked     = activity?.action === 'blocked';
   const isClosed       = activity?.event === 'closed';
 
   const toggleLock = () => {
-    if (locked) { onUnlock(student.id); setLocked(false); }
-    else { onLock(student.id); setLocked(true); }
+    if (locked) onUnlock(student.id);
+    else onLock(student.id);
   };
 
   const submitUrl = () => {
@@ -802,8 +804,23 @@ export default function ActiveLesson() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['class', classId] }),
   });
 
-  const lock        = useMutation({ mutationFn: (studentId) => api.post('/extension/lock-request', { student_id: studentId }) });
-  const unlock       = useMutation({ mutationFn: (studentId) => api.post('/extension/unlock-request', { student_id: studentId }) });
+  // Lock state shows on the student's card; flip it in the cached class data
+  // straight away, then re-read the server's copy either way.
+  const setScreenLocked = (studentId, screenLocked) =>
+    queryClient.setQueryData(['class', classId], (prev) => prev && ({
+      ...prev,
+      members: (prev.members || []).map(m => (m.id === studentId ? { ...m, screen_locked: screenLocked } : m)),
+    }));
+  const lock        = useMutation({
+    mutationFn: (studentId) => api.post('/extension/lock-request', { student_id: studentId }),
+    onMutate:   (studentId) => setScreenLocked(studentId, true),
+    onSettled:  () => queryClient.invalidateQueries({ queryKey: ['class', classId] }),
+  });
+  const unlock       = useMutation({
+    mutationFn: (studentId) => api.post('/extension/unlock-request', { student_id: studentId }),
+    onMutate:   (studentId) => setScreenLocked(studentId, false),
+    onSettled:  () => queryClient.invalidateQueries({ queryKey: ['class', classId] }),
+  });
   const openTab      = useMutation({ mutationFn: (studentId) => api.post('/extension/open-tab-request', { student_id: studentId }) });
   const openTabUrl   = useMutation({ mutationFn: ({ studentId, url }) => api.post('/extension/open-tab-request', { student_id: studentId, url }) });
   const closeTab     = useMutation({ mutationFn: ({ studentId, tabId, url }) => api.post('/extension/close-tab-request', { student_id: studentId, tab_id: tabId, url }) });

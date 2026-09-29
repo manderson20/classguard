@@ -196,6 +196,14 @@ export default function UnblockRequestsPage() {
                 <tr key={r.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3">
                     <span className="font-mono text-slate-800 font-medium">{r.domain}</span>
+                    {r.penalty_box_id && (
+                      <div className="mt-0.5">
+                        <span className="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium"
+                          title="Requested by a teacher from Penalty Box. Approving it lets this student reach this site until they're released.">
+                          Penalty Box
+                        </span>
+                      </div>
+                    )}
                     {r.source_ip && <div className="text-xs text-slate-400">{r.source_ip}</div>}
                   </td>
                   <td className="px-4 py-3">
@@ -234,7 +242,7 @@ export default function UnblockRequestsPage() {
                           className="text-xs px-2.5 py-1.5 rounded-lg bg-green-600 text-white font-medium hover:bg-green-700 disabled:opacity-40"
                           onClick={() => approve.mutate(r.id)}
                           disabled={approve.isPending}
-                          title="Mark approved (no code)"
+                          title={r.penalty_box_id ? 'Approve: the student can reach this site until released from Penalty Box' : 'Mark approved (no code)'}
                         >
                           Approve
                         </button>

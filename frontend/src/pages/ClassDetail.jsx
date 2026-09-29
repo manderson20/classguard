@@ -122,7 +122,9 @@ function PastLessonsTab({ classId }) {
                     {formatDuration(lesson.started_at, lesson.ended_at)}
                   </td>
                   <td className="px-4 py-2.5 max-w-xs">
-                    {(lesson.allowed_domains || []).length > 0 ? (
+                    {lesson.restriction_mode === 'monitor' ? (
+                      <span className="text-xs text-slate-400">Monitor only</span>
+                    ) : (lesson.allowed_domains || []).length > 0 ? (
                       <span className="text-xs text-slate-600 truncate">
                         {lesson.allowed_domains.slice(0, 3).join(', ')}{lesson.allowed_domains.length > 3 ? ` +${lesson.allowed_domains.length - 3}` : ''}
                       </span>

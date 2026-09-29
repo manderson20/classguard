@@ -298,11 +298,10 @@ async function expirePenaltyBox() {
 
   if (rows.length === 0) return;
 
-  const pipeline = redis.pipeline();
   for (const { student_id } of rows) {
-    pipeline.del(`student:policy:${student_id}`);
+    await invalidatePolicy(student_id);
+    events.emit('policy:updated', { studentId: student_id });
   }
-  await pipeline.exec();
 
   console.log(`[scheduler] released ${rows.length} expired penalty box record(s)`);
 }
@@ -382,7 +381,8 @@ async function autoStartLessons() {
       WHERE c.is_active = true AND c.teacher_id IS NOT NULL
         AND c.auto_start_lessons = true AND c.period IS NOT NULL
     )
-    SELECT DISTINCT cs.class_id, cs.teacher_id
+    SELECT cs.class_id, cs.teacher_id, MAX(bsp.end_time) AS end_time,
+           MIN(bsp.start_time) AS start_time
     FROM class_schedules cs
     JOIN bell_schedule_periods bsp
       ON bsp.schedule_id = cs.schedule_id AND bsp.period_label = cs.period
@@ -391,16 +391,23 @@ async function autoStartLessons() {
       AND NOT EXISTS (
         SELECT 1 FROM lesson_sessions ls WHERE ls.class_id = cs.class_id AND ls.is_active = true
       )
+    GROUP BY cs.class_id, cs.teacher_id
   `);
 
   if (rows.length === 0) return;
 
-  for (const { class_id, teacher_id } of rows) {
+  // Auto-started sessions are Monitor only (students keep their normal
+  // filtering — a Focus session with no sites would block everything until
+  // the teacher noticed) and end by themselves at the period's end time,
+  // via endScheduledLessons() below. A period whose end isn't after its
+  // start (bad data, or one crossing midnight) gets no automatic end.
+  for (const { class_id, teacher_id, start_time, end_time } of rows) {
     try {
       await query(
-        `INSERT INTO lesson_sessions (class_id, teacher_id, name, is_active)
-         VALUES ($1, $2, 'Auto-started (bell schedule)', true)`,
-        [class_id, teacher_id]
+        `INSERT INTO lesson_sessions (class_id, teacher_id, name, is_active, restriction_mode, ends_at)
+         VALUES ($1, $2, 'Auto-started (bell schedule)', true, 'monitor',
+                 CASE WHEN $3::time > $4::time THEN (CURRENT_DATE + $3::time)::timestamptz END)`,
+        [class_id, teacher_id, end_time, start_time]
       );
       const studentIds = await invalidatePoliciesForClass(class_id);
       for (const sid of studentIds) events.emit('policy:updated', { studentId: sid });
@@ -410,6 +417,30 @@ async function autoStartLessons() {
   }
 
   console.log(`[scheduler] auto-started ${rows.length} lesson session(s) from bell schedule`);
+}
+
+// Ends class sessions whose ends_at has passed (today only auto-started
+// ones set it), exactly like End Class: the class's policy override lifts
+// and any screens the teacher locked are unlocked.
+async function endScheduledLessons() {
+  const { rows } = await query(`
+    UPDATE lesson_sessions
+    SET    is_active = false, ended_at = NOW()
+    WHERE  is_active = true
+      AND  ends_at IS NOT NULL
+      AND  ends_at <= NOW()
+    RETURNING class_id
+  `);
+  if (rows.length === 0) return;
+
+  for (const { class_id } of rows) {
+    const studentIds = await invalidatePoliciesForClass(class_id);
+    for (const sid of studentIds) {
+      events.emit('policy:updated', { studentId: sid });
+      events.emit('teacher:unlock_request', { studentId: sid });
+    }
+  }
+  console.log(`[scheduler] ended ${rows.length} class session(s) at their scheduled end`);
 }
 
 // ---------------------------------------------------------------------------
@@ -560,6 +591,12 @@ function startScheduler() {
   // close to the actual period start time rather than lagging behind.
   cron.schedule('*/1 * * * *', () => {
     autoStartLessons().catch(err => console.error('[scheduler] auto-start-lessons error:', err.message));
+  });
+
+  // Scheduled class-session end (auto-started sessions end with their
+  // period) — every minute, same cadence as the start.
+  cron.schedule('*/1 * * * *', () => {
+    endScheduledLessons().catch(err => console.error('[scheduler] end-scheduled-lessons error:', err.message));
   });
 
   // Blocklist sync — configurable (default: 2am daily)
@@ -763,5 +800,5 @@ function startScheduler() {
 
 module.exports = {
   startScheduler, drainDnsLog, expirePenaltyBox, syncGoogleWorkspace, insertDnsLogBatch,
-  drainTabEvents, insertBrowserHistoryBatch,
+  drainTabEvents, insertBrowserHistoryBatch, autoStartLessons, endScheduledLessons,
 };

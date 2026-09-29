@@ -70,6 +70,7 @@ async function resolvePolicy(studentId, location = 'any') {
   let resolvedAllowDomains = [];
   let resolvedDenyDomains  = [];
   let lockdown = null;
+  let penaltyAllowDomains = null;
 
   // 0. Active lockdown test session — outranks even a lesson, since a
   // teacher starting a test lock means business: it should pin the student
@@ -90,11 +91,32 @@ async function resolvePolicy(studentId, location = 'any') {
     };
   }
 
-  // 1. Active lesson session (teacher override — highest priority short of
-  // an active lockdown). A 'monitor' session deliberately does NOT flip the
-  // mode: students keep their normal policy, the session only exists for
-  // visibility. Its id is still carried on the result (below) so DNS and
-  // browser history get tagged with the class session either way.
+  // 1. Active penalty box — outranks a class session: a restricted student
+  // stays restricted even while one of their classes is in Focus mode
+  // (whose allowed sites would otherwise open things back up). Only a
+  // lockdown test outranks it. Its own allowed sites (approved "Allow site…"
+  // requests) are the one exception to the block.
+  if (!mode) {
+    const { rows: pbRows } = await query(
+      `SELECT id, allowed_domains FROM penalty_box
+       WHERE student_id = $1
+         AND released_at IS NULL
+         AND (expires_at IS NULL OR expires_at > NOW())
+       LIMIT 1`,
+      [studentId]
+    );
+    if (pbRows[0]) {
+      mode = 'penalty_box';
+      penaltyAllowDomains  = pbRows[0].allowed_domains || [];
+      resolvedAllowDomains = [...penaltyAllowDomains];
+    }
+  }
+
+  // 2. Active lesson session (teacher override). A 'monitor' session
+  // deliberately does NOT flip the mode: students keep their normal policy,
+  // the session only exists for visibility. Its id is still carried on the
+  // result (below) so DNS and browser history get tagged with the class
+  // session either way.
   const { rows: lessonRows } = await query(
     `SELECT ls.id, ls.allowed_domains, ls.teacher_id, ls.restriction_mode
      FROM lesson_sessions ls
@@ -112,19 +134,6 @@ async function resolvePolicy(studentId, location = 'any') {
   if (!mode && lessonRows[0] && lessonRows[0].restriction_mode !== 'monitor') {
     mode = 'lesson';
     resolvedAllowDomains = lessonRows[0].allowed_domains || [];
-  }
-
-  // 2. Active penalty box
-  if (!mode) {
-    const { rows: pbRows } = await query(
-      `SELECT id FROM penalty_box
-       WHERE student_id = $1
-         AND released_at IS NULL
-         AND (expires_at IS NULL OR expires_at > NOW())
-       LIMIT 1`,
-      [studentId]
-    );
-    if (pbRows[0]) mode = 'penalty_box';
   }
 
   // 3. Student-level policy assignment — a location-specific assignment
@@ -198,6 +207,9 @@ async function resolvePolicy(studentId, location = 'any') {
   const result = await buildResolvedPolicy(policy, mode, resolvedAllowDomains, resolvedDenyDomains);
   if (lessonSessionId) {
     result.lessonSessionId = lessonSessionId;
+  }
+  if (penaltyAllowDomains) {
+    result.penaltyAllowDomains = penaltyAllowDomains;
   }
   if (lockdown) {
     result.lockdownSessionId = lockdown.sessionId;
@@ -384,8 +396,8 @@ async function explainPolicyChain(studentId, location = 'any') {
   }
 
   const lockdownActive = !!lockdownRows[0];
-  const lessonActive = !lockdownActive && !!activeLessonSessionId;
-  const penaltyActive = !lockdownActive && !lessonActive && !!pbRows[0];
+  const penaltyActive = !lockdownActive && !!pbRows[0];
+  const lessonActive = !lockdownActive && !penaltyActive && !!activeLessonSessionId;
   const studentTier = studentRows[0] || null;
   const groupTier   = !studentTier ? (groupRows[0] || null) : null;
   const ouTier       = !studentTier && !groupTier ? ouRow : null;
@@ -393,8 +405,8 @@ async function explainPolicyChain(studentId, location = 'any') {
 
   const resolvedTier =
     lockdownActive ? 'lockdown' :
-    lessonActive ? 'lesson' :
     penaltyActive ? 'penalty_box' :
+    lessonActive ? 'lesson' :
     studentTier ? 'student' :
     groupTier ? 'group' :
     ouTier ? 'ou' :
@@ -404,8 +416,8 @@ async function explainPolicyChain(studentId, location = 'any') {
     resolved_tier: resolvedTier,
     tiers: [
       { tier: 'lockdown',    label: 'Active lockdown test',   active: lockdownActive, target_url: lockdownRows[0]?.target_url || null },
-      { tier: 'lesson',      label: 'Active lesson session',  active: lessonActive },
       { tier: 'penalty_box', label: 'Active penalty box',     active: penaltyActive },
+      { tier: 'lesson',      label: 'Active lesson session',  active: lessonActive },
       { tier: 'student',     label: 'Student-assigned policy', policy: studentTier },
       { tier: 'group',       label: groupRows[0]?.group_name ? `Group policy (${groupRows[0].group_name})` : 'Group policy', policy: groupRows[0] || null },
       { tier: 'ou',          label: ou ? `OU policy (${ou})` : 'OU policy', policy: ouRow },

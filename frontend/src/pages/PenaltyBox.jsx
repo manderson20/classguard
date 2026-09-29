@@ -21,7 +21,7 @@ function AllowSiteModal({ entry, onClose }) {
   const submit = useMutation({
     mutationFn: () => api.post(`/penalty-box/${entry.student_id}/allow-request`, { domain: domain.trim(), reason: reason.trim() || undefined }),
     onSuccess: () => setSubmitted(true),
-    onError: (err) => setError(err?.response?.data?.error || 'Request failed'),
+    onError: (err) => setError(err?.message || 'Request failed'),
   });
 
   if (submitted) {
@@ -31,7 +31,8 @@ function AllowSiteModal({ entry, onClose }) {
           <div className="text-4xl mb-3">✅</div>
           <h2 className="text-lg font-semibold text-slate-900 mb-1">Request submitted</h2>
           <p className="text-sm text-slate-500 mb-5">
-            An admin has been notified and will review the request for <strong>{domain}</strong>.
+            The request for <strong>{domain}</strong> is waiting in Unblock Requests. If an admin approves it,
+            the student can reach that site until they're released.
           </p>
           <button onClick={onClose} className="btn btn-primary w-full">Done</button>
         </div>
@@ -170,7 +171,8 @@ export default function PenaltyBox() {
 
       <p className="text-xs text-slate-400 mt-4">
         Placing a student in the penalty box blocks all internet access on their device.
-        Release to restore their normal policy. Use "Allow site…" to request a specific site be accessible while restricted.
+        Release to restore their normal policy. Use "Allow site…" to ask an admin to open one site for the student
+        while they're restricted.
       </p>
 
       {allowModal && (

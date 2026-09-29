@@ -3,7 +3,9 @@ const { query, withTransaction } = require('../db');
 const { authenticate } = require('../middleware/auth');
 const { requireMinRole } = require('../middleware/roles');
 const { requirePermissionIfAdmin } = require('../middleware/permissions');
-const { invalidatePoliciesForClass } = require('../services/policyResolver');
+const { invalidatePolicy, invalidatePoliciesForClass } = require('../services/policyResolver');
+const { screenLockKey } = require('../services/screenLock');
+const redis = require('../redis');
 const events = require('../events');
 
 const router = Router();
@@ -44,19 +46,36 @@ router.get('/:id', async (req, res) => {
     return res.status(403).json({ error: 'Forbidden' });
   }
 
-  const { rows: members } = await query(
-    `SELECT u.id, u.full_name, u.given_name, u.email, u.google_ou, u.photo_url
+  const { rows: activeLesson } = await query(
+    `SELECT * FROM lesson_sessions WHERE class_id = $1 AND is_active = true LIMIT 1`,
+    [req.params.id]
+  );
+  const focusActive = activeLesson[0] && activeLesson[0].restriction_mode !== 'monitor';
+
+  // policy_mode mirrors resolvePolicy()'s precedence for what the class
+  // pages show: a Penalty Box restriction outranks this class's Focus
+  // session. (Lockdown tests are shown separately on the cards.)
+  const { rows: memberRows } = await query(
+    `SELECT u.id, u.full_name, u.given_name, u.email, u.google_ou, u.photo_url,
+            EXISTS (
+              SELECT 1 FROM penalty_box pb
+              WHERE pb.student_id = u.id AND pb.released_at IS NULL
+                AND (pb.expires_at IS NULL OR pb.expires_at > NOW())
+            ) AS restricted
      FROM class_members cm
      JOIN users u ON u.id = cm.student_id
      WHERE cm.class_id = $1
      ORDER BY u.full_name`,
     [req.params.id]
   );
-
-  const { rows: activeLesson } = await query(
-    `SELECT * FROM lesson_sessions WHERE class_id = $1 AND is_active = true LIMIT 1`,
-    [req.params.id]
-  );
+  const locked = memberRows.length
+    ? await redis.mget(...memberRows.map(m => screenLockKey(m.id))).catch(() => [])
+    : [];
+  const members = memberRows.map(({ restricted, ...m }, i) => ({
+    ...m,
+    policy_mode:   restricted ? 'penalty_box' : focusActive ? 'lesson' : 'standard',
+    screen_locked: !!locked[i],
+  }));
 
   res.json({ ...rows[0], members, active_lesson: activeLesson[0] || null });
 });
@@ -128,7 +147,11 @@ router.patch('/:id/auto-start', async (req, res) => {
 });
 
 // POST /api/v1/classes/:id/members  body: { user_id }
-router.post('/:id/members', async (req, res) => {
+// Admin-only, like creating a class: class membership is what scopes a
+// teacher's monitoring and control of a student, so a teacher must not be
+// able to add arbitrary students to their own class (or edit someone
+// else's). Rosters normally come from Roster Sync.
+router.post('/:id/members', requireMinRole('admin'), requirePermissionIfAdmin('classes'), async (req, res) => {
   const { user_id } = req.body;
   if (!user_id) return res.status(400).json({ error: 'user_id required' });
 
@@ -136,15 +159,19 @@ router.post('/:id/members', async (req, res) => {
     'INSERT INTO class_members (class_id, student_id) VALUES ($1,$2) ON CONFLICT DO NOTHING',
     [req.params.id, user_id]
   );
+  await invalidatePolicy(user_id);
+  events.emit('policy:updated', { studentId: user_id });
   res.status(201).json({ class_id: req.params.id, user_id });
 });
 
 // DELETE /api/v1/classes/:id/members/:userId
-router.delete('/:id/members/:userId', async (req, res) => {
+router.delete('/:id/members/:userId', requireMinRole('admin'), requirePermissionIfAdmin('classes'), async (req, res) => {
   await query(
     'DELETE FROM class_members WHERE class_id = $1 AND student_id = $2',
     [req.params.id, req.params.userId]
   );
+  await invalidatePolicy(req.params.userId);
+  events.emit('policy:updated', { studentId: req.params.userId });
   res.json({ ok: true });
 });
 

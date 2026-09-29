@@ -4,6 +4,8 @@ const { pool } = require('../db');
 const { authenticate }   = require('../middleware/auth');
 const { requirePermission } = require('../middleware/permissions');
 const zammad   = require('../services/zammad');
+const { invalidatePolicy } = require('../services/policyResolver');
+const events   = require('../events');
 
 // Authenticated admin middleware
 const adminAuth = [authenticate, requirePermission('unblock_requests')];
@@ -161,7 +163,27 @@ router.patch('/:id', ...adminAuth, async (req, res) => {
       [status, req.user.userId, review_note || null, req.params.id]
     );
     if (!request) return res.status(404).json({ error: 'Request not found' });
-    res.json(request);
+
+    // A Penalty Box "Allow site…" request: approving it lets the student
+    // reach that site for the rest of the restriction it was made for (not
+    // a later one). Ordinary requests are only recorded, as before.
+    let granted = false;
+    if (status === 'approved' && request.penalty_box_id) {
+      const { rows: [pb] } = await pool.query(
+        `UPDATE penalty_box
+            SET allowed_domains = allowed_domains || to_jsonb($2::text)
+          WHERE id = $1 AND released_at IS NULL
+            AND NOT allowed_domains ? $2
+          RETURNING student_id`,
+        [request.penalty_box_id, request.domain]
+      );
+      if (pb) {
+        granted = true;
+        await invalidatePolicy(pb.student_id);
+        events.emit('policy:updated', { studentId: pb.student_id });
+      }
+    }
+    res.json({ ...request, granted });
   } catch (err) {
     console.error('[unblock-requests] PATCH error:', err);
     res.status(500).json({ error: 'Failed to update request' });
