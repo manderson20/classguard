@@ -519,6 +519,13 @@ Click **Next** to section 2, then **Submit**. **Record** the URL and method logg
    - Whether Workspace sign-in goes through a third-party IdP.
 5. **Remote quit.** Is the teacher fallback in §4 (no remote quit while a student is on Google's pages) acceptable, or should SEB Server be investigated before Phase 2?
 
+### Later: open-notes tests (not in Phases 1–4)
+
+Some tests allow notes, so they aren't a lockdown in the traditional sense, but the teacher still wants a simple workflow. Current thinking (2026-09-29):
+- **Default: regular monitoring.** Run the test as a normal lesson session with the Form plus the allowed resources (e.g. Google Drive/Docs, Classroom) on the allowlist, and use live screens and tab history to watch. This needs no new code.
+- **Possible middle tier:** "locked, with allowed resources". Same devices and flow as a lockdown, but the teacher adds allowed URLs. SEB's URL filter and the Chromebook soft lock's allow rules can both carry extra entries. Worth considering only if teachers ask for it.
+- UI idea: a single "Start test" dialog with **Locked** / **Open notes (monitored)** instead of two separate features.
+
 ## 7. What's in this commit / left to do
 
 **In this commit:**
