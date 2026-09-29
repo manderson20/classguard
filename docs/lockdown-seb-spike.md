@@ -542,7 +542,16 @@ Question raised 2026-09-29: can the lockdown also video-proctor a student testin
 - **What remains is screen proctoring:** periodic screenshots plus metadata (active app, URL, window title), uploaded to the *SEB Server* screen-proctoring service. It needs a self-hosted SEB Server, and on macOS it makes SEB fall back from AAC to the classic kiosk (§1.6).
 - **ClassGuard already covers screen monitoring for Chromebooks at home:** with the soft lock, the extension stays online, so Live View works wherever the device has internet. On Windows the extension stays online too, but SEB hides Chrome, so Live View can't show the exam. On Macs the extension is offline under AAC.
 - **Webcam capture from the extension is technically possible** (camera access through an offscreen document, auto-granted by policy), but it's a privacy decision, not a technical one. Recordings of students are education records under FERPA. A federal court held a webcam room scan of a public-university student's home to be an unreasonable Fourth Amendment search (*Ogletree v. Cleveland State University*, N.D. Ohio 2022). This conflicts with this feature's own principle (state only, no screen recording).
-- **Current position:** no video proctoring. If needed, the options are teacher-run video calls (e.g. Meet) alongside the soft lock, or a dedicated proctoring product with its own legal review.
+- **Decision (2026-09-29):** no video proctoring in ClassGuard. For students testing remotely, the flow is **a teacher-run Google Meet alongside the soft lock**.
+
+**Remote students on Macs and Windows laptops.** SEB and Meet can't run together:
+- **Mac:** under AAC only SEB has network access and other apps are blocked; AAC doesn't allow background video conferencing (§1.6 known limits). Meet in Chrome would drop the moment SEB starts.
+- **Windows:** SEB hides Chrome on its own desktop, prohibits Zoom and Teams by default, and allows only one display (§8.1). A Meet call in the hidden Chrome window isn't something to rely on.
+
+So a remote student gets the **Chrome soft lock on every platform**, not SEB:
+- The session allows a second tab for `meet.google.com` next to the Form. This is the "locked, with allowed resources" tier from the open-notes section, with Meet as the allowed resource.
+- Forced fullscreen and focus snap-back (§1.10) work in Chrome on Mac and Windows too. The lock is softer than on a Chromebook, because Cmd+Tab / Alt+Tab to another app can't be prevented, only detected and reported. The teacher watching on Meet, plus Live View, which works because the extension stays online, covers the gap.
+- **Choosing the mode.** ClassGuard already tells on-campus from off-campus devices by source IP (`resolvePolicy(studentId, 'on_campus' | 'off_campus')`). An off-campus Mac or Windows device could therefore default to "remote: soft lock + Meet", and an on-campus one to SEB, with a per-student teacher override in the start dialog.
 
 ## 7. What's in this commit / left to do
 
