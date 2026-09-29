@@ -210,6 +210,12 @@ SEB doesn't exist for ChromeOS, so Chromebooks need a different lock. This secti
 - Today it allows only the Form's URLs (DNR), collapses the student to one tab, closes new tabs and windows, and logs `new_tab`, `tab_switch`, `new_window` and `focus_loss`.
 - It **can't** stop the student from leaving Chrome for ChromeOS apps (Files, Android apps, the launcher, the calculator). It can only detect the focus loss and report it.
 - It **doesn't use fullscreen today**. The public `fullscreen` window state is available to any extension (CHROMIUM-2 `windows.json#L57-58`), but the student can exit it. The extension can watch `chrome.windows.onBoundsChanged`, re-apply fullscreen, and log a `fullscreen_exit` event. Whether re-applying works without a user gesture on ChromeOS needs checking (test C2).
+- **Respondus LockDown Browser for Chromebook uses the same approach.** Its current Chrome extension (Respondus OEM build 0.4.91 as distributed by Otus, `eckdmemhmpcbbbpnlkokljecnkloamnl`, and MasteryConnect, `nkkighcdodpjcdenompholalclpaobff`; downloaded from the Chrome Web Store 2026-09-29) has **no** `lockWindowFullscreenPrivate` permission. Its background script:
+  - puts the exam window in the public `fullscreen` state, re-applies it from `windows.onBoundsChanged` plus a polling timer, and refocuses the exam window from `windows.onFocusChanged` plus a 1 s check, showing a "focus lost" page;
+  - closes extra tabs, checks for other extensions via `chrome.management`, detects VMs, blanks the wallpaper, and handles tablet-mode rotation via `chrome.system.display`;
+  - only engages on `getPlatformInfo().os === 'cros'`.
+
+  So the market-leading Chromebook lockdown is also a soft lock built on public APIs, and re-applying fullscreen without a user gesture evidently works in production (test C2 still confirms it on our fleet). Respondus's 2019 admin guide describes an older **kiosk app** launched from the login screen; Respondus-based guides now say to switch to the extension.
 - Admin console policies (e.g. no Android apps, no screenshots) would tighten this further, but they apply to the student OU all day, not just during a test. They are the district's call, outside ClassGuard.
 
 **Agreed Chromebook plan (2026-09-29)**
