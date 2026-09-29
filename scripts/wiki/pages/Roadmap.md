@@ -23,6 +23,7 @@ See [[Monitoring & Wallboard]].
 ## 🛡️ Extension & Safety
 
 - Extension rollout testing against a scoped test OU before wider deployment
+- Lockdown Tests beyond Chromebooks: Safe Exam Browser for Mac and Windows laptops, with Chromebooks keeping the extension soft lock (research and device testing phase)
 - Ongoing tuning of keyword and category filtering
 
 ## ⚙️ Platform & HA
