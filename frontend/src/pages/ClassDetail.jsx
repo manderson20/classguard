@@ -310,6 +310,7 @@ export default function ClassDetail() {
         <Link to="/classes" className="text-slate-400 hover:text-slate-600 text-sm">← Classes</Link>
         <span className="text-slate-300">/</span>
         <h1 className="text-2xl font-bold text-slate-900">{cls.name}</h1>
+        {cls.school_name && <span className="text-sm text-slate-500">· {cls.school_name}</span>}
       </div>
 
       {/* Bell-schedule auto-start toggle — only meaningful if this class has

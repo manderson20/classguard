@@ -371,6 +371,12 @@ async function syncAll(actorId = null) {
 
   await _auditLog(actorId, 'google_sync_complete', { userCount, groupCount, ouCount });
 
+  // Users' OUs may have changed: refresh school memberships from the
+  // schools' OU prefixes. Required lazily — services/schools.js requires
+  // this module for the OU role rules.
+  await require('./schools').recompute()
+    .catch(err => console.error('[google] schools recompute after sync failed:', err.message));
+
   return { userCount, groupCount, ouCount };
 }
 

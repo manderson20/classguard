@@ -12,6 +12,17 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.13] - 2026-09-29
+
+### Added
+
+- **Schools** (groundwork for In-School Suspension roles and SCORM sharing): ClassGuard now knows the district's schools and which school(s) each user and class belongs to.
+  - **Roster Sync → Schools** lists the schools with their student, staff and class counts, and suggests schools from the Google OU tree: the second level under the OU role-rule prefixes, e.g. `/Students/High School` and `/Employees/High School`. It groups near-identical names ("Early Childhood" / "Early Childhood Center") and flags which ones look like schools. A school can list several OU prefixes; users in those OUs (or below them) belong to it. Schools can be archived and restored.
+  - **OneRoster** syncs now import schools (orgs of type school), each user's schools and each class's school. A school already created from the OU suggestions with the same name is adopted rather than duplicated.
+  - **Users** have a School column and filter. A user's page shows their schools and where each comes from (Google OU, OneRoster, added by an admin); admins can add schools by hand, e.g. for staff who serve several buildings.
+  - **Classes** get a school from OneRoster, from an admin, or worked out automatically: the teacher's school if they have exactly one, otherwise the school most of the class's students belong to. It's shown on the class page.
+  - Memberships are recomputed when schools change, after Google and OneRoster syncs, and nightly.
+
 ## [0.17.12] - 2026-09-29
 
 ### Security

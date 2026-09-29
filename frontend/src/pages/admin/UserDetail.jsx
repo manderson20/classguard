@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router';
-import { useQuery, useMutation } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import api from '../../lib/api';
 import Avatar from '../../components/Avatar';
 import { useAuth } from '../../contexts/AuthContext';
@@ -36,6 +36,8 @@ export default function UserDetail() {
   });
   const canImpersonate = isSuperAdmin || myPermissions?.unrestricted ||
     myPermissions?.permissions?.includes('impersonate_users');
+  const canEditSchools = isSuperAdmin || myPermissions?.unrestricted ||
+    myPermissions?.permissions?.includes('users');
 
   const [impersonateError, setImpersonateError] = useState(null);
   const impersonate = useMutation({
@@ -159,6 +161,7 @@ export default function UserDetail() {
           <div className="border-t border-slate-100 pt-3 space-y-2 text-sm">
             <Row label="Role"  value={<span className="badge-blue capitalize">{user.role}</span>} />
             <Row label="OU"    value={<span className="font-mono text-xs">{user.google_ou || '—'}</span>} />
+            <Row label="School" value={<UserSchools user={user} canEdit={canEditSchools} />} />
             <Row label="Joined" value={new Date(user.created_at).toLocaleDateString()} />
           </div>
 
@@ -553,6 +556,75 @@ export default function UserDetail() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const SOURCE_LABEL = { ou: 'Google OU', oneroster: 'OneRoster', manual: 'added by an admin' };
+
+// The user's schools, with where each membership comes from. Admins can add
+// or remove schools by hand (e.g. staff who serve several buildings); OU and
+// OneRoster memberships follow the Roster Sync page's school settings.
+function UserSchools({ user, canEdit }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [picked, setPicked]   = useState([]);
+  const [error, setError]     = useState(null);
+  const schools = user.schools || [];
+
+  const { data: allSchools = [] } = useQuery({
+    queryKey: ['schools'],
+    queryFn:  () => api.get('/schools'),
+    enabled:  editing,
+  });
+
+  const save = useMutation({
+    mutationFn: () => api.put(`/users/${user.id}/schools`, { school_ids: picked }),
+    onSuccess:  () => { setEditing(false); qc.invalidateQueries({ queryKey: ['user', user.id] }); },
+    onError:    (err) => setError(err.message),
+  });
+
+  const startEdit = () => {
+    setPicked(schools.filter(s => s.sources.includes('manual')).map(s => s.id));
+    setError(null);
+    setEditing(true);
+  };
+
+  if (editing) {
+    const automatic = new Set(schools.filter(s => s.sources.some(src => src !== 'manual')).map(s => s.id));
+    return (
+      <div className="space-y-1 text-xs">
+        {allSchools.map(s => (
+          <label key={s.id} className="flex items-center gap-1.5">
+            <input
+              type="checkbox"
+              checked={automatic.has(s.id) || picked.includes(s.id)}
+              disabled={automatic.has(s.id)}
+              onChange={e => setPicked(prev => e.target.checked ? [...prev, s.id] : prev.filter(id => id !== s.id))}
+            />
+            <span>{s.name}</span>
+            {automatic.has(s.id) && <span className="text-slate-400">(automatic)</span>}
+          </label>
+        ))}
+        {allSchools.length === 0 && <div className="text-slate-400">No schools set up yet (Roster Sync → Schools).</div>}
+        {error && <div className="text-red-600">{error}</div>}
+        <div className="flex gap-2 pt-1">
+          <button className="btn-primary text-xs px-2 py-1" onClick={() => save.mutate()} disabled={save.isPending}>Save</button>
+          <button className="btn-secondary text-xs px-2 py-1" onClick={() => setEditing(false)}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="text-right">
+      {schools.length === 0 ? <span className="text-slate-400">—</span> : schools.map(s => (
+        <div key={s.id} title={s.sources.map(src => SOURCE_LABEL[src] || src).join(', ')}>
+          {s.name}{' '}
+          <span className="text-[10px] text-slate-400">{s.sources.map(src => SOURCE_LABEL[src] || src).join(', ')}</span>
+        </div>
+      ))}
+      {canEdit && <button className="text-xs text-primary-600 hover:underline" onClick={startEdit}>Edit</button>}
     </div>
   );
 }

@@ -7,6 +7,7 @@ const { requirePermission } = require('../middleware/permissions');
 const { resolvePolicy } = require('../services/policyResolver');
 const { getEffectivePermissions, invalidatePermissions, UNRESTRICTED } = require('../services/permissions');
 const { hashPassword } = require('../services/passwordHash');
+const { schoolsForUsers, setManualSchools } = require('../services/schools');
 
 const router = Router();
 
@@ -63,7 +64,7 @@ router.get('/me/permissions', authenticate, requireMinRole('admin'), async (req,
 // Admins see all users; teachers see only students in their classes
 router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
   const { role, userId } = req.user;
-  const { search, google_ou, role: filterRole } = req.query;
+  const { search, google_ou, role: filterRole, school_id } = req.query;
   // Capped at 500/page -- a district can have 40-50k users, and an
   // unbounded SELECT * was the previous behavior (fine at hundreds of
   // rows, not at tens of thousands: multi-MB JSON payload, slow render on
@@ -99,6 +100,10 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
     conditions.push(`u.role = $${values.length + 1}`);
     values.push(filterRole);
   }
+  if (school_id) {
+    conditions.push(`u.id IN (SELECT user_id FROM user_schools WHERE school_id = $${values.length + 1})`);
+    values.push(school_id);
+  }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
   const { rows } = await query(
@@ -114,7 +119,8 @@ router.get('/', authenticate, requireMinRole('teacher'), async (req, res) => {
   const { rows: [{ count }] } = await query(
     `SELECT COUNT(*) FROM users u ${where}`, values
   );
-  res.json({ users: rows, total: parseInt(count, 10) });
+  const schoolMap = await schoolsForUsers(rows.map(r => r.id));
+  res.json({ users: rows.map(r => ({ ...r, schools: schoolMap[r.id] || [] })), total: parseInt(count, 10) });
 });
 
 // ---------------------------------------------------------------------------
@@ -190,7 +196,24 @@ router.get('/:id', authenticate, requirePermission('users'), async (req, res) =>
     [req.params.id]
   );
   if (!rows[0]) return res.status(404).json({ error: 'User not found' });
-  res.json(rows[0]);
+  const schoolMap = await schoolsForUsers([rows[0].id]);
+  res.json({ ...rows[0], schools: schoolMap[rows[0].id] || [] });
+});
+
+// PUT /api/v1/users/:id/schools  body: { school_ids: [] }
+// Sets the user's MANUAL school memberships (e.g. staff who serve several
+// buildings). Memberships from Google OU rules or OneRoster are separate
+// and unaffected; they're managed on the Roster Sync page.
+router.put('/:id/schools', authenticate, requirePermission('users'), async (req, res) => {
+  const ids = req.body.school_ids;
+  if (!Array.isArray(ids) || ids.some(i => typeof i !== 'string')) {
+    return res.status(400).json({ error: 'school_ids must be an array of school ids' });
+  }
+  const { rows } = await query('SELECT id FROM users WHERE id = $1', [req.params.id]);
+  if (!rows[0]) return res.status(404).json({ error: 'User not found' });
+  await setManualSchools(req.params.id, ids);
+  const schoolMap = await schoolsForUsers([req.params.id]);
+  res.json({ schools: schoolMap[req.params.id] || [] });
 });
 
 // PUT /api/v1/users/:id/role  (superadmin only)

@@ -6,7 +6,8 @@
  * Infinite Campus: Settings → System Administration → Data Integrations → Campus API
  *   → OneRoster tab → create an API key pair (client_id + client_secret).
  *
- * Sync order: orgs → users → courses → classes → enrollments
+ * Sync order: orgs (schools) → users → classes → enrollments, then school
+ * memberships (services/schools.js)
  *
  * Matching strategy (avoids duplicating users):
  *   1. Match by oneroster_sourced_id (same source, same record)
@@ -156,6 +157,41 @@ async function syncOneRoster(sourceId, onProgress = () => {}) {
 
   onProgress(`Starting OneRoster sync from ${source.name}…`);
 
+  // 0. Schools: OneRoster orgs of type 'school'. Name updates flow through;
+  // OU prefixes an admin added on the Roster Sync page are left alone.
+  onProgress('Fetching schools (orgs)…');
+  const orOrgs = await orGet(source, '/orgs');
+  const schoolMap = new Map(); // org sourcedId → schools.id
+  for (const org of orOrgs) {
+    if ((org.type || '').toLowerCase() !== 'school' || !org.sourcedId) continue;
+    if (org.status && org.status !== 'active') continue;
+    const orgName = org.name || org.sourcedId;
+    // A school an admin already created (e.g. from the Google OU
+    // suggestions) with the same name is adopted rather than duplicated.
+    let { rows: [sr] } = await pool.query(
+      `UPDATE schools SET oneroster_sourced_id = $2, updated_at = NOW()
+       WHERE lower(name) = lower($1) AND is_active AND oneroster_sourced_id IS NULL
+       RETURNING id`,
+      [orgName, org.sourcedId]
+    );
+    if (!sr) {
+      ({ rows: [sr] } = await pool.query(
+        `INSERT INTO schools (name, oneroster_sourced_id)
+         VALUES ($1, $2)
+         ON CONFLICT (oneroster_sourced_id) DO UPDATE SET
+           name = EXCLUDED.name, is_active = true, updated_at = NOW()
+         RETURNING id`,
+        [orgName, org.sourcedId]
+      ).catch((err) => {
+        // Another active school has this name but a different OneRoster id.
+        console.error(`[oneroster] school "${orgName}" skipped:`, err.message);
+        return { rows: [] };
+      }));
+    }
+    if (sr) schoolMap.set(org.sourcedId, sr.id);
+  }
+  onProgress(`Found ${schoolMap.size} schools`);
+
   // 1. Fetch all users (staff + students)
   onProgress('Fetching users…');
   const orUsers = await orGet(source, '/users', {
@@ -170,6 +206,22 @@ async function syncOneRoster(sourceId, onProgress = () => {}) {
     if (uid) { userMap.set(u.sourcedId, uid); usersUpserted++; }
   }
   onProgress(`Upserted ${usersUpserted} users`);
+
+  // Each user's schools from their orgs — replaces this sync's previous
+  // 'oneroster' memberships for these users; 'ou' and 'manual' ones stay.
+  for (const u of orUsers) {
+    const uid = userMap.get(u.sourcedId);
+    if (!uid) continue;
+    const schoolIds = [...new Set((u.orgs || []).map(o => schoolMap.get(o.sourcedId)).filter(Boolean))];
+    await pool.query(`DELETE FROM user_schools WHERE user_id = $1 AND source = 'oneroster'`, [uid]);
+    if (schoolIds.length) {
+      await pool.query(
+        `INSERT INTO user_schools (user_id, school_id, source)
+         SELECT $1, unnest($2::uuid[]), 'oneroster' ON CONFLICT DO NOTHING`,
+        [uid, schoolIds]
+      );
+    }
+  }
 
   // 2. Fetch all classes (sections in IC terminology)
   onProgress('Fetching classes/sections…');
@@ -201,6 +253,15 @@ async function syncOneRoster(sourceId, onProgress = () => {}) {
     );
     const classId = cr[0]?.id;
     if (!classId) continue;
+    // The class's school, unless an admin pinned a different one.
+    const classSchoolId = schoolMap.get(oc.school?.sourcedId);
+    if (classSchoolId) {
+      await pool.query(
+        `UPDATE classes SET school_id = $1, school_source = 'oneroster'
+         WHERE id = $2 AND school_source IS DISTINCT FROM 'manual'`,
+        [classSchoolId, classId]
+      );
+    }
     classMap.set(oc.sourcedId, classId);
     classesSynced++;
   }
@@ -257,7 +318,12 @@ async function syncOneRoster(sourceId, onProgress = () => {}) {
     );
   }
 
-  // 5. Update sync status
+  // 5. Rebuild OU-based memberships and derive schools for classes OneRoster
+  // didn't place.
+  await require('./schools').recompute()
+    .catch(err => console.error('[oneroster] schools recompute failed:', err.message));
+
+  // 6. Update sync status
   await pool.query(
     'UPDATE oneroster_sources SET last_sync = NOW(), last_error = NULL WHERE id = $1',
     [sourceId]
