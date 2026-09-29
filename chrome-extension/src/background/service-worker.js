@@ -5,7 +5,7 @@
 import { getGoogleToken, getStoredJWT, getStoredUser, storeAuth, clearAuth } from '../lib/auth.js';
 import { apiFetch, getServerUrl }  from '../lib/api.js';
 import { enforcePolicy }           from '../lib/rules.js';
-import { applyLockdownState }      from '../lib/lockdownGuard.js';
+import { applyLockdownState, dropExpiredLockdown, registerLockdownListeners } from '../lib/lockdownGuard.js';
 import { classifyPublicIpLiteral } from '../lib/directIp.js';
 import { connectSocket, isConnected } from '../lib/socket.js';
 
@@ -30,6 +30,20 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
 
 chrome.runtime.onStartup.addListener(init);
 
+// Event listeners are registered here, synchronously at the top level, not
+// in init(): init() only runs on install and browser startup, but MV3 stops
+// an idle service worker (e.g. while the lid is closed) and restarts it for
+// the next event without running either. Listeners added only in init() were
+// missing after such a restart, so the 1-minute policy-sync alarm (which also
+// reconnects the socket) and tab reporting could stay dead until the next
+// reboot. The alarms themselves persist across restarts; only the listeners
+// need re-registering.
+chrome.alarms.onAlarm.addListener(onAlarm);
+chrome.tabs.onUpdated.addListener(onTabUpdated);
+chrome.tabs.onRemoved.addListener(onTabRemoved);
+chrome.webNavigation.onBeforeNavigate.addListener(onBeforeNavigate);
+registerLockdownListeners();
+
 // Message bridge for popup and content scripts
 chrome.runtime.onMessage.addListener((msg, sender, respond) => {
   handleMessage(msg, sender).then(respond).catch((err) => respond({ error: err.message }));
@@ -49,11 +63,6 @@ async function init() {
   // granularity; 60s keeps it well above the 30s heartbeat interval so a
   // single missed beat can't flip the state spuriously.
   chrome.idle.setDetectionInterval(IDLE_THRESHOLD_SECONDS);
-
-  chrome.alarms.onAlarm.addListener(onAlarm);
-  chrome.tabs.onUpdated.addListener(onTabUpdated);
-  chrome.tabs.onRemoved.addListener(onTabRemoved);
-  chrome.webNavigation.onBeforeNavigate.addListener(onBeforeNavigate);
 
   const jwt = await getStoredJWT();
   if (jwt) {
@@ -156,7 +165,10 @@ async function syncPolicy(jwtOverride) {
     chrome.runtime.sendMessage({ type: 'CG_POLICY_UPDATED', policy }).catch(() => {});
   } catch (err) {
     console.error('[ClassGuard] Policy sync failed:', err.message);
-    const cached = await getCachedPolicy();
+    // Offline: the cached copy may hold a lockdown whose end time has
+    // passed while the device couldn't reach the server — don't keep
+    // enforcing it.
+    const cached = dropExpiredLockdown(await getCachedPolicy());
     if (cached) {
       await enforcePolicy(cached);
       await applyLockdownState(cached);

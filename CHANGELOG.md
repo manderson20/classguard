@@ -12,6 +12,16 @@ Version numbers follow `MAJOR.MINOR.PATCH`:
 
 ---
 
+## [0.17.11] - 2026-09-29
+
+### Fixed
+
+- **Chromebook Lockdown Test after sleep**: closing the lid (or any idle restart of the extension's service worker) no longer switches off the lock's tab, window and focus protections. They were only attached when a lockdown first started and were missing after a restart. The site blocking kept working throughout.
+- **Extension going quiet after sleep**: the extension's periodic policy sync, socket reconnect and tab reporting were set up only at browser startup, so after the service worker restarted they could stay off until the next reboot. They are now registered on every service-worker start.
+- **Offline students stuck in a finished Lockdown Test**: a device that can't reach the server now releases the lock itself once the session's end time passes, and falls back to its normal filtering until it reconnects. Previously it kept enforcing the saved lockdown until it came back online.
+
+Needs extension 0.0.23, which rolls out through the normal extension auto-update.
+
 ## [0.17.10] - 2026-09-28
 
 ### Fixed

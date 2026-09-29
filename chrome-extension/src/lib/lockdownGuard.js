@@ -17,13 +17,24 @@ import { getStoredJWT } from './auth.js';
 const STATE_KEY = 'cg_lockdown';
 const MIN_LOG_INTERVAL_MS = 3000;
 
-let listenersAttached = false;
 let suppressNextTabCreated = false;
 let lastLoggedAt = {};
 
+function isPastEnd(endsAt) {
+  return !!endsAt && new Date(endsAt).getTime() <= Date.now();
+}
+
+// A session whose end time has passed is treated as over even if the server
+// hasn't said so yet — the device may be offline (lid closed, no Wi-Fi) and
+// a finished student must never stay locked waiting for the network.
 async function getState() {
   const data = await chrome.storage.local.get(STATE_KEY);
-  return data[STATE_KEY] || null;
+  const state = data[STATE_KEY] || null;
+  if (state && isPastEnd(state.endsAt)) {
+    await setState(null);
+    return null;
+  }
+  return state;
 }
 
 async function setState(state) {
@@ -51,21 +62,40 @@ async function logEvent(eventType, detail) {
 }
 
 // ---------------------------------------------------------------------------
+// For a policy the server couldn't confirm (the offline cached copy): if its
+// lockdown session's end time has passed, fall back to the same policy in
+// standard mode. The resolved policy still carries the base policy's
+// allow/deny lists, so normal filtering applies until the next successful
+// sync brings the real post-lockdown policy.
+// ---------------------------------------------------------------------------
+export function dropExpiredLockdown(policy) {
+  if (policy?.mode !== 'lockdown' || !isPastEnd(policy.lockdownEndsAt)) return policy;
+  return {
+    ...policy,
+    mode:              'standard',
+    lockdownSessionId: null,
+    lockdownTargetUrl: null,
+    lockdownEndsAt:    null,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Called from syncPolicy() after every policy fetch — decides whether to
 // engage, re-target, or disengage based on the resolved policy's mode.
 // ---------------------------------------------------------------------------
 export async function applyLockdownState(policy) {
   const state = await getState();
-  const wantsLockdown = policy?.mode === 'lockdown' && !!policy.lockdownSessionId;
+  const wantsLockdown = policy?.mode === 'lockdown' && !!policy.lockdownSessionId
+    && !isPastEnd(policy.lockdownEndsAt);
 
   if (wantsLockdown && (!state || state.sessionId !== policy.lockdownSessionId)) {
-    await engageLockdown(policy.lockdownSessionId, policy.lockdownTargetUrl);
+    await engageLockdown(policy.lockdownSessionId, policy.lockdownTargetUrl, policy.lockdownEndsAt);
   } else if (!wantsLockdown && state) {
     await disengageLockdown();
   }
 }
 
-async function engageLockdown(sessionId, targetUrl) {
+async function engageLockdown(sessionId, targetUrl, endsAt) {
   let [lockTab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
 
   suppressNextTabCreated = !lockTab;
@@ -75,7 +105,7 @@ async function engageLockdown(sessionId, targetUrl) {
     lockTab = await chrome.tabs.create({ url: targetUrl });
   }
 
-  await setState({ sessionId, targetUrl, tabId: lockTab.id, windowId: lockTab.windowId });
+  await setState({ sessionId, targetUrl, endsAt: endsAt || null, tabId: lockTab.id, windowId: lockTab.windowId });
 
   const allTabs = await chrome.tabs.query({});
   for (const tab of allTabs) {
@@ -84,33 +114,27 @@ async function engageLockdown(sessionId, targetUrl) {
 
   await chrome.tabs.update(lockTab.id, { active: true }).catch(() => {});
   await chrome.windows.update(lockTab.windowId, { focused: true }).catch(() => {});
-
-  attachListeners();
 }
 
 async function disengageLockdown() {
-  detachListeners();
   await setState(null);
 }
 
-function attachListeners() {
-  if (listenersAttached) return;
-  listenersAttached = true;
+// ---------------------------------------------------------------------------
+// Must be called synchronously at the service worker's top level. MV3 stops
+// an idle service worker (e.g. while the lid is closed) and only delivers
+// the waking event to listeners registered during that first synchronous
+// run — listeners added later, e.g. only when a lockdown engages, are
+// silently missing after a restart. So these stay
+// registered permanently; each handler reads the stored lockdown state and
+// does nothing when there is none.
+// ---------------------------------------------------------------------------
+export function registerLockdownListeners() {
   chrome.tabs.onCreated.addListener(handleTabCreated);
   chrome.tabs.onActivated.addListener(handleTabActivated);
   chrome.tabs.onRemoved.addListener(handleLockTabRemoved);
   chrome.windows.onCreated.addListener(handleWindowCreated);
   chrome.windows.onFocusChanged.addListener(handleFocusChanged);
-}
-
-function detachListeners() {
-  if (!listenersAttached) return;
-  listenersAttached = false;
-  chrome.tabs.onCreated.removeListener(handleTabCreated);
-  chrome.tabs.onActivated.removeListener(handleTabActivated);
-  chrome.tabs.onRemoved.removeListener(handleLockTabRemoved);
-  chrome.windows.onCreated.removeListener(handleWindowCreated);
-  chrome.windows.onFocusChanged.removeListener(handleFocusChanged);
 }
 
 // ---------------------------------------------------------------------------
