@@ -216,6 +216,8 @@ It must be assigned to the student: to all students, or to specific students inc
 - **materials** (`courseWorkMaterials`);
 - **announcements** that carry materials or links.
 
+**No ISS student, no prompt.** A teacher is **never** prompted for a post unless at least one student who is **both** assigned that post **and** currently in ISS is in that course. If nobody in the course is in ISS, the scanner doesn't even read the course. A post assigned only to other students is ignored too. When the placement ends, any unanswered prompts for that student are withdrawn.
+
 **What the scanner reads**, and how it turns a post into a **draft assignment package**:
 
 | In the Classroom post | In the draft package |
