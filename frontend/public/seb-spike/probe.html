@@ -61,10 +61,15 @@
   })();
   var params = new URLSearchParams(location.search);
   document.getElementById('token').textContent = params.get('token') || '(none)';
-  var form = params.get('form');
-  if (form && /^https:\/\/docs\.google\.com\/forms\//.test(form)) {
+  // Only the Form's ID is taken from ?form=, and only if it is a plain
+  // docs.google.com Form URL; the link itself is rebuilt from constants, so
+  // the query string can't point it anywhere else (or at a javascript: URL).
+  var m = /^https:\/\/docs\.google\.com\/forms\/d\/(e\/)?([A-Za-z0-9_-]+)\//.exec(params.get('form') || '');
+  if (m) {
     var a = document.createElement('a');
-    a.className = 'btn'; a.href = form; a.textContent = 'Continue to the Form';
+    a.className = 'btn';
+    a.href = 'https://docs.google.com/forms/d/' + (m[1] ? 'e/' : '') + m[2] + '/viewform';
+    a.textContent = 'Continue to the Form';
     document.getElementById('next').appendChild(a);
   }
 </script>

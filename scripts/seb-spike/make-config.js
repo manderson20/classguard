@@ -248,8 +248,11 @@ function main() {
       startURLAppendQueryParameter: true,
     };
     // Test 5: wrapper layout — ClassGuard page with the Form in an iframe.
+    // Its Finish link always goes to <origin>/seb-quit (wrapper.html never
+    // takes a URL from the query string), so this variant's quitURL is that,
+    // whatever --quit-url says.
     variants['5-wrapper'] = {
-      ...baseConfig({ startURL: `${o}/seb-spike/wrapper.html?form=${q(form)}&quit=${q(quitURL)}`, ...common }),
+      ...baseConfig({ startURL: `${o}/seb-spike/wrapper.html?form=${q(form)}`, ...common, quitURL: `${o}/seb-quit` }),
       URLFilterEnable: false,
     };
   }
