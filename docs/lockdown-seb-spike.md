@@ -401,8 +401,8 @@ Use the ClassGuard extension on the test Mac, or any Chrome profile.
 - **4b. Redirect to the quit URL.** This depends on a Phase 1 endpoint, or run it with any HTTPS URL that 302s to the configured `quitURL`. Does a **302 to `quitURL`** quit SEB? This decides the finish-endpoint design.
 - **4c. Force-quit.** During a session, try Cmd+Opt+Esc and the Apple menu → Force Quit. Record whether either works.
 - **4d. Reboot.** Hard-reboot the Mac mid-session (hold the power button). After login, reopen the same config and record whether "Re-Opening Locked Exam!" appears and whether the quit password clears it. Also record the Mac's state right after reboot.
-- **4f. Lid close.** Close the lid mid-Form for a minute, then open it. Repeat after submitting but before clicking the finish link. Record whether SEB resumes where it was, whether the Google session survives, and whether the finish link still quits.
 - **4e. Reload.** Use Cmd+R on the confirmation page and on a half-filled Form. Record any re-submission or data loss. This decides `browserWindowAllowReload`.
+- **4f. Lid close.** Close the lid mid-Form for a minute, then open it. Repeat after submitting but before clicking the finish link. Record whether SEB resumes where it was, whether the Google session survives, and whether the finish link still quits.
 
 ### Test 5: wrapper vs. direct
 Open `5-wrapper.seb`.
