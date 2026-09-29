@@ -299,6 +299,25 @@ The recommendation is **gate + direct**, unless test 5 shows the wrapper works w
 
 **To investigate before Phase 2 (not yet verified).** SEB Server is SEB's own server protocol. It may offer a client ping and a remote quit that don't depend on the page. It would be much more work than the gate page.
 
+**Requirement: getting out must be reliable (2026-09-29).**
+
+With Respondus, students sometimes couldn't get out of lockdown after finishing, especially after closing the lid mid-test or after submitting. Every lock type must therefore follow these rules:
+- **No dependence on the network or the teacher.** Each lock has a local, offline way out.
+- **Finishing releases the student.** Submitting the Form and following the finish step ends the lock, with no teacher action.
+- **Sleep and restart are normal events.** Closing the lid, the battery dying or a reboot must leave the device either still correctly locked or cleanly released, never half-locked.
+
+How each platform meets this:
+
+| | Chromebook (soft lock) | Mac / Windows (SEB) |
+|---|---|---|
+| Finished | The extension watches the lock tab's navigation. When it sees the Form's post-submit confirmation, it releases locally at once and reports `submitted`; the server ends that student's session. Which URL marks the *final* submit, not a section change, is test C4. | The Form's confirmation message links to the finish endpoint → 302 to `quitURL` → SEB quits (tests 4a/4b). The link text must be impossible to miss. |
+| Teacher ends, or time runs out | Policy push, as today. **Plus a local expiry:** the extension stores `endsAt` and releases itself when it passes, even offline. Today it re-applies the cached lockdown policy when offline and ignores `endsAt`. | SEB can't be quit remotely while on Google's pages (§4). **When a session ends or expires, the dashboard shows its quit password prominently**, so the teacher can read it out. It is per-session, so revealing it after the session is harmless. |
+| Lid closed / sleep | On wake the service worker may have restarted. The lock must re-attach its tab, window and focus handlers from stored state, then re-check `endsAt` and the server. Today the handlers are attached only when a lock first engages, so after a service-worker restart they are likely missing (test C5). | SEB keeps running through sleep and resumes (test 4f). |
+| Crash or reboot | Stored state re-engages or releases on startup, as for sleep. | "Re-Opening Locked Exam!" needs the quit password (§1.7). Covered by the same password reveal, and the dashboard shows the password to the teacher during the session too. |
+| Stuck anyway | Teacher End, or IT ends the session on `/lockdown`. Local expiry is the backstop. | Quit password from the dashboard. IT keeps a runbook entry (Phase 5 deployment doc). |
+
+A student who finished but is still locked is the worst outcome. The dashboard must make these cases stand out rather than hide them as "in progress": submitted but still locked, session ended but the device hasn't confirmed release, and expired sessions.
+
 **Known gap: unmanaged devices (accepted for now, 2026-09-29).**
 - Respondus closed this gap through the LMS: the assessment platform itself refused to serve a lockdown test to anything but LockDown Browser. Google Forms can't do that. It serves the Form to any browser.
 - On school-owned devices ClassGuard covers it: the extension blocks the Form in regular Chrome during the session, and the gate page's Config Key check confirms real SEB with our config.
@@ -382,6 +401,7 @@ Use the ClassGuard extension on the test Mac, or any Chrome profile.
 - **4b. Redirect to the quit URL.** This depends on a Phase 1 endpoint, or run it with any HTTPS URL that 302s to the configured `quitURL`. Does a **302 to `quitURL`** quit SEB? This decides the finish-endpoint design.
 - **4c. Force-quit.** During a session, try Cmd+Opt+Esc and the Apple menu → Force Quit. Record whether either works.
 - **4d. Reboot.** Hard-reboot the Mac mid-session (hold the power button). After login, reopen the same config and record whether "Re-Opening Locked Exam!" appears and whether the quit password clears it. Also record the Mac's state right after reboot.
+- **4f. Lid close.** Close the lid mid-Form for a minute, then open it. Repeat after submitting but before clicking the finish link. Record whether SEB resumes where it was, whether the Google session survives, and whether the finish link still quits.
 - **4e. Reload.** Use Cmd+R on the confirmation page and on a half-filled Form. Record any re-submission or data loss. This decides `browserWindowAllowReload`.
 
 ### Test 5: wrapper vs. direct
@@ -439,6 +459,22 @@ Switch away with Alt+Tab, the launcher, the shelf, and by opening Files and an A
 
 **Pass:** the extension keeps working during locked mode. If it doesn't, note exactly what stops. That decides how §1.10 option 2 is presented to teachers.
 
+**C4. Detecting submission.** Use a test Form with **two sections**. With the test student in a ClassGuard Lockdown Test, open the service worker console and run:
+```js
+chrome.webNavigation.onCommitted.addListener((d) => {
+  if (d.frameId === 0) console.log(d.transitionType, d.url);
+});
+chrome.webRequest.onCompleted.addListener((d) => {
+  if (d.type === 'main_frame') console.log(d.method, d.statusCode, d.url);
+}, { urls: ['*://docs.google.com/forms/*'] });
+```
+Click **Next** to section 2, then **Submit**. **Record** the URL and method logged for each. This decides how the extension tells a final submit apart from a section change.
+
+**C5. Lid close and offline.** During a ClassGuard Lockdown Test:
+- **C5a.** Close the lid for 2 minutes, then open it. Try a new tab and Alt+Tab. **Pass:** they are still corrected and logged. If not, the service worker lost its lock handlers.
+- **C5b.** Turn Wi-Fi off, let the session's end time pass, then wait 2 minutes. Record whether the student is released while offline. Expected today: no.
+- **C5c.** End the session from the teacher side while the lid is closed. Open the lid. Record how long release takes.
+
 ### Results
 
 | Test | Result | Notes |
@@ -458,6 +494,7 @@ Switch away with Alt+Tab, the launcher, the shelf, and by opening Files and an A
 | 4c force quit | | |
 | 4d reboot | | |
 | 4e reload | | |
+| 4f lid close | | |
 | 5a wrapper, sign-in form | | |
 | 5b wrapper, open form | | |
 | 5c wrapper Finish | | |
@@ -466,6 +503,10 @@ Switch away with Alt+Tab, the launcher, the shelf, and by opening Files and an A
 | C2 forced fullscreen re-apply | | |
 | C2b focus snap-back | | |
 | C3 locked mode vs. extension | | |
+| C4 submission URLs | | |
+| C5a lid close, handlers | | |
+| C5b offline expiry | | |
+| C5c end while asleep | | |
 
 ## 6. Decisions needed at review
 
