@@ -33,7 +33,7 @@
     "nodemailer": "^10.0.2",
     "pdfkit": "^0.19.1",
     "pg": "^8.23.0",
-    "socket.io": "^4.8.1",
+    "socket.io": "^4.8.4",
     "uuid": "^14.0.1"
   },
   "optionalDependencies": {
