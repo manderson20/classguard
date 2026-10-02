@@ -23,6 +23,7 @@ export default function UsersPage() {
   const qc = useQueryClient();
   const [search, setSearch] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
+  const [schoolFilter, setSchoolFilter] = useState('');
   const [addOpen, setAddOpen] = useState(false);
   const [page, setPage] = useState(0);
 
@@ -31,13 +32,21 @@ export default function UsersPage() {
   // results" instead of the actual (much shorter) filtered first page.
   const handleSearch = (v) => { setSearch(v); setPage(0); };
   const handleRoleFilter = (v) => { setRoleFilter(v); setPage(0); };
+  const handleSchoolFilter = (v) => { setSchoolFilter(v); setPage(0); };
+
+  const { data: schools = [] } = useQuery({
+    queryKey: ['schools'],
+    queryFn:  () => api.get('/schools'),
+    staleTime: 60_000,
+  });
 
   const { data, isLoading } = useQuery({
-    queryKey: ['users', search, roleFilter, page],
+    queryKey: ['users', search, roleFilter, schoolFilter, page],
     queryFn:  () => {
       const p = new URLSearchParams();
       if (search)     p.set('search', search);
       if (roleFilter) p.set('role', roleFilter);
+      if (schoolFilter) p.set('school_id', schoolFilter);
       p.set('limit', PAGE_SIZE);
       p.set('offset', page * PAGE_SIZE);
       return api.get(`/users?${p}`);
@@ -93,6 +102,12 @@ export default function UsersPage() {
           <option value="admin">Admin</option>
           <option value="superadmin">Superadmin</option>
         </select>
+        {schools.length > 0 && (
+          <select className="input w-44" value={schoolFilter} onChange={e => handleSchoolFilter(e.target.value)}>
+            <option value="">All schools</option>
+            {schools.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+        )}
       </div>
 
       {/* Table */}
@@ -102,6 +117,7 @@ export default function UsersPage() {
             <tr className="bg-slate-50 border-b border-slate-200">
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">User</th>
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">OU</th>
+              <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">School</th>
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Role</th>
               <th className="px-4 py-3 text-xs font-semibold text-slate-500 uppercase tracking-wide">Policy</th>
               <th className="px-4 py-3" />
@@ -109,10 +125,10 @@ export default function UsersPage() {
           </thead>
           <tbody className="divide-y divide-slate-100">
             {isLoading && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">Loading…</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">Loading…</td></tr>
             )}
             {!isLoading && users.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-8 text-center text-slate-400 text-sm">No users found</td></tr>
+              <tr><td colSpan={6} className="px-4 py-8 text-center text-slate-400 text-sm">No users found</td></tr>
             )}
             {users.map(u => (
               <tr key={u.id} className="hover:bg-slate-50">
@@ -126,6 +142,9 @@ export default function UsersPage() {
                   </div>
                 </td>
                 <td className="px-4 py-3 text-xs text-slate-500 font-mono max-w-[180px] truncate">{u.google_ou || '—'}</td>
+                <td className="px-4 py-3 text-xs text-slate-600 max-w-[160px] truncate" title={(u.schools || []).map(s => s.name).join(', ')}>
+                  {(u.schools || []).map(s => s.name).join(', ') || '—'}
+                </td>
                 <td className="px-4 py-3">
                   {isSuperAdmin && u.id !== me?.id ? (
                     <select

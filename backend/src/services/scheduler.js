@@ -605,6 +605,12 @@ function startScheduler() {
     syncAll().catch(err => console.error('[scheduler] blocklist sync error:', err.message));
   });
 
+  // School memberships — nightly safety net; syncs and school edits already
+  // recompute on the spot.
+  cron.schedule('20 3 * * *', () => {
+    require('./schools').recompute().catch(err => console.error('[scheduler] schools recompute error:', err.message));
+  });
+
   // Google Workspace sync — nightly 2am
   cron.schedule('0 2 * * *', () => {
     syncGoogleWorkspace().catch(err => console.error('[scheduler] google sync error:', err.message));

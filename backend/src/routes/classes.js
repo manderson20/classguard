@@ -35,9 +35,10 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   const { role, userId } = req.user;
   const { rows } = await query(
-    `SELECT c.*, u.full_name AS teacher_name
+    `SELECT c.*, u.full_name AS teacher_name, s.name AS school_name
      FROM classes c
      JOIN users u ON u.id = c.teacher_id
+     LEFT JOIN schools s ON s.id = c.school_id AND s.is_active
      WHERE c.id = $1`,
     [req.params.id]
   );
@@ -95,9 +96,19 @@ router.post('/', requireMinRole('admin'), requirePermissionIfAdmin('classes'), a
 
 // PATCH /api/v1/classes/:id
 router.patch('/:id', requireMinRole('admin'), requirePermissionIfAdmin('classes'), async (req, res) => {
-  const allowed = ['name','teacher_id'];
+  const allowed = ['name','teacher_id','school_id'];
   const fields  = Object.keys(req.body).filter(k => allowed.includes(k));
   if (fields.length === 0) return res.status(400).json({ error: 'No updatable fields' });
+  // Setting a school pins it (school_source 'manual'); clearing it hands the
+  // class back to automatic derivation (services/schools.js recompute()).
+  if (fields.includes('school_id')) {
+    if (req.body.school_id) {
+      const { rows: [school] } = await query('SELECT 1 FROM schools WHERE id = $1 AND is_active', [req.body.school_id]);
+      if (!school) return res.status(400).json({ error: 'Unknown school' });
+    }
+    fields.push('school_source');
+    req.body.school_source = req.body.school_id ? 'manual' : null;
+  }
 
   // classes has no updated_at column (unlike most other tables in this
   // schema) -- found live 2026-07-01: this route 500'd on every real call,

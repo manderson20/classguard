@@ -354,7 +354,190 @@ function OneRosterTab() {
 // ---------------------------------------------------------------------------
 // Main page
 // ---------------------------------------------------------------------------
-const TABS = ['Overview','Google Classroom','OneRoster / SIS'];
+// ---------------------------------------------------------------------------
+// Schools tab — the district's schools and which users/classes belong to
+// each (migration 103, services/schools.js). Memberships come from each
+// school's Google OU prefixes, from OneRoster, or are added per user on the
+// user's page.
+// ---------------------------------------------------------------------------
+function SchoolForm({ initial, onSave, onCancel, saving, error }) {
+  const [name, setName] = useState(initial?.name || '');
+  const [prefixes, setPrefixes] = useState((initial?.ou_prefixes || []).join('\n'));
+  return (
+    <div className="flex flex-col gap-3">
+      <Field label="School name">
+        <input className={INPUT} value={name} onChange={e => setName(e.target.value)} placeholder="e.g. High School" />
+      </Field>
+      <Field label="Google OU prefixes" hint="one per line; users in these OUs (or below them) belong to this school">
+        <textarea className={`${INPUT} font-mono text-xs`} rows={4} value={prefixes}
+          onChange={e => setPrefixes(e.target.value)}
+          placeholder={'/Students/High School\n/Employees/High School'} />
+      </Field>
+      {initial?.oneroster_sourced_id && (
+        <p className="text-xs text-slate-500">This school comes from OneRoster; its students, staff and classes also follow the SIS.</p>
+      )}
+      {error && <p className="text-sm text-red-600">{error}</p>}
+      <div className="flex gap-2 justify-end">
+        <button className="btn-secondary text-sm" onClick={onCancel}>Cancel</button>
+        <button className="btn-primary text-sm" disabled={saving || !name.trim()}
+          onClick={() => onSave({ name: name.trim(), ou_prefixes: prefixes.split('\n').map(p => p.trim()).filter(Boolean) })}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SchoolsTab() {
+  const qc = useQueryClient();
+  const [modal, setModal] = useState(null); // { mode: 'new'|'edit', school }
+  const [error, setError] = useState(null);
+  const [lastRecompute, setLastRecompute] = useState(null);
+
+  const { data: schools = [], isLoading } = useQuery({
+    queryKey: ['schools-admin'],
+    queryFn:  () => api.get('/schools?counts=1&all=1'),
+  });
+  const { data: suggestions = [] } = useQuery({
+    queryKey: ['school-suggestions'],
+    queryFn:  () => api.get('/schools/suggestions'),
+  });
+
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['schools-admin'] });
+    qc.invalidateQueries({ queryKey: ['school-suggestions'] });
+    qc.invalidateQueries({ queryKey: ['schools'] });
+  };
+  const save = useMutation({
+    mutationFn: ({ id, body }) => (id ? api.patch(`/schools/${id}`, body) : api.post('/schools', body)),
+    onSuccess:  (row) => { setModal(null); setError(null); setLastRecompute(row?.recompute || null); refresh(); },
+    onError:    (err) => setError(err.message),
+  });
+  const recompute = useMutation({
+    mutationFn: () => api.post('/schools/recompute'),
+    onSuccess:  (r) => { setLastRecompute(r); refresh(); },
+  });
+
+  const active   = schools.filter(s => s.is_active);
+  const archived = schools.filter(s => !s.is_active);
+
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-3">
+        <p className="text-sm text-slate-500 flex-1">
+          Schools scope later features (like In-School Suspension roles) to the right buildings. Users belong to a school
+          through its Google OU prefixes, through OneRoster, or by being added on their user page.
+        </p>
+        <button className="btn-secondary text-sm" onClick={() => recompute.mutate()} disabled={recompute.isPending}>
+          {recompute.isPending ? 'Recomputing…' : 'Recompute now'}
+        </button>
+        <button className="btn-primary text-sm" onClick={() => { setError(null); setModal({ mode: 'new' }); }}>+ Add school</button>
+      </div>
+
+      {lastRecompute && (
+        <div className="text-xs text-slate-500">
+          Recomputed: {lastRecompute.ou_memberships} OU memberships, {lastRecompute.classes_updated} class school(s) updated.
+        </div>
+      )}
+
+      <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-xs text-slate-500 uppercase tracking-wide">
+            <tr>
+              <th className="text-left px-4 py-2">School</th>
+              <th className="text-left px-4 py-2">Google OU prefixes</th>
+              <th className="text-right px-4 py-2">Students</th>
+              <th className="text-right px-4 py-2">Staff</th>
+              <th className="text-right px-4 py-2">Classes</th>
+              <th className="px-4 py-2" />
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-slate-100">
+            {isLoading && <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">Loading…</td></tr>}
+            {!isLoading && active.length === 0 && (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-slate-400">No schools yet. Add one, or use a suggestion below.</td></tr>
+            )}
+            {active.map(s => (
+              <tr key={s.id}>
+                <td className="px-4 py-2 font-medium text-slate-800">
+                  {s.name}
+                  {s.oneroster_sourced_id && <span className="ml-2 text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">OneRoster</span>}
+                </td>
+                <td className="px-4 py-2 font-mono text-xs text-slate-600">
+                  {(s.ou_prefixes || []).length ? s.ou_prefixes.map(p => <div key={p}>{p}</div>) : <span className="text-slate-400">—</span>}
+                </td>
+                <td className="px-4 py-2 text-right">{s.student_count}</td>
+                <td className="px-4 py-2 text-right">{s.staff_count}</td>
+                <td className="px-4 py-2 text-right">{s.class_count}</td>
+                <td className="px-4 py-2 text-right whitespace-nowrap">
+                  <button className="text-xs text-primary-600 hover:underline mr-3" onClick={() => { setError(null); setModal({ mode: 'edit', school: s }); }}>Edit</button>
+                  <button className="text-xs text-slate-500 hover:underline"
+                    onClick={() => { if (window.confirm(`Archive ${s.name}? Its members are removed from it; you can restore it later.`)) save.mutate({ id: s.id, body: { is_active: false } }); }}>
+                    Archive
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {suggestions.length > 0 && (
+        <div className="bg-white border border-slate-200 rounded-xl p-4">
+          <h3 className="text-sm font-semibold text-slate-700 mb-1">Suggested from your Google OUs</h3>
+          <p className="text-xs text-slate-500 mb-3">
+            Second-level OUs under your OU role rules. Names found under both students and staff are most likely schools;
+            departments and inactive OUs usually aren't.
+          </p>
+          <div className="divide-y divide-slate-100">
+            {suggestions.map(sg => (
+              <div key={sg.name} className="flex items-center gap-3 py-2">
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium text-slate-800">
+                    {sg.name}
+                    {sg.likely_school && <span className="ml-2 text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded">likely a school</span>}
+                    {sg.probably_not && <span className="ml-2 text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded">probably not a school</span>}
+                  </div>
+                  <div className="text-xs text-slate-500 font-mono truncate">{sg.ou_prefixes.join(', ')}</div>
+                  <div className="text-xs text-slate-400">{sg.students} students · {sg.staff} staff</div>
+                </div>
+                <button className="btn-secondary text-xs"
+                  onClick={() => { setError(null); setModal({ mode: 'new', school: { name: sg.name, ou_prefixes: sg.ou_prefixes } }); }}>
+                  Add as school…
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {archived.length > 0 && (
+        <div className="text-xs text-slate-500">
+          Archived: {archived.map(s => (
+            <span key={s.id} className="mr-3">
+              {s.name}{' '}
+              <button className="text-primary-600 hover:underline" onClick={() => save.mutate({ id: s.id, body: { is_active: true } })}>Restore</button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {modal && (
+        <Modal title={modal.mode === 'new' ? 'Add school' : `Edit ${modal.school.name}`} onClose={() => setModal(null)}>
+          <SchoolForm
+            initial={modal.school}
+            saving={save.isPending}
+            error={error}
+            onCancel={() => setModal(null)}
+            onSave={(body) => save.mutate({ id: modal.mode === 'edit' ? modal.school.id : null, body })}
+          />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+const TABS = ['Overview','Google Classroom','OneRoster / SIS','Schools'];
 
 export default function RosterPage() {
   const [tab, setTab] = useState('Overview');
@@ -387,6 +570,7 @@ export default function RosterPage() {
       {tab==='Overview'           && <OverviewTab status={status}/>}
       {tab==='Google Classroom'   && <ClassroomTab/>}
       {tab==='OneRoster / SIS'    && <OneRosterTab/>}
+      {tab==='Schools'            && <SchoolsTab/>}
     </div>
   );
 }
